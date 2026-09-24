@@ -1031,7 +1031,7 @@ function collisionGroup(cfg) {
       { value: 'forceStraightN', label: '强制直行 n 次' },
       { value: 'randomTurn', label: '随机转向' },
       { value: 'custom', label: '自定义（立即停止）' },
-    ])),
+    ]), '是否结束运行由「结束规则 → 撞到自身」统一控制；未勾选时「立即停止/自定义」退化为「忽略并继续」'),
     field('强制直行次数 n', numBind(sp, 'n', () => onSimChange(), { min: 1, max: 1000 }),
       '连续强制直行带防死循环保护'),
     field('连续自撞上限', numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 }),

@@ -334,6 +334,10 @@ export class Simulation {
       stats.ruleTriggers += engine.run('onCollision', ctx, { sync: cfg.ruleExecution === 'sync' });
 
       const policy = cfg.selfCollisionPolicy;
+      // 「自撞是否结束运行」唯一由结束规则「撞到自身」决定：
+      // 未勾选时，停止类策略（立即停止 / 自定义）退化为「忽略并继续」，避免蛇原地卡死。
+      const endsRun = !!cfg.endConditions.selfCollision;
+      const stopReason = { ended: true, reason: { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } } };
       if (ctx.pending.forcedTurns.length) {
         dir = resolveTurn(ctx.pending.forcedTurns[0].turn, agent, grid, rng);
         const t2 = grid.step(agent.head, dir);
@@ -361,19 +365,17 @@ export class Simulation {
               const pick = rng.pick(options);
               dir = pick.d;
               target = pick.t;
-            } else {
-              return { ended: true, reason: { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } } };
+            } else if (endsRun) {
+              return stopReason;
             }
             break;
           }
           case 'custom':
-            return { ended: true, reason: { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } } };
+            if (endsRun) return stopReason;
+            break;
           case 'stop':
           default: {
-            const allowOverlap = false;
-            if (!allowOverlap) {
-              return { ended: true, reason: { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } } };
-            }
+            if (endsRun) return stopReason;
             break;
           }
         }
