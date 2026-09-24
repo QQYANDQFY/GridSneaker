@@ -5,7 +5,7 @@ import { normalizeStates } from './world.js';
 import { Grid, parseDir, dirNames, DIR_LABEL_CN } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
-export const CONFIG_VERSION = '1.3';
+export const CONFIG_VERSION = '1.4';
 
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
@@ -123,9 +123,19 @@ export const MARKER_CONDITION_LABELS = {
   minSteps: '运行步数不小于',
 };
 
-/** 画布格子编辑工具：标记物 / 障碍物 / 擦除 */
-export const CELL_TOOLS = ['marker', 'obstacle', 'erase'];
-export const CELL_TOOL_LABELS = { marker: '标记物', obstacle: '障碍物', erase: '擦除' };
+/** 画布格子编辑工具：标记物 / 障碍物 / 元胞自动机状态 / 擦除 */
+export const CELL_TOOLS = ['marker', 'obstacle', 'state', 'erase'];
+export const CELL_TOOL_LABELS = { marker: '标记物', obstacle: '障碍物', state: '元胞自动机状态', erase: '擦除' };
+
+/**
+ * 安全避撞「触发后的处理方式」。
+ * 安全避撞在方向选择阶段剔除不安全候选；当本步本应朝向的方向被剔除时：
+ *  - 'turn'：自动切换其他可行方向继续运动（默认，与旧版行为完全一致）；
+ *  - 'stop'：立即停止运动（原地停止，不产生位移）。
+ */
+export const SAFETY_ON_AVOID_MODES = ['turn', 'stop'];
+export const SAFETY_ON_AVOID_LABELS = { turn: '自动切换其他可行方向继续运动', stop: '立即停止运动' };
+export const SAFETY_ON_AVOID_DEFAULT = 'turn';
 
 export const DEFAULT_STATES = [
   { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
@@ -279,6 +289,12 @@ export function defaultConfig() {
       avoidObstacle: true,
       avoidOtherAgents: true,
       avoidWall: true,
+      /**
+       * 避撞触发后的处理方式（安全避撞机制「本步本应朝向的方向不安全」时的收尾逻辑）：
+       *  - 'turn'（默认）：自动切换其他可行方向继续运动，保持旧版兜底语义；
+       *  - 'stop'：立即停止运动（本步原地停止，判定链与「停止」移动选项完全一致）。
+       */
+      onAvoid: SAFETY_ON_AVOID_DEFAULT,
       /** 碰撞预警提示：在画面上标出下一步会撞到自身身体的危险格（默认关闭） */
       warnSelfCollision: false,
     },
@@ -468,7 +484,8 @@ export function defaultConfig() {
      * 画布格子编辑器：把「点击画布」从「跳转到首次经过的步数」切换为「直接增删格子元素」。
      *
      *  - enabled  总开关（默认关闭，保证既有用户的点击跳转行为不变）；
-     *  - tool     当前工具：标记物 / 障碍物 / 擦除；
+     *  - tool     当前工具：标记物 / 障碍物 / 元胞自动机状态 / 擦除；
+     *  - stateName 「元胞自动机状态」工具要写入的状态名（空 = 自动取首个非空状态）；
      *  - painted  用户绘制的格子（[{ col, row, state }]），随配置保存与分享；
      *             在模拟开始时写入世界——因此它等价于「自定义初始环境」；
      *  - 其余字段为体验增强开关（拖拽连画 / 右键擦除 / 撤销历史 / 随机放置 / 画笔尺寸）。
@@ -478,6 +495,11 @@ export function defaultConfig() {
       tool: 'marker',
       markerTypeId: '',
       obstacleTypeId: '',
+      /**
+       * 「元胞自动机状态」工具的目标状态：可手动指定任意非空状态（如生命游戏的「存活」）。
+       * 为空表示自动取「首个非空状态」，与旧版「标记物工具落到 alive」的兜底语义保持一致。
+       */
+      stateName: '',
       /** 随机放置模式：从「随机池」里按权重抽取类型（替代「先选类型再点击」） */
       randomObstacle: false,
       /** 随机池（障碍物类型 id 列表）；为空表示「全部启用的障碍物类型」 */
@@ -486,8 +508,8 @@ export function defaultConfig() {
       randomProbability: 1,
       /** 画笔尺寸：1 为单格，n 为以点击点为中心的 n×n 方块 */
       brushSize: 1,
-      /** 拖拽连续绘制（按住左键拖动即可连画） */
-      drag: false,
+      /** 拖拽连续绘制（按住左键拖动即可连画）；默认开启，连续编辑无需额外勾选 */
+      drag: true,
       /** 右键擦除：右键单击直接把格子恢复为空 */
       rightClickErase: true,
       /** 撤销 / 重做历史步数上限（0 = 关闭历史记录） */
@@ -1059,6 +1081,8 @@ function normSafety(raw = {}, boundary = 'wrap') {
      * 显式取值（true / false）始终优先，保证用户的手动修改不会被覆盖。
      */
     avoidWall: bool(src.avoidWall, blockedBoundary && avoidAll),
+    /** 避撞触发后的处理：非法取值回退默认（'turn' = 自动切换其他可行方向继续运动） */
+    onAvoid: SAFETY_ON_AVOID_MODES.includes(src.onAvoid) ? src.onAvoid : d.onAvoid,
     /** 碰撞预警提示：标出「下一步会撞到自身身体」的危险格（默认关闭，避免长蛇额外开销） */
     warnSelfCollision: bool(src.warnSelfCollision, d.warnSelfCollision),
   };
@@ -1209,11 +1233,19 @@ function normCellEditor(raw, states, grid) {
     map.set(`${col},${row}`, { col, row, state });
   }
   const pool = Array.isArray(src.randomPool) ? src.randomPool.map(String) : [];
+  /**
+   * 「元胞自动机状态」工具的目标状态：必须是真实存在且非 empty 的状态，
+   * 否则回退为空（面板显示为「自动」），由 paintStateForCell 取首个非空状态，
+   * 与旧版「标记物工具落到 alive」的兜底语义保持一致。
+   */
+  const stateName = String(src.stateName ?? '');
+  const validState = stateName && stateName !== 'empty' && names.has(stateName) ? stateName : '';
   return {
     enabled: bool(src.enabled, d.enabled),
     tool: CELL_TOOLS.includes(src.tool) ? src.tool : d.tool,
     markerTypeId: str(src.markerTypeId, d.markerTypeId),
     obstacleTypeId: str(src.obstacleTypeId, d.obstacleTypeId),
+    stateName: validState,
     randomObstacle: bool(src.randomObstacle, d.randomObstacle),
     randomPool: [...new Set(pool)].slice(0, MAX_OBSTACLE_TYPES),
     randomProbability: clamp(num(src.randomProbability, d.randomProbability), 0, 1),
@@ -1607,9 +1639,30 @@ export function migrate(raw) {
     }
     notes.push('配置已从 1.0 迁移到 ' + CONFIG_VERSION);
   }
+  /**
+   * 1.3 -> 1.4：画布格子编辑器的「拖拽连画」由默认关闭改为默认开启。
+   * 旧版本规范化时总会把 drag 写成显式布尔值，因此无法区分「用户主动关闭」与「沿用旧默认」；
+   * 这里统一升级为开启——该开关只影响鼠标拖拽手感，随时可在面板里再次关闭。
+   */
+  if (versionLessThan(v, '1.4') && out.cellEditor && typeof out.cellEditor === 'object') {
+    out.cellEditor.drag = true;
+    notes.push('「拖拽连画」已升级为默认开启（可在「画布格子编辑器」中关闭）');
+  }
   out.version = CONFIG_VERSION;
   if (notes.length) out.migrationNotes = notes;
   return out;
+}
+
+/** 比较形如 '1.3' 的版本号：a < b 时返回 true（非数字段落按 0 处理） */
+function versionLessThan(a, b) {
+  const pa = String(a).split('.').map((s) => parseInt(s, 10) || 0);
+  const pb = String(b).split('.').map((s) => parseInt(s, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x < y;
+  }
+  return false;
 }
 
 /* ------------------------------------------------------------------ */

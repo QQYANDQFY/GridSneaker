@@ -66,7 +66,7 @@ export const STYLE_DEFAULTS = {
   hoverTipState: true,
   /** 悬浮提示：移动体行 */
   hoverTipAgent: true,
-  /** 悬浮提示：轨迹统计与上一次经过步数 */
+  /** 悬浮提示：轨迹统计与经过次数回溯 */
   hoverTipTrail: true,
   /** 悬浮提示：起点 / 终点 / 边界进出点等标记信息（仍与对应显示开关同步） */
   hoverTipMarkers: true,
@@ -2139,7 +2139,7 @@ export class Renderer {
    *
    * 内容与「已开启的显示状态」严格同步：起始点 / 终点标记、边界进出点标记、轨迹、移动体
    * 各自跟随对应的显示开关，未开启的可视化元素不会在提示中出现；
-   * 轨迹部分额外给出「截至当前步数的本次 / 上一次经过步数」，保证轨迹回溯信息完整。
+   * 轨迹部分额外给出「当前路径经过次数」与「历史累计经过次数」，保证轨迹回溯信息完整。
    */
   describe(frameIndex, coord) {
     const s = this.style;
@@ -2194,8 +2194,12 @@ export class Renderer {
       lines.push(`轨迹：次序 #${info.order} · 首次第 ${info.first} 步 · 末次第 ${info.last} 步 · 共 ${info.visits} 次`);
       const at = visitStatsAt(info, frame.tick);
       if (at) {
-        lines.push(`本次经过：第 ${at.last} 步（截至当前共 ${at.count} 次）`);
-        lines.push(at.prev === null ? '上一次经过：无（本格首次经过）' : `上一次经过：第 ${at.prev} 步`);
+        // 统一表述：at.count 是「截至当前步数」的经过次数，info.visits 则是整轮累计，
+        // 前者随播放进度增长、后者是最终结果，两者分开陈述可避免「统计口径」歧义。
+        lines.push(`当前路径经过次数：第 ${at.count} 次（最近一次经过：第 ${at.last} 步）`);
+        lines.push(at.prev === null
+          ? `历史累计经过次数：共 ${info.visits} 次（本格首次经过，此前无经过记录）`
+          : `历史累计经过次数：共 ${info.visits} 次（上次经过：第 ${at.prev} 步）`);
       }
     }
     return lines.join('\n');

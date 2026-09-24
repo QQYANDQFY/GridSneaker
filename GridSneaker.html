@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
   <style>
-:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078;--tab-off-bg:#10141b;--tab-off-text:#8394a8;--tab-off-border:#232c3a;--tab-on-bg:#2f6da8;--tab-on-text:#ffffff;--tab-on-border:#7cc0ff}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.tooltip.term-tip{max-width:min(380px,76vw)}.tooltip .tip-term{display:block;color:var(--accent);font-size:12px;margin-bottom:3px}.tooltip .tip-desc{display:block;color:var(--text)}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.run-loading{color:#ffd166;font-size:11px}.run-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.switch-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:2px;min-height:30px;margin:7px 0;padding:3px 0;border-bottom:1px dashed var(--line)}.switch-field:last-child{border-bottom:none}.switch-field>.switch-label{color:var(--muted);font-size:11.5px;line-height:20px;min-width:0}.switch-field>.switch-control{display:flex;align-items:center;gap:8px;justify-self:end;line-height:20px}.switch-field>.switch-control .check-wrap{padding:0;line-height:20px}.switch-field>.switch-control .checkbox{margin:0}.switch-field>.switch-hint{grid-column:1 / -1;color:#6f7d8c;font-size:11px;line-height:1.5}.switch-field>.switch-hint .mini-label{display:block}.panel-tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.divider{height:1px;background:var(--line);margin:10px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}details.group.target{outline:2px solid #ffd166;outline-offset:2px;border-radius:8px;animation:end-row-flash 0.5s ease-in-out 4 alternate}.end-hint-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap;background:var(--tab-off-bg);color:var(--tab-off-text);border-color:var(--tab-off-border)}.cfg-tab-nav .btn.tab-btn:hover{color:var(--tab-on-text);border-color:var(--tab-on-border)}.cfg-tab-nav .btn.tab-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);border-color:var(--tab-on-border);font-weight:600;box-shadow:inset 0 0 0 1px var(--tab-on-border),0 2px 8px rgba(0,0,0,0.35)}.cfg-tab-panel{padding-top:2px}.cfg-tab-panel>.group:first-child{margin-top:2px}.group .group-body>.group{margin-left:5px}.group .group-body>.group>summary{font-size:12px}.tab-preview{display:flex;gap:6px;margin:6px 0 8px}.tab-preview .tab-demo{padding:5px 12px;border-radius:7px;border:1px solid var(--tab-off-border);background:var(--tab-off-bg);color:var(--tab-off-text);font-size:11.5px}.tab-preview .tab-demo.on{border-color:var(--tab-on-border);background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat.has-term .stat-label,.check-wrap.has-term>span{cursor:help;text-decoration:underline dotted;text-decoration-color:rgba(150,175,200,0.45);text-underline-offset:2px}.stat.has-term:hover .stat-label{color:var(--text)}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:var(--tab-off-bg);color:var(--tab-off-text);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}body.compact .panel{padding:5px}body.compact .group{margin:5px 0;border-radius:7px}body.compact .group>summary{padding:5px 8px;font-size:12px}body.compact .group-body{padding:2px 8px 6px}body.compact .field{margin:4px 0}body.compact .field-label{margin-bottom:2px;font-size:11px}body.compact .field-hint{margin-top:2px;font-size:10.5px}body.compact .switch-field{margin:4px 0;padding:1px 0;min-height:26px}body.compact .row{gap:6px}body.compact .hint{margin:2px 0;font-size:10.5px}body.compact .sub-title{margin:6px 0 1px;font-size:11.5px}body.compact .divider{margin:6px 0 0}body.compact .stage-stats{gap:5px}body.compact .stat{padding:4px 6px}body.compact .stat-value{font-size:12px}body.compact .mode-switch{margin:2px 0}body.compact .panel-tools{margin-bottom:5px}
+:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078;--tab-off-bg:#10141b;--tab-off-text:#8394a8;--tab-off-border:#232c3a;--tab-on-bg:#2f6da8;--tab-on-text:#ffffff;--tab-on-border:#7cc0ff}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.tooltip.term-tip{max-width:min(380px,76vw)}.tooltip .tip-term{display:block;color:var(--accent);font-size:12px;margin-bottom:3px}.tooltip .tip-desc{display:block;color:var(--text);line-height:1.55}.tooltip .tip-desc b{color:var(--accent);font-weight:600}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.controls-line.speed-line{flex-wrap:nowrap}.controls-line.speed-line .speed-wrap{flex:1 1 auto;min-width:120px}.run-loading{color:#ffd166;font-size:11px}.run-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.switch-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:2px;min-height:30px;margin:7px 0;padding:3px 0;border-bottom:1px dashed var(--line)}.switch-field:last-child{border-bottom:none}.switch-field>.switch-label{color:var(--muted);font-size:11.5px;line-height:20px;min-width:0}.switch-field>.switch-control{display:flex;align-items:center;gap:8px;justify-self:end;line-height:20px}.switch-field>.switch-control .check-wrap{padding:0;line-height:20px}.switch-field>.switch-control .checkbox{margin:0}.switch-field>.switch-hint{grid-column:1 / -1;color:#6f7d8c;font-size:11px;line-height:1.5}.switch-field>.switch-hint .mini-label{display:block}.panel-tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.divider{height:1px;background:var(--line);margin:10px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.chip-item{display:inline-flex;align-items:center;gap:2px}.chip-help{width:15px;height:15px;padding:0;border-radius:50%;border:1px solid var(--line);background:#0d1117;color:var(--muted);font-size:10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:help}.chip-help:hover,.chip-help:focus-visible{color:var(--text);border-color:var(--accent)}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}details.group.target{outline:2px solid #ffd166;outline-offset:2px;border-radius:8px;animation:end-row-flash 0.5s ease-in-out 4 alternate}.end-hint-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap;background:var(--tab-off-bg);color:var(--tab-off-text);border-color:var(--tab-off-border)}.cfg-tab-nav .btn.tab-btn:hover{color:var(--tab-on-text);border-color:var(--tab-on-border)}.cfg-tab-nav .btn.tab-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);border-color:var(--tab-on-border);font-weight:600;box-shadow:inset 0 0 0 1px var(--tab-on-border),0 2px 8px rgba(0,0,0,0.35)}.cfg-tab-panel{padding-top:2px}.cfg-tab-panel>.group:first-child{margin-top:2px}.group .group-body>.group{margin-left:5px}.group .group-body>.group>summary{font-size:12px}.tab-preview{display:flex;gap:6px;margin:6px 0 8px}.tab-preview .tab-demo{padding:5px 12px;border-radius:7px;border:1px solid var(--tab-off-border);background:var(--tab-off-bg);color:var(--tab-off-text);font-size:11.5px}.tab-preview .tab-demo.on{border-color:var(--tab-on-border);background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat.has-term .stat-label,.check-wrap.has-term>span{cursor:help;text-decoration:underline dotted;text-decoration-color:rgba(150,175,200,0.45);text-underline-offset:2px}.stat.has-term:hover .stat-label{color:var(--text)}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:var(--tab-off-bg);color:var(--tab-off-text);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#canvas.editing{cursor:crosshair}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}body.compact .panel{padding:5px}body.compact .group{margin:5px 0;border-radius:7px}body.compact .group>summary{padding:5px 8px;font-size:12px}body.compact .group-body{padding:2px 8px 6px}body.compact .field{margin:4px 0}body.compact .field-label{margin-bottom:2px;font-size:11px}body.compact .field-hint{margin-top:2px;font-size:10.5px}body.compact .switch-field{margin:4px 0;padding:1px 0;min-height:26px}body.compact .row{gap:6px}body.compact .hint{margin:2px 0;font-size:10.5px}body.compact .sub-title{margin:6px 0 1px;font-size:11.5px}body.compact .divider{margin:6px 0 0}body.compact .stage-stats{gap:5px}body.compact .stat{padding:4px 6px}body.compact .stat-value{font-size:12px}body.compact .mode-switch{margin:2px 0}body.compact .panel-tools{margin-bottom:5px}
   </style>
 </head>
 <body>
@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.6.6</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.8.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -816,7 +816,7 @@ __MODULES["src/core/config.js"]=(function(){
 const{normalizeStates}=__MODULES["src/core/world.js"];
 const{Grid,parseDir,dirNames,DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const{patternStateNameAt,clearPatternCell,parsePatternText}=__MODULES["src/core/ca.js"];
-const CONFIG_VERSION='1.2';
+const CONFIG_VERSION='1.4';
 const MAX_STEPS_LIMIT=1e15;
 const DEFAULT_RUN_FRAME_CAP=20000;
 const MAX_RUN_FRAME_CAP=200000;
@@ -856,6 +856,7 @@ caStable:'元胞自动机稳定',
 allAgentsGone:'所有移动体均已消失',
 transformDone:'蛇已全部转化为环境',
 lifeDepleted:'生命耗尽',
+trap:'踩中陷阱',
 manual:'手动结束',
 };
 const INTERACTION_MODES=['collide','merge','repel','pass'];
@@ -881,6 +882,23 @@ obstacle:'撞到障碍物',
 merge:'发生融合',
 };
 const MAX_AGENT_SLOTS=64;
+const MAX_MARKER_TYPES=32;
+const MAX_OBSTACLE_TYPES=32;
+const MOVE_KEYS=['left','straight','right','stop'];
+const MOVE_LABELS={left:'左转',straight:'直行',right:'右转',stop:'停止'};
+const MARKER_CONDITION_TYPES=['always','probability','minLength','maxLength','minSteps'];
+const MARKER_CONDITION_LABELS={
+always:'始终生效',
+probability:'按概率生效',
+minLength:'蛇身长度不小于',
+maxLength:'蛇身长度不大于',
+minSteps:'运行步数不小于',
+};
+const CELL_TOOLS=['marker','obstacle','state','erase'];
+const CELL_TOOL_LABELS={marker:'标记物',obstacle:'障碍物',state:'元胞自动机状态',erase:'擦除'};
+const SAFETY_ON_AVOID_MODES=['turn','stop'];
+const SAFETY_ON_AVOID_LABELS={turn:'自动切换其他可行方向继续运动',stop:'立即停止运动'};
+const SAFETY_ON_AVOID_DEFAULT='turn';
 const DEFAULT_STATES=[
 {name:'empty',color:null,blocking:false,symbol:'.',render:'fill'},
 {name:'obstacle',color:'#5b6472',blocking:true,symbol:'#',render:'cross'},
@@ -1005,13 +1023,14 @@ shrink:{enabled:false,trigger:'step',amount:1,probability:0.05,maxLength:100000,
 },
 skin:{head:'',body:''},
 },
-moveRules:{left:0.33,straight:0.34,right:0.33},
+moveRules:{left:0.33,straight:0.34,right:0.33,stop:0},
 safety:{
 avoidAll:true,
 avoidBody:true,
 avoidObstacle:true,
 avoidOtherAgents:true,
 avoidWall:true,
+onAvoid:SAFETY_ON_AVOID_DEFAULT,
 warnSelfCollision:false,
 },
 multiSnake:{
@@ -1105,6 +1124,36 @@ color:'',
 ],
 },
 },
+obstacleTypes:[
+{
+id:'ob_obstacle',
+name:'障碍物',
+enabled:true,
+state:'obstacle',
+weight:1,
+color:'',
+symbol:'',
+render:'',
+trap:{enabled:false,triggerProbability:1,deathProbability:0.5,log:true},
+},
+],
+markerTypes:[],
+cellEditor:{
+enabled:false,
+tool:'marker',
+markerTypeId:'',
+obstacleTypeId:'',
+stateName:'',
+randomObstacle:false,
+randomPool:[],
+randomProbability:1,
+brushSize:1,
+drag:true,
+rightClickErase:true,
+historyLimit:60,
+scatterDensity:0.15,
+painted:[],
+},
 endConditions:{
 wall:true,
 outOfBounds:true,
@@ -1140,6 +1189,8 @@ showArrows:false,
 showCoords:false,
 showObstacles:true,
 showMarkers:true,
+showTraps:true,
+trapColor:'#ff4d4f',
 highlightRules:true,
 showStartEnd:true,
 trailFade:true,
@@ -1402,6 +1453,7 @@ moves:{
 left:Math.max(0,num(r.moves?.left,0.33)),
 straight:Math.max(0,num(r.moves?.straight,0.34)),
 right:Math.max(0,num(r.moves?.right,0.33)),
+stop:Math.max(0,num(r.moves?.stop,0)),
 },
 priority:Math.round(num(r.priority,1)),
 }));
@@ -1438,6 +1490,7 @@ const DEFAULT_HIDDEN_STATS=[
 'frames','rngCalls',
 'spawns','agentDeaths','merges','repels',
 'transformDeaths','transformedCells','collisionWarnings',
+'stops','trapTriggers','trapDeaths',
 'lives','maxLives','lifeGains','lifeLosses','respawns','lifeWarnings','finalDeaths',
 ];
 const TAB_COLOR_KEYS=[
@@ -1474,6 +1527,8 @@ showArrows:bool(raw.showArrows,d.showArrows),
 showCoords:bool(raw.showCoords,d.showCoords),
 showObstacles:bool(raw.showObstacles,d.showObstacles),
 showMarkers:bool(raw.showMarkers,d.showMarkers),
+showTraps:bool(raw.showTraps,d.showTraps),
+trapColor:HEX_COLOR.test(String(raw.trapColor||''))?String(raw.trapColor):d.trapColor,
 highlightRules:bool(raw.highlightRules,d.highlightRules),
 showStartEnd:bool(raw.showStartEnd,d.showStartEnd),
 trailFade:bool(raw.trailFade,d.trailFade),
@@ -1538,6 +1593,7 @@ avoidBody:bool(src.avoidBody,d.avoidBody&&avoidAll),
 avoidObstacle:bool(src.avoidObstacle,d.avoidObstacle&&avoidAll),
 avoidOtherAgents:bool(src.avoidOtherAgents,d.avoidOtherAgents&&avoidAll),
 avoidWall:bool(src.avoidWall,blockedBoundary&&avoidAll),
+onAvoid:SAFETY_ON_AVOID_MODES.includes(src.onAvoid)?src.onAvoid:d.onAvoid,
 warnSelfCollision:bool(src.warnSelfCollision,d.warnSelfCollision),
 };
 }
@@ -1566,6 +1622,147 @@ enabled:bool(raw.enabled,d.enabled),
 states,
 effects:normMarkerEffects(raw.effects),
 };
+}
+function normTypeStyle(raw){
+return{
+color:HEX_COLOR.test(String(raw?.color||''))?String(raw.color):'',
+symbol:str(raw?.symbol,'').slice(0,1),
+render:['fill','cross','dot'].includes(raw?.render)?raw.render:'',
+};
+}
+function normMarkerTypeEffect(raw){
+if(!raw||typeof raw!=='object')return null;
+return{
+mode:['set','percent'].includes(raw.mode)?raw.mode:'delta',
+value:Math.round(num(raw.value,1)),
+probability:clamp(num(raw.probability,1),0,1),
+consume:bool(raw.consume,true),
+consumeTo:str(raw.consumeTo,'empty'),
+color:HEX_COLOR.test(String(raw.color||''))?String(raw.color):'',
+};
+}
+function resolveTypeState(want,names){
+if(names.has(want)&&want!=='empty')return want;
+if(names.has('marker'))return'marker';
+return[...names].find((n)=>n!=='empty')||'marker';
+}
+function normMarkerTypes(raw,states){
+const names=new Set(states.map((s)=>s.name));
+const list=Array.isArray(raw)?raw.slice(0,MAX_MARKER_TYPES):[];
+const out=[];
+const seen=new Set();
+list.forEach((t,i)=>{
+const id=str(t?.id,`mk_${i}`).trim()||`mk_${i}`;
+if(seen.has(id))return;
+seen.add(id);
+const c=t?.condition&&typeof t.condition==='object'?t.condition:{};
+const type=MARKER_CONDITION_TYPES.includes(c.type)?c.type:'always';
+const cv=num(c.value,0);
+out.push({
+id,
+name:str(t?.name,`标记物类型 ${i+1}`),
+enabled:bool(t?.enabled,true),
+state:resolveTypeState(str(t?.state,'marker'),names),
+weight:Math.max(0,num(t?.weight,1)),
+condition:{
+type,
+value:type==='probability'?clamp(cv,0,1):clamp(Math.round(cv),0,100000),
+},
+...normTypeStyle(t),
+effect:normMarkerTypeEffect(t?.effect),
+});
+});
+return out;
+}
+function normObstacleTypes(raw,states){
+const d=defaultConfig().obstacleTypes;
+const names=new Set(states.map((s)=>s.name));
+const list=(Array.isArray(raw)?raw:d).slice(0,MAX_OBSTACLE_TYPES);
+const out=[];
+const seen=new Set();
+list.forEach((t,i)=>{
+const id=str(t?.id,`ob_${i}`).trim()||`ob_${i}`;
+if(seen.has(id))return;
+seen.add(id);
+const tr=t?.trap&&typeof t.trap==='object'?t.trap:{};
+out.push({
+id,
+name:str(t?.name,`障碍物类型 ${i+1}`),
+enabled:bool(t?.enabled,true),
+state:resolveTypeState(str(t?.state,'obstacle'),names),
+weight:Math.max(0,num(t?.weight,1)),
+...normTypeStyle(t),
+trap:{
+enabled:bool(tr.enabled,false),
+triggerProbability:clamp(num(tr.triggerProbability,1),0,1),
+deathProbability:clamp(num(tr.deathProbability,0.5),0,1),
+log:bool(tr.log,true),
+},
+});
+});
+return out.length?out:d.map((t)=>({...t,trap:{...t.trap}}));
+}
+function normCellEditor(raw,states,grid){
+const d=defaultConfig().cellEditor;
+const src=raw&&typeof raw==='object'?raw:{};
+const names=new Set(states.map((s)=>s.name));
+const map=new Map();
+for(const item of Array.isArray(src.painted)?src.painted:[]){
+const col=Math.round(num(item?.col,-1));
+const row=Math.round(num(item?.row,-1));
+const state=String(item?.state??'');
+if(col<0||row<0||col>=grid.width||row>=grid.height)continue;
+if(!names.has(state)||state==='empty')continue;
+map.set(`${col},${row}`,{col,row,state});
+}
+const pool=Array.isArray(src.randomPool)?src.randomPool.map(String):[];
+const stateName=String(src.stateName??'');
+const validState=stateName&&stateName!=='empty'&&names.has(stateName)?stateName:'';
+return{
+enabled:bool(src.enabled,d.enabled),
+tool:CELL_TOOLS.includes(src.tool)?src.tool:d.tool,
+markerTypeId:str(src.markerTypeId,d.markerTypeId),
+obstacleTypeId:str(src.obstacleTypeId,d.obstacleTypeId),
+stateName:validState,
+randomObstacle:bool(src.randomObstacle,d.randomObstacle),
+randomPool:[...new Set(pool)].slice(0,MAX_OBSTACLE_TYPES),
+randomProbability:clamp(num(src.randomProbability,d.randomProbability),0,1),
+brushSize:clamp(Math.round(num(src.brushSize,d.brushSize)),1,9),
+drag:bool(src.drag,d.drag),
+rightClickErase:bool(src.rightClickErase,d.rightClickErase),
+historyLimit:clamp(Math.round(num(src.historyLimit,d.historyLimit)),0,1000),
+scatterDensity:clamp(num(src.scatterDensity,d.scatterDensity),0,1),
+painted:[...map.values()],
+};
+}
+function obstacleTypeForState(cfg,stateName){
+const list=cfg?.obstacleTypes;
+if(!Array.isArray(list)|| !stateName)return null;
+return list.find((t)=>t.enabled&&t.state===stateName)||null;
+}
+function isTrapState(cfg,stateName){
+const t=obstacleTypeForState(cfg,stateName);
+return!!(t&&t.trap.enabled&&t.trap.triggerProbability>0);
+}
+function markerConditionMet(type,ctx){
+const c=type?.condition||{type:'always',value:0};
+switch(c.type){
+case'probability':
+return c.value>=1?true:(c.value<=0?false:ctx.rng.next()<c.value);
+case'minLength':
+return(ctx.length||0)>=c.value;
+case'maxLength':
+return(ctx.length||0)<=c.value;
+case'minSteps':
+return(ctx.steps||0)>=c.value;
+default:
+return true;
+}
+}
+function markerTypesForState(cfg,stateName){
+const list=cfg?.markerTypes;
+if(!Array.isArray(list)|| !stateName)return[];
+return list.filter((t)=>t.enabled&&t.state===stateName);
 }
 function normTransform(rawT,states){
 const d=defaultConfig().transform;
@@ -1705,6 +1902,7 @@ const moveRules={
 left:Math.max(0,num(movesRaw.left,d.moveRules.left)),
 straight:Math.max(0,num(movesRaw.straight,d.moveRules.straight)),
 right:Math.max(0,num(movesRaw.right,d.moveRules.right)),
+stop:Math.max(0,num(movesRaw.stop,d.moveRules.stop)),
 };
 const collisionRaw=raw.collision||{};
 const collision={
@@ -1789,6 +1987,15 @@ style:normalizeStyle(raw.style),
 ensureCoreStates(cfg);
 cfg.transform=normTransform(raw.transform,cfg.caMode.states);
 cfg.life=normLife(raw.life,cfg.caMode.states);
+cfg.markerTypes=normMarkerTypes(raw.markerTypes,cfg.caMode.states);
+cfg.obstacleTypes=normObstacleTypes(raw.obstacleTypes,cfg.caMode.states);
+cfg.cellEditor=normCellEditor(raw.cellEditor,cfg.caMode.states,cfg.grid);
+if(cfg.cellEditor.markerTypeId&& !cfg.markerTypes.some((t)=>t.id===cfg.cellEditor.markerTypeId)){
+cfg.cellEditor.markerTypeId='';
+}
+if(cfg.cellEditor.obstacleTypeId&& !cfg.obstacleTypes.some((t)=>t.id===cfg.cellEditor.obstacleTypeId)){
+cfg.cellEditor.obstacleTypeId='';
+}
 if(cfg.transform.enabled&&cfg.transform.dieOnSelfCollision)cfg.endConditions.selfCollision=false;
 return cfg;
 }
@@ -1815,9 +2022,23 @@ out.body.lengthPolicy.growth.maxLength=50;
 }
 notes.push('配置已从 1.0 迁移到 '+CONFIG_VERSION);
 }
+if(versionLessThan(v,'1.4')&&out.cellEditor&&typeof out.cellEditor==='object'){
+out.cellEditor.drag=true;
+notes.push('「拖拽连画」已升级为默认开启（可在「画布格子编辑器」中关闭）');
+}
 out.version=CONFIG_VERSION;
 if(notes.length)out.migrationNotes=notes;
 return out;
+}
+function versionLessThan(a,b){
+const pa=String(a).split('.').map((s)=>parseInt(s,10)||0);
+const pb=String(b).split('.').map((s)=>parseInt(s,10)||0);
+for(let i=0;i<Math.max(pa.length,pb.length);i++){
+const x=pa[i]||0;
+const y=pb[i]||0;
+if(x!==y)return x<y;
+}
+return false;
 }
 const DIAG_LEVELS=['error','warning','info'];
 const GRID_MAX=400;
@@ -2269,7 +2490,7 @@ console.warn('分享链接解析失败',e);
 return null;
 }
 }
-return{defaultConfig,defaultRule,defaultClause,MAX_AGENT_SLOTS,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP,INTERACTION_LABELS,SPAWN_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT};
+return{defaultConfig,defaultRule,defaultClause,MAX_AGENT_SLOTS,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,obstacleTypeForState,markerConditionMet,markerTypesForState,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP,INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES};
 })();
 __MODULES["src/core/trail.js"]=(function(){
 function colOf(grid,index){
@@ -4367,7 +4588,7 @@ const{RNG}=__MODULES["src/core/rng.js"];
 const{World,Agent}=__MODULES["src/core/world.js"];
 const{CAEngine}=__MODULES["src/core/ca.js"];
 const{RuleEngine}=__MODULES["src/core/rules.js"];
-const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP}=__MODULES["src/core/config.js"];
+const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,obstacleTypeForState,markerConditionMet,markerTypesForState,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP}=__MODULES["src/core/config.js"];
 const{resolveTurn,occupiedByAgent,findSpawnCoord}=__MODULES["src/core/actions.js"];
 const{evaluateCondition}=__MODULES["src/core/conditions.js"];
 const{computeScore}=__MODULES["src/core/score.js"];
@@ -4483,6 +4704,9 @@ const startedAt=clockNow();
 const world=new World(grid,states);
 const ca=cfg.caMode.enabled?new CAEngine(grid,cfg.caMode,states):null;
 if(ca)ca.init(world,rng);
+for(const p of(cfg.cellEditor&&Array.isArray(cfg.cellEditor.painted)?cfg.cellEditor.painted:[])){
+world.set(p,p.state);
+}
 this.runtimeDiagnostics=[];
 this.diagCodes.clear();
 const bodyOn=isBodyEnabled(cfg);
@@ -4522,6 +4746,9 @@ merges:0,
 repels:0,
 markerInteractions:0,
 forcedStraights:0,
+stops:0,
+trapTriggers:0,
+trapDeaths:0,
 transformDeaths:0,
 transformedCells:0,
 transformTriggers:0,
@@ -4663,6 +4890,9 @@ summary:{
 steps:stats.steps,
 collisions:stats.collisions,
 selfCollisions:stats.selfCollisions,
+stops:stats.stops,
+trapTriggers:stats.trapTriggers,
+trapDeaths:stats.trapDeaths,
 maxLength:stats.maxLength,
 coverage:stats.coverage,
 ruleTriggers:stats.ruleTriggers,
@@ -4763,6 +4993,18 @@ const decision=this.decideDirection(ctx,engine,agent);
 let dir=decision.dir;
 const turnKey=decision.turnKey;
 agent.lastTurn=turnKey;
+const stopped=turnKey==='stop';
+if(stopped){
+agent.dir=dir;
+stats.stops=(stats.stops||0)+1;
+stats.collisions++;
+stats.collisionsTotal++;
+stats.collisionsConsecutive++;
+stats.selfCollisionsConsecutive=0;
+tickEvents.push({type:'obstacle',coord:{...agent.head},stopped:true});
+ctx.highlights.push({col:agent.head.col,row:agent.head.row,type:'collision',tick:ctx.tick});
+return this.resolveBlockedMove(ctx,agent,agent.head,turnKey,protectedAgent,tickEvents);
+}
 let target=grid.step(agent.head,dir);
 let wallHit=false;
 let outOfBounds=false;
@@ -4874,6 +5116,27 @@ if(hitCode&&life.enabled)this.absorbFatalEvent(tickEvents,'wall');
 return{ended:false,turn:turnKey};
 }
 if(ctx.world.isBlocking(target)){
+const trap=this.resolveObstacleTrap(ctx,agent,target,tickEvents);
+if(trap==='dead'){
+stats.collisions++;
+stats.collisionsTotal++;
+stats.collisionsConsecutive++;
+stats.selfCollisionsConsecutive=0;
+stats.trapDeaths=(stats.trapDeaths||0)+1;
+tickEvents.push({type:'trapDeath',coord:{...target},highlight:true});
+ctx.highlights.push({col:target.col,row:target.row,type:'trapDeath',tick:ctx.tick});
+if(protectedAgent)return{ended:false,turn:turnKey};
+if(life.enabled){
+const r=this.consumeLifeOnDeath(ctx,agent,{
+code:'trap',
+label:END_LABELS.trap,
+tick:ctx.tick,
+coord:{...target},
+},tickEvents);
+if(r==='alive')return{ended:false,turn:turnKey};
+}
+return this.agentEnd(ctx,agent,{code:'trap',label:END_LABELS.trap,tick:ctx.tick,coord:{...target}},tickEvents);
+}
 const policy=cfg.collision.obstacle;
 if(policy==='destroy'){
 ctx.world.set(target,'empty');
@@ -5036,6 +5299,65 @@ else if(turnKey==='right')stats.turnsRight++;
 else if(turnKey==='reverse')stats.turnsReverse++;
 else stats.turnsStraight++;
 return{ended:false,turn:turnKey};
+}
+resolveBlockedMove(ctx,agent,coord,turnKey,protectedAgent,tickEvents){
+if(ctx.config.endConditions.obstacle&& !protectedAgent){
+if(ctx.config.life.enabled){
+const r=this.consumeLifeOnDeath(ctx,agent,{
+code:'obstacle',
+label:END_LABELS.obstacle,
+tick:ctx.tick,
+coord:{...coord},
+},tickEvents);
+if(r==='alive'){
+this.absorbFatalEvent(tickEvents,'obstacle');
+return{ended:false,turn:turnKey};
+}
+}
+return this.agentEnd(ctx,agent,{code:'obstacle',label:END_LABELS.obstacle,tick:ctx.tick,coord:{...coord}},tickEvents);
+}
+if(ctx.config.endConditions.obstacle&&ctx.config.life.enabled)this.absorbFatalEvent(tickEvents,'obstacle');
+return{ended:false,turn:turnKey};
+}
+resolveObstacleTrap(ctx,agent,target,tickEvents){
+const cfg=ctx.config;
+const stateName=ctx.world.get(target);
+if(!stateName)return null;
+const ot=obstacleTypeForState(cfg,stateName);
+const trap=ot&&ot.trap;
+if(!trap|| !trap.enabled||trap.triggerProbability<=0)return null;
+const rng=ctx.rng;
+const logTrap=(ok,text,death)=>{
+if(!trap.log)return;
+ctx.log({
+tick:ctx.tick,
+ruleId:'trap',
+ruleName:`障碍物陷阱（${ot.name}）`,
+trigger:death?'trapDeath':(ok?'trapTriggered':'trapMissed'),
+subject:agent.label||agent.id,
+coord:{...target},
+priority:0,
+condition:`触发概率 ${(trap.triggerProbability*100).toFixed(0)}% · 死亡概率 ${(trap.deathProbability*100).toFixed(0)}%`,
+actions:text,
+text,
+});
+};
+if(trap.triggerProbability<1&&rng.next()>=trap.triggerProbability){
+logTrap(false,`「${agent.label||agent.id}」尝试移动到 (${target.col}, ${target.row}) 的「${ot.name}」，本次未触发陷阱（触发概率 ${(trap.triggerProbability*100).toFixed(0)}%）`,false);
+return null;
+}
+ctx.stats.trapTriggers=(ctx.stats.trapTriggers||0)+1;
+tickEvents.push({type:'trapTriggered',coord:{...target},state:stateName,typeName:ot.name});
+ctx.highlights.push({col:target.col,row:target.row,type:'trapTrigger',tick:ctx.tick});
+const lethal=trap.deathProbability>=1
+?true
+:(trap.deathProbability<=0?false:rng.next()<trap.deathProbability);
+if(!lethal){
+logTrap(true,`「${agent.label||agent.id}」触发 (${target.col}, ${target.row}) 的「${ot.name}」陷阱，但死亡判定未通过（死亡概率 ${(trap.deathProbability*100).toFixed(0)}%），保持存活`,false);
+return'alive';
+}
+logTrap(true,`「${agent.label||agent.id}」触发 (${target.col}, ${target.row}) 的「${ot.name}」陷阱并通过死亡判定（死亡概率 ${(trap.deathProbability*100).toFixed(0)}%），判定死亡`,true);
+return'dead';
 }
 agentEnd(ctx,agent,reason,tickEvents){
 if(agent.isMain)return{ended:true,reason};
@@ -5334,6 +5656,7 @@ const grid=ctx.grid;
 const out=[];
 for(const o of options){
 if(o.weight<=0)continue;
+if(o.stop){out.push({...o});continue;}
 const dir=o.dir!==undefined?o.dir:resolveTurn(o.key,agent,grid,ctx.rng);
 const c=this.resolveCandidate(ctx,grid.step(agent.head,dir));
 if(!c.ok){
@@ -5348,6 +5671,15 @@ if(avoidOthers&&occupiedByAgent(ctx,target,agent))continue;
 out.push({...o,dir});
 }
 return out;
+}
+stopWhenAvoidTriggered(ctx,agent,options,safe){
+const rng=ctx.rng;
+const safeKeys=new Set(safe.map((o)=>o.key));
+const usable=options.filter((o)=>o.weight>0);
+const pool=usable.length?usable:options.filter((o)=> !o.stop);
+const{item}=rng.weighted(pool,(o)=>o.weight);
+if(!item|| !safeKeys.has(item.key))return{dir:agent.dir,turnKey:'stop'};
+return{dir:item.dir!==undefined?item.dir:resolveTurn(item.key,agent,ctx.grid,rng),turnKey:item.key};
 }
 decideDirection(ctx,engine,self){
 const cfg=ctx.config;
@@ -5375,10 +5707,12 @@ weights=r.moves;
 break;
 }
 }
+const nz=(v)=>(Number.isFinite(Number(v))?Math.max(0,Number(v)):0);
 const options=[
-{key:'left',weight:Math.max(0,weights.left)},
-{key:'straight',weight:Math.max(0,weights.straight)},
-{key:'right',weight:Math.max(0,weights.right)},
+{key:'left',weight:nz(weights.left)},
+{key:'straight',weight:nz(weights.straight)},
+{key:'right',weight:nz(weights.right)},
+{key:'stop',weight:nz(weights.stop),stop:true},
 ];
 let safe=this.filterSafeOptions(ctx,agent,options);
 if(safe&&safe.length===0){
@@ -5387,13 +5721,23 @@ if(tailSafe.length)safe=tailSafe;
 }
 if(safe&&safe.length>1){
 const live=safe.filter((o)=>{
+if(o.stop)return true;
 const c=this.resolveCandidate(ctx,grid.step(agent.head,o.dir));
 return!c.ok|| !this.isDeadEnd(ctx,agent,c.coord);
 });
 if(live.length)safe=live;
 }
+if(safe&&cfg.safety.onAvoid==='stop'){
+return this.stopWhenAvoidTriggered(ctx,agent,options,safe);
+}
 const pool=safe&&safe.length?safe:options;
-const{item}=rng.weighted(pool,(o)=>o.weight);
+let effective=pool;
+if(!pool.some((o)=>o.weight>0)){
+const dirs=pool.filter((o)=> !o.stop);
+if(dirs.length)effective=dirs;
+}
+const{item}=rng.weighted(effective,(o)=>o.weight);
+if(item.key==='stop')return{dir:agent.dir,turnKey:'stop'};
 return{dir:item.dir!==undefined?item.dir:resolveTurn(item.key,agent,grid,rng),turnKey:item.key};
 }
 applyMarkerInteraction(ctx,agent,target,tickEvents){
@@ -5401,7 +5745,20 @@ const mi=ctx.config.caMode.markerInteraction;
 if(!mi.enabled|| !mi.states.length)return null;
 const stateName=ctx.world.get(target);
 if(stateName===null|| !mi.states.includes(stateName))return null;
-const applicable=mi.effects.filter((e)=>e.enabled&&(!e.state||e.state===stateName));
+let applicable=mi.effects.filter((e)=>e.enabled&&(!e.state||e.state===stateName));
+const types=markerTypesForState(ctx.config,stateName);
+if(types.length){
+const eligible=types.filter((t)=>markerConditionMet(t,{
+length:agent.length,
+steps:ctx.tick,
+rng:ctx.rng,
+}));
+if(!eligible.length)return null;
+const picked=ctx.rng.weighted(eligible,(t)=>t.weight).item;
+applicable=picked&&picked.effect
+?[{...picked.effect,name:`${picked.name}（类型反馈）`}]
+:applicable;
+}
 if(!applicable.length)return null;
 let consumed=false;
 const applied=[];
@@ -5857,7 +6214,7 @@ return difficultyOf(stats,grid).speedScale;
 return{difficultyOf};
 })();
 __MODULES["src/core/config-diff.js"]=(function(){
-const{INTERACTION_LABELS,SPAWN_LABELS}=__MODULES["src/core/config.js"];
+const{INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS}=__MODULES["src/core/config.js"];
 const{CA_UPDATE_LABELS,CA_BOUNDARY_LABELS}=__MODULES["src/core/ca.js"];
 const{DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const CONFIG_SECTION_LABELS={
@@ -5879,6 +6236,9 @@ environmentRules:'环境规则',
 caMode:'元胞自动机',
 endConditions:'结束规则',
 style:'展示样式',
+markerTypes:'自定义标记物类型',
+obstacleTypes:'自定义障碍物类型',
+cellEditor:'画布格子编辑器',
 };
 const CONFIG_FIELD_LABELS={
 name:'名称',description:'描述',
@@ -5888,9 +6248,9 @@ enabled:'启用',initialLength:'初始长度',segmentSize:'体节尺寸',shape:'
 head:'头色',tail:'尾色',solid:'单色',trail:'轨迹色',custom:'自定义色带',
 mode:'模式',trigger:'触发时机',amount:'变化量',probability:'概率',
 maxLength:'最大长度',minLength:'最小长度',interval:'间隔',
-left:'左转权重',straight:'直行权重',right:'右转权重',
+left:'左转权重',straight:'直行权重',right:'右转权重',stop:'停止权重',
 avoidAll:'避开全部（总开关）',avoidBody:'避让自身身体',avoidObstacle:'避让障碍物',avoidOtherAgents:'避让其它移动体',
-avoidWall:'避让不可穿越边界',warnSelfCollision:'自撞预警提示',
+avoidWall:'避让不可穿越边界',warnSelfCollision:'自撞预警提示',onAvoid:'避撞触发后的处理',
 times:'预定时间点',minInterval:'最小间隔',maxInterval:'最大间隔',
 maxAgents:'最大同时存在',length:'长度',events:'触发事件',colorPalette:'逐个体配色',
 maxTotal:'生成总数上限',perAgent:'逐条安全避撞开关',default:'新生移动体默认',
@@ -5925,6 +6285,13 @@ followAgent:'跟随移动体',axisLabels:'坐标轴',
 hiddenStats:'隐藏的统计项',tabColors:'选项卡配色',compact:'紧凑排版',statFlash:'统计切换淡入',
 activeBg:'激活 · 背景',activeText:'激活 · 文字',activeBorder:'激活 · 边框',
 inactiveBg:'未激活 · 背景',inactiveText:'未激活 · 文字',inactiveBorder:'未激活 · 边框',
+showTraps:'陷阱格标识',trapColor:'陷阱标识色',
+weight:'触发权重',condition:'生效条件',symbol:'符号',render:'绘制方式',
+trap:'陷阱属性',triggerProbability:'触发概率',deathProbability:'死亡概率',log:'记录日志',
+tool:'当前工具',markerTypeId:'标记物类型',obstacleTypeId:'障碍物类型',stateName:'目标状态',
+randomObstacle:'随机放置障碍物',randomPool:'随机池',randomProbability:'随机放置概率',
+brushSize:'画笔尺寸',drag:'拖拽连画',rightClickErase:'右键擦除',
+historyLimit:'撤销历史上限',scatterDensity:'散布密度',painted:'已绘制格子',
 };
 const VALUE_LABELS_BY_PATH={
 'grid.type':{square:'方格图（4 方向）',hex:'六边形图（6 方向）'},
@@ -5952,6 +6319,8 @@ hex:'6 邻域（六边形）',radius:'半径 r 邻域',
 'style.fadeMode':{linear:'线性（等速变暗）',exponential:'指数（先急后缓）'},
 'style.trailJoin':{curve:'曲线（贝塞尔）',line:'直线',angle:'预设角度切角'},
 'style.bodyJoin':{curve:'曲线（贝塞尔）',line:'直线',angle:'预设角度切角'},
+'cellEditor.tool':CELL_TOOL_LABELS,
+'safety.onAvoid':SAFETY_ON_AVOID_LABELS,
 };
 const VALUE_LABELS_BY_KEY={
 direction:{...DIR_LABEL_CN,random:'任意（每次运行随机）'},
@@ -6064,6 +6433,8 @@ showArrows:false,
 showCoords:false,
 showObstacles:true,
 showMarkers:true,
+showTraps:true,
+trapColor:'#ff4d4f',
 highlightRules:true,
 showStartEnd:true,
 trailFade:true,
@@ -6135,6 +6506,10 @@ this.result=null;
 this.style={...STYLE_DEFAULTS};
 this.body=null;
 this.hover=null;
+this.trapStates=new Set();
+this.editMode=false;
+this.brushSize=1;
+this.editAccent='#7cc0ff';
 this.trail={path:[],order:[],info:new Map(),maxTick:0};
 this.trailInfo=new Map();
 this.trailUn=null;
@@ -6452,6 +6827,31 @@ ctx.stroke();
 }
 }
 ctx.restore();
+}
+if(s.showTraps!==false&&this.trapStates&&this.trapStates.size){
+const trapColor=s.trapColor||'#ff4d4f';
+const outer=half+gap/2;
+for(let i=0;i<frame.cells.length;i++){
+const st=this.states[frame.cells[i]];
+if(!st|| !this.trapStates.has(st.name))continue;
+const p=this.center(this.grid.coord(i));
+ctx.save();
+ctx.strokeStyle=trapColor;
+ctx.lineWidth=Math.max(1,cellSize*0.08);
+ctx.beginPath();
+if(this.grid.type==='hex')pathHex(ctx,p.x,p.y,outer);
+else roundRect(ctx,p.x-outer,p.y-outer,outer*2,outer*2,cellSize*0.16);
+ctx.stroke();
+const k=half*0.5;
+ctx.globalAlpha=0.9;
+ctx.beginPath();
+ctx.moveTo(p.x-k,p.y+k*0.8);
+ctx.lineTo(p.x,p.y-k*0.9);
+ctx.lineTo(p.x+k,p.y+k*0.8);
+ctx.closePath();
+ctx.stroke();
+ctx.restore();
+}
 }
 }
 drawTrail(frame,th,tickF){
@@ -7627,9 +8027,32 @@ ctx.restore();
 }
 drawHover(){
 const ctx=this.ctx;
-const{cellSize}=this.style;
+const{cellSize,gap}=this.style;
 const p=this.center(this.hover);
 ctx.save();
+if(this.editMode){
+const n=Math.max(1,Math.round(this.brushSize||1));
+const off=Math.floor((n-1)/2);
+const half=cellSize/2-gap/2;
+for(let dr=0;dr<n;dr++){
+for(let dc=0;dc<n;dc++){
+const c={col:this.hover.col-off+dc,row:this.hover.row-off+dr};
+if(!this.grid.inBounds(c))continue;
+const q=this.center(c);
+if(this.grid.type==='hex')pathHex(ctx,q.x,q.y,half);
+else roundRect(ctx,q.x-half,q.y-half,half*2,half*2,cellSize*0.2);
+ctx.globalAlpha=0.18;
+ctx.fillStyle=this.editAccent;
+ctx.fill();
+ctx.globalAlpha=1;
+ctx.strokeStyle=this.editAccent;
+ctx.lineWidth=2;
+ctx.stroke();
+}
+}
+ctx.restore();
+return;
+}
 ctx.strokeStyle=HOVER_ACCENT;
 ctx.lineWidth=1.5;
 const half=cellSize/2;
@@ -7683,6 +8106,10 @@ const info=this.trailInfo.get(index);
 if(s.hoverTipState!==false){
 const st=this.states[frame.cells[index]];
 lines.push(`环境：${st?stateLabel(st.name):'空格'}`);
+const trap=this.trapInfo&&this.trapInfo.get(st?st.name:'');
+if(trap){
+lines.push(`陷阱：触发 ${Math.round(trap.triggerProbability*100)}% · 死亡 ${Math.round(trap.deathProbability*100)}%（${trap.name}）`);
+}
 }
 if(s.hoverTipMarkers!==false){
 const isStart=s.showStartEnd&&this.startCoord
@@ -7714,8 +8141,10 @@ if(s.hoverTipTrail!==false&&s.showTrail&&info){
 lines.push(`轨迹：次序 #${info.order} · 首次第 ${info.first} 步 · 末次第 ${info.last} 步 · 共 ${info.visits} 次`);
 const at=visitStatsAt(info,frame.tick);
 if(at){
-lines.push(`本次经过：第 ${at.last} 步（截至当前共 ${at.count} 次）`);
-lines.push(at.prev===null?'上一次经过：无（本格首次经过）':`上一次经过：第 ${at.prev} 步`);
+lines.push(`当前路径经过次数：第 ${at.count} 次（最近一次经过：第 ${at.last} 步）`);
+lines.push(at.prev===null
+?`历史累计经过次数：共 ${info.visits} 次（本格首次经过，此前无经过记录）`
+:`历史累计经过次数：共 ${info.visits} 次（上次经过：第 ${at.prev} 步）`);
 }
 }
 return lines.join('\n');
@@ -8513,7 +8942,7 @@ return openDialog({...opts,alert:true});
 return{h,clear,group,field,row,button,numberInput,textInput,textArea,select,checkbox,range,colorInput,numBind,selBind,chkBind,textBind,rangeBind,colorBind,toast,formatNumber,confirmDialog,alertDialog,dialogOpen,switchField};
 })();
 __MODULES["src/ui/app.js"]=(function(){
-const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MAX_AGENT_SLOTS}=__MODULES["src/core/config.js"];
+const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MAX_AGENT_SLOTS,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,CELL_TOOL_LABELS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES,SAFETY_ON_AVOID_LABELS}=__MODULES["src/core/config.js"];
 const{defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText}=__MODULES["src/core/trail.js"];
 const{PRESETS,buildPresetConfig,matchPreset}=__MODULES["src/core/presets.js"];
 const{Simulation,DEFAULT_FRAME_CAP,MAX_FRAME_CAP,MAX_STORED_FRAMES}=__MODULES["src/core/simulation.js"];
@@ -8619,6 +9048,9 @@ let lastTs=0;
 let runTimer=null;
 let runSeq=0;
 let activeLogEls=[];
+const editHistory={undo:[],redo:[]};
+let editDrag=null;
+let editorCountEl=null;
 const endParamMemory={maxSteps:defaultConfig().endConditions.maxSteps};
 const endConditionSyncers=new Map();
 function bindEndConditionSync(code,fn){
@@ -8676,7 +9108,16 @@ if(dialogOpen())return;
 if((e.ctrlKey||e.metaKey)&& !e.altKey){
 if(e.key==='z'||e.key==='Z'){
 e.preventDefault();
+if(e.shiftKey){
+if(state.cfg.cellEditor.enabled&&redoEdit())toast('已重做上一次格子编辑','info');
+}else if(state.cfg.cellEditor.enabled&&undoEdit()){
+toast('已撤销上一次格子编辑','info');
+}else{
 undoConfigReplace();
+}
+}else if((e.key==='y'||e.key==='Y')&&state.cfg.cellEditor.enabled){
+e.preventDefault();
+if(redoEdit())toast('已重做上一次格子编辑','info');
 }
 return;
 }
@@ -9376,11 +9817,33 @@ function onStyleChange(){
 applyTabTheme();
 if(!state.result)return;
 renderer.setStyle(state.cfg.style,state.cfg.body);
+applyRendererExtras(state.cfg);
 draw();
 }
 function clampFrameCap(v){
 if(!Number.isFinite(v))return DEFAULT_FRAME_CAP;
 return Math.min(MAX_FRAME_CAP,Math.max(1,Math.round(v)));
+}
+function applyRendererExtras(cfg){
+if(!renderer)return;
+const traps=new Set();
+const info=new Map();
+for(const t of cfg.obstacleTypes){
+if(!t.enabled||info.has(t.state)|| !isTrapState(cfg,t.state))continue;
+info.set(t.state,{name:t.name,...t.trap});
+traps.add(t.state);
+}
+renderer.trapStates=traps;
+renderer.trapInfo=info;
+const ce=cfg.cellEditor;
+renderer.editMode= !!ce.enabled;
+renderer.brushSize=ce.brushSize;
+renderer.editAccent=ce.tool==='erase'?'#ff7b72'
+:ce.tool==='obstacle'?'#ffa94d'
+:ce.tool==='state'?'#63e6be':'#7cc0ff';
+if(renderer.canvas&&renderer.canvas.classList){
+renderer.canvas.classList.toggle('editing',!!ce.enabled);
+}
 }
 function recompute(opts={}){
 let normalized;
@@ -9443,6 +9906,7 @@ saveLocalConfig(cfg);
 writeAutoSave();
 renderer.setResult(result);
 renderer.setStyle(cfg.style,cfg.body);
+applyRendererExtras(cfg);
 liveTrailCache={tick:-1,at:0,trail:null};
 renderStageStats();
 renderLog();
@@ -9617,7 +10081,8 @@ return b;
 c.appendChild(h('div',{class:'controls-line'},
 els.playBtn,els.prevBtn,els.stepBtn,els.resetBtn,els.endBtn,els.runBtn,els.runLoading));
 c.appendChild(h('div',{class:'controls-line'},
-els.loopChk,els.autoChk,els.followChk,els.adaptiveChk,
+els.loopChk,els.autoChk,els.followChk,els.adaptiveChk));
+c.appendChild(h('div',{class:'controls-line speed-line'},
 h('span',{class:'mini-label'},'速度'),els.speedRange,els.speedLabel));
 c.appendChild(h('div',{class:'controls-line'},
 h('span',{class:'mini-label'},'速度档位'),...speedBtns));
@@ -9774,11 +10239,165 @@ pause();
 gotoFrame(frameIndexForTick(info.first));
 toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`,'info');
 }
+function cellEditorActive(){
+return!!(state.cfg&&state.cfg.cellEditor&&state.cfg.cellEditor.enabled&&state.result);
+}
+function paintedMap(){
+const map=new Map();
+for(const p of state.cfg.cellEditor.painted)map.set(`${p.col},${p.row}`,p);
+return map;
+}
+function brushCells(col,row,n){
+const size=Math.max(1,Math.round(n||1));
+const off=Math.floor((size-1)/2);
+const out=[];
+for(let dr=0;dr<size;dr++){
+for(let dc=0;dc<size;dc++){
+const c={col:col-off+dc,row:row-off+dr};
+if(state.result.grid.inBounds(c))out.push(c);
+}
+}
+return out;
+}
+function cellEditorStateName(cfg){
+const ce=cfg.cellEditor;
+const states=cfg.caMode.states;
+if(ce.stateName&&states.some((s)=>s.name===ce.stateName))return ce.stateName;
+const first=states.find((s)=>s.name!=='empty');
+return first?first.name:'';
+}
+function paintStateForCell(){
+const cfg=state.cfg;
+const ce=cfg.cellEditor;
+if(ce.tool==='erase')return'';
+if(ce.tool==='state')return cellEditorStateName(cfg);
+if(ce.tool==='obstacle'){
+const types=cfg.obstacleTypes.filter((t)=>t.enabled);
+if(!types.length)return'';
+if(ce.randomObstacle){
+const pool=types.filter((t)=> !ce.randomPool.length||ce.randomPool.includes(t.id));
+if(!pool.length)return'';
+if(ce.randomProbability<1&&Math.random()>=ce.randomProbability)return'';
+const total=pool.reduce((a,t)=>a+Math.max(0,t.weight),0);
+if(total<=0)return pool[pool.length-1].state;
+let r=Math.random()*total;
+for(const t of pool){r-=Math.max(0,t.weight);if(r<=0)return t.state;}
+return pool[pool.length-1].state;
+}
+const t=types.find((x)=>x.id===ce.obstacleTypeId)||types[0];
+return t.state;
+}
+const mt=cfg.markerTypes.find((t)=>t.id===ce.markerTypeId&&t.enabled)
+||cfg.markerTypes.find((t)=>t.enabled);
+if(mt&&cfg.caMode.states.some((s)=>s.name===mt.state))return mt.state;
+const mi=cfg.caMode.markerInteraction;
+const fallback=(mi.states||[]).find((n)=>cfg.caMode.states.some((s)=>s.name===n));
+if(fallback)return fallback;
+const idx=cfg.caMode.states.findIndex((s)=>s.name==='marker');
+return idx>=0?'marker':(cfg.caMode.states[1]?cfg.caMode.states[1].name:'');
+}
+function pushEditHistory(){
+const limit=state.cfg.cellEditor.historyLimit;
+if(!limit)return;
+editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+if(editHistory.undo.length>limit)editHistory.undo.shift();
+editHistory.redo.length=0;
+}
+function commitPainted(map){
+state.cfg.cellEditor.painted=[...map.values()];
+syncEditorCount();
+onSimChange(0);
+}
+function applyEditAt(col,row,opts={}){
+const ce=state.cfg.cellEditor;
+const cells=brushCells(col,row,ce.brushSize);
+const map=paintedMap();
+pushEditHistory();
+const removing= !opts.erase&& !opts.force&&map.has(`${col},${row}`);
+for(const c of cells){
+const k=`${c.col},${c.row}`;
+if(opts.erase||removing){map.delete(k);continue;}
+const st=paintStateForCell();
+if(st)map.set(k,{col:c.col,row:c.row,state:st});
+}
+commitPainted(map);
+}
+function paintByDrag(c){
+const map=paintedMap();
+const k=`${c.col},${c.row}`;
+if(editDrag.mode==='erase'){
+map.delete(k);
+}else{
+const st=paintStateForCell();
+if(!st)return;
+map.set(k,{col:c.col,row:c.row,state:st});
+}
+state.cfg.cellEditor.painted=[...map.values()];
+syncEditorCount();
+onSimChange(0);
+}
+function undoEdit(){
+if(!editHistory.undo.length)return false;
+editHistory.redo.push(JSON.stringify(state.cfg.cellEditor.painted));
+state.cfg.cellEditor.painted=JSON.parse(editHistory.undo.pop());
+syncEditorCount();
+onSimChange(0);
+return true;
+}
+function redoEdit(){
+if(!editHistory.redo.length)return false;
+editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+state.cfg.cellEditor.painted=JSON.parse(editHistory.redo.pop());
+syncEditorCount();
+onSimChange(0);
+return true;
+}
+function scatterPainted(){
+const ce=state.cfg.cellEditor;
+const grid=state.result.grid;
+const map=paintedMap();
+pushEditHistory();
+for(let row=0;row<grid.height;row++){
+for(let col=0;col<grid.width;col++){
+if(Math.random()>=ce.scatterDensity)continue;
+const st=paintStateForCell();
+if(st)map.set(`${col},${row}`,{col,row,state:st});
+}
+}
+commitPainted(map);
+toast(`已按 ${(ce.scatterDensity*100).toFixed(0)}% 密度随机散布`,'success');
+}
+async function clearPainted(){
+const n=state.cfg.cellEditor.painted.length;
+if(!n){toast('当前没有手绘格子','info');return;}
+const okClear=await confirmDialog({
+title:'清空全部手绘格子',
+message:`将删除当前手工绘制的 ${n} 个格子（初始环境补丁），此操作可通过「撤销」回退。`,
+confirmText:'清空',
+cancelText:'取消',
+danger:true,
+});
+if(!okClear)return;
+pushEditHistory();
+commitPainted(new Map());
+toast('已清空手绘格子','success');
+}
+function syncEditorCount(){
+if(!editorCountEl)return;
+editorCountEl.textContent=`已绘制 ${state.cfg.cellEditor.painted.length} 格 · 可撤销 ${editHistory.undo.length} 步`;
+}
 function bindCanvasEvents(){
 els.canvas.addEventListener('mousemove',(e)=>{
 if(!state.result)return;
 const c=renderer.hitTest(e.clientX,e.clientY);
 renderer.hover=c;
+if(editDrag&&c){
+const key=`${c.col},${c.row}`;
+if(editDrag.last!==key){
+editDrag.last=key;
+paintByDrag(c);
+}
+}
 draw();
 if(!c||renderer.style.hoverTip===false){
 hideTooltip();
@@ -9796,7 +10415,29 @@ draw();
 window.addEventListener('scroll',()=>{if(els.tooltip?.classList.contains('show'))hideTooltip();},true);
 window.addEventListener('resize',()=>hideTooltip());
 els.canvas.addEventListener('click',(e)=>{
+if(cellEditorActive())return;
 jumpToCellFirstPass(renderer.hitTest(e.clientX,e.clientY));
+});
+els.canvas.addEventListener('mousedown',(e)=>{
+if(!cellEditorActive()||e.button!==0)return;
+const c=renderer.hitTest(e.clientX,e.clientY);
+if(!c)return;
+const existed=state.cfg.cellEditor.painted.some((p)=>p.col===c.col&&p.row===c.row);
+applyEditAt(c.col,c.row);
+if(state.cfg.cellEditor.drag){
+editDrag={mode:existed?'erase':'paint',last:`${c.col},${c.row}`};
+}
+});
+window.addEventListener('mouseup',()=>{
+if(!editDrag)return;
+editDrag=null;
+syncEditorCount();
+});
+els.canvas.addEventListener('contextmenu',(e)=>{
+if(!cellEditorActive()|| !state.cfg.cellEditor.rightClickErase)return;
+e.preventDefault();
+const c=renderer.hitTest(e.clientX,e.clientY);
+if(c)applyEditAt(c.col,c.row,{erase:true});
 });
 let touchStart=null;
 els.canvas.addEventListener('touchstart',(e)=>{
@@ -9828,6 +10469,10 @@ const t=e.changedTouches&&e.changedTouches[0];
 if(!started||started.moved|| !t){hideTooltip();return;}
 const c=renderer.hitTest(t.clientX,t.clientY);
 hideTooltip();
+if(cellEditorActive()){
+if(c)applyEditAt(c.col,c.row);
+return;
+}
 jumpToCellFirstPass(c);
 },{passive:true});
 els.canvas.addEventListener('touchcancel',()=>{
@@ -9845,6 +10490,7 @@ const STAT_KEYS=[
 ['agents','存活移动体'],['peakAgents','峰值移动体'],['spawns','生成新蛇'],['agentDeaths','移动体消失'],
 ['merges','融合次数'],['repels','排斥次数'],['markerInteractions','标记物交互'],
 ['transformDeaths','自撞死亡'],['transformedCells','转化节点'],['collisionWarnings','碰撞预警'],
+['stops','停止次数'],['trapTriggers','陷阱触发'],['trapDeaths','陷阱死亡'],
 ['caSteps','CA 演进次数'],['obstacleCount','障碍物'],['markerCount','标记物'],['seed','随机种子'],
 ['rngCalls','随机调用次数'],
 ['lives','剩余生命'],['maxLives','峰值生命'],['lifeGains','获得生命'],['lifeLosses','失去生命'],
@@ -9857,7 +10503,7 @@ keys:['steps','framePos','frames','elapsed','endReason','ruleTriggers','seed','r
 },
 {
 title:'长度与碰撞',
-keys:['length','finalLength','maxLength','collisions','selfCollisions','coverage'],
+keys:['length','finalLength','maxLength','collisions','selfCollisions','coverage','stops'],
 },
 {
 title:'移动体与交互',
@@ -9865,7 +10511,7 @@ keys:['agents','peakAgents','spawns','agentDeaths','merges','repels','markerInte
 },
 {
 title:'环境与转化',
-keys:['obstacleCount','markerCount','caSteps','transformDeaths','transformedCells','collisionWarnings'],
+keys:['obstacleCount','markerCount','caSteps','transformDeaths','transformedCells','collisionWarnings','trapTriggers','trapDeaths'],
 },
 {
 title:'生命机制（多生命）',
@@ -9897,6 +10543,9 @@ markerInteractions:{name:'标记物交互',desc:'移动体踏入交互标记物�
 transformDeaths:{name:'自撞死亡',desc:'开启「自撞即判定死亡」后，因撞到自身而直接死亡的累计次数（此时不再结束整轮运行）。'},
 transformedCells:{name:'转化节点',desc:'移动体死亡后，其身体体节就地写入环境（转为障碍物等状态）的格子总数。'},
 collisionWarnings:{name:'碰撞预警',desc:'开启「碰撞预警提示」后，被标记为「下一步会撞到自身身体」的危险落点累计数量。'},
+stops:{name:'停止次数',desc:'「停止」权重被抽中的累计次数：该回合原地不动，判定与撞上障碍物相同，同时计入碰撞次数。'},
+trapTriggers:{name:'陷阱触发',desc:'蛇尝试移动到已启用陷阱的障碍物格、并按触发概率成功触发的累计次数。'},
+trapDeaths:{name:'陷阱死亡',desc:'陷阱触发后按死亡概率判定为死亡、导致蛇消失的累计次数（每次判定都会写入运行日志）。'},
 caSteps:{name:'CA 演进次数',desc:'元胞自动机执行的更新代数。每步移动结束后 CA 按设定规则推进一代，因此它与步数通常同步增长（含初始代）。'},
 obstacleCount:{name:'障碍物',desc:'当前环境中处于障碍物状态的格子数量（含 CA 演化与身体转化产生的障碍物）。'},
 markerCount:{name:'标记物',desc:'当前环境中处于标记物状态的格子数量，移动体踩到后会被消耗或触发效果。'},
@@ -9982,6 +10631,9 @@ markerInteractions:pick(st.markerInteractions,r.stats.markerInteractions||0),
 transformDeaths:pick(st.transformDeaths,s.transformDeaths||0),
 transformedCells:pick(st.transformedCells,s.transformedCells||0),
 collisionWarnings:pick(st.collisionWarnings,s.collisionWarnings||0),
+stops:pick(st.stops??0,s.stops||0),
+trapTriggers:pick(st.trapTriggers??0,s.trapTriggers||0),
+trapDeaths:pick(st.trapDeaths??0,s.trapDeaths||0),
 caSteps:pick(st.caSteps,s.caSteps),
 obstacleCount:pick(st.obstacleCount,s.obstacleCount),
 markerCount:pick(st.markerCount,s.markerCount),
@@ -10919,10 +11571,10 @@ if(els.continueBtn)els.continueBtn.textContent=`继续运行 +${continueStep()}`
 updateSpeedLabel();
 }
 const CONFIG_TABS=[
-{key:'core',label:'核心规则',hint:'网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则'},
+{key:'core',label:'核心规则',hint:'网格与坐标、起点与移动体、基础移动规则（含停止）、碰撞与自撞、环境规则、画布格子编辑器、结束规则'},
 {key:'visual',label:'视觉显示',hint:'基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置'},
 {key:'scene',label:'场景与运行',hint:'场景名称与描述、随机种子、规则执行方式、模拟帧率、单次运行步数上限、网格边界与多移动体规模'},
-{key:'extend',label:'扩展机制',hint:'多蛇与交互、蛇死亡转化、生命机制、元胞自动机'},
+{key:'extend',label:'扩展机制',hint:'多蛇与交互、蛇死亡转化、生命机制、元胞自动机、自定义标记物类型、自定义障碍物类型（含陷阱）'},
 ];
 let activateCfgTab=()=>{};
 function renderConfigPanel(){
@@ -10961,6 +11613,7 @@ bodyGroup(cfg),
 moveRulesGroup(cfg),
 collisionGroup(cfg),
 envRulesGroup(cfg),
+cellEditorGroup(cfg),
 endGroup(cfg),
 );
 panels.get('extend').append(
@@ -10968,6 +11621,8 @@ multiSnakeGroup(cfg),
 transformGroup(cfg),
 lifeGroup(cfg),
 caGroup(cfg),
+markerTypesGroup(cfg),
+obstacleTypesGroup(cfg),
 );
 panels.get('visual').append(
 visualBasicGroup(cfg),
@@ -11016,16 +11671,32 @@ applyConfigSearch(state.cfgSearch);
 },120);
 });
 els.cfgSearchHint=h('span',{class:'mini-label'},'');
-return h('div',{class:'cfg-search'},
-input,
-button('清除',()=>{
+const clearBtn=button('清除',()=>{
 if(cfgSearchTimer){clearTimeout(cfgSearchTimer);cfgSearchTimer=null;}
 state.cfgSearch='';
 input.value='';
 applyConfigSearch('');
-},'ghost small'),
-button('展开全部',()=>setAllGroupsOpen(els.config,true),'ghost small'),
-button('收起全部',()=>setAllGroupsOpen(els.config,false),'ghost small'),
+},'ghost small');
+clearBtn.title='清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态';
+bindTermTip(clearBtn,{
+name:'清除搜索',
+desc:'清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态；'
++'仅影响搜索过滤结果，不会改动任何已保存的设置项。',
+});
+const expandBtn=button('展开全部',()=>setAllGroupsOpen(els.config,true),'ghost small');
+expandBtn.title='展开当前选项卡下的全部折叠分组';
+const collapseBtn=button('收起全部',()=>setAllGroupsOpen(els.config,false),'ghost small');
+collapseBtn.title='收起当前选项卡下的全部折叠分组';
+input.addEventListener('keydown',(e)=>{
+if(e.key!=='Escape')return;
+e.preventDefault();
+clearBtn.click();
+});
+return h('div',{class:'cfg-search'},
+input,
+clearBtn,
+expandBtn,
+collapseBtn,
 els.cfgSearchHint);
 }
 function setAllGroupsOpen(root,open){
@@ -11342,9 +12013,12 @@ return String(text||'')
 .filter((s)=> /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s));
 }
 function weightSummary(m){
-const sum=m.left+m.straight+m.right;
+const sum=MOVE_KEYS.reduce((a,k)=>a+(Number(m[k])||0),0);
 if(sum<=0)return'权重全为 0，运行时按均匀分布处理';
-return`概率：左 ${(m.left/sum*100).toFixed(1)}% · 直 ${(m.straight/sum*100).toFixed(1)}% · 右 ${(m.right/sum*100).toFixed(1)}%`;
+const parts=MOVE_KEYS
+.filter((k)=>(Number(m[k])||0)>0)
+.map((k)=>`${MOVE_LABELS[k]} ${(m[k]/sum*100).toFixed(1)}%`);
+return`概率：${parts.join(' · ')}`;
 }
 function moveRulesGroup(cfg){
 const m=cfg.moveRules;
@@ -11352,6 +12026,8 @@ const weightHint=h('div',{class:'hint'},weightSummary(m));
 const upd=()=>{onSimChange();weightHint.textContent=weightSummary(m);};
 const list=h('div',{class:'rule-list'});
 cfg.advancedRules.forEach((r,index)=>{
+if(!r.moves||typeof r.moves!=='object')r.moves={};
+for(const k of MOVE_KEYS)if(!Number.isFinite(Number(r.moves[k])))r.moves[k]=0;
 const hint=h('div',{class:'hint'},weightSummary(r.moves));
 const updWeights=()=>{onSimChange();hint.textContent=weightSummary(r.moves);};
 const body=[
@@ -11365,9 +12041,11 @@ button('✕',()=>{cfg.advancedRules.splice(index,1);rebuildAll();},'icon small d
 ),
 ),
 field('条件',conditionEditor(r.condition,()=>onSimChange(),()=>rebuildAll()),'条件满足时使用下面的权重'),
-field('左转权重',rangeBind(r.moves,'left',updWeights,{min:0,max:1,step:0.01,number:true})),
-field('直行权重',rangeBind(r.moves,'straight',updWeights,{min:0,max:1,step:0.01,number:true})),
-field('右转权重',rangeBind(r.moves,'right',updWeights,{min:0,max:1,step:0.01,number:true})),
+...MOVE_KEYS.map((k)=>field(
+`${MOVE_LABELS[k]}权重`,
+rangeBind(r.moves,k,updWeights,{min:0,max:1,step:0.01,number:true}),
+k==='stop'?'原地不动（与撞上障碍物等效，无法完成有效位移）':null,
+)),
 hint,
 field('优先级',numBind(r,'priority',()=>onSimChange(),{step:1}),'数值越大越优先匹配'),
 ];
@@ -11375,9 +12053,11 @@ list.appendChild(group(r.name||'条件概率规则',body,{open:false,badge:r.ena
 });
 return group('移动规则',[
 h('div',{class:'sub-title'},'基础权重'),
-field('左转权重',rangeBind(m,'left',upd,{min:0,max:1,step:0.01,number:true})),
-field('直行权重',rangeBind(m,'straight',upd,{min:0,max:1,step:0.01,number:true})),
-field('右转权重',rangeBind(m,'right',upd,{min:0,max:1,step:0.01,number:true})),
+...MOVE_KEYS.map((k)=>field(
+`${MOVE_LABELS[k]}权重`,
+rangeBind(m,k,upd,{min:0,max:1,step:0.01,number:true}),
+k==='stop'?'默认 0（不停止）：设为正值后该回合有几率原地不动，判定与撞上障碍物一致':null,
+)),
 weightHint,
 h('div',{class:'sub-title'},'条件概率规则（按优先级匹配，命中后改用其权重）'),
 list,
@@ -11387,7 +12067,7 @@ id:`adv_${Math.random().toString(36).slice(2,8)}`,
 enabled:true,
 name:`条件概率 ${cfg.advancedRules.length+1}`,
 condition:{logic:'and',clauses:[defaultClause('count')]},
-moves:{left:0.2,straight:0.6,right:0.2},
+moves:{left:0.2,straight:0.6,right:0.2,stop:0},
 priority:1,
 });
 rebuildAll();
@@ -11413,6 +12093,11 @@ s.avoidWall&&'不可穿越边界',
 note.textContent=on.length
 ?`已启用（${on.join(' / ')}）：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。`
 :'未启用：方向选择完全按基础 / 条件概率权重进行。';
+if(on.length){
+note.textContent+=s.onAvoid==='stop'
+?' 避撞触发后：立即停止运动。'
+:' 避撞触发后：自动切换其他可行方向继续运动。';
+}
 };
 syncNote();
 const item=(key,label)=>chkBind(s,key,(v)=>{
@@ -11441,6 +12126,15 @@ field('规避边界',h('div',{class:'chips-line'},item('avoidWall','不可穿越
 wallMatters
 ?'当前边界不可穿越：开启后实体不再触碰边界，撞墙 / 反弹都只会发生在无路可走时'
 :'当前边界为「穿越到另一侧」：越界会环绕回网格内，本项不生效；把边界改为停止 / 反弹后会自动开启'),
+field('避撞触发后的处理',
+select(s.onAvoid,SAFETY_ON_AVOID_MODES.map((v)=>({value:v,label:SAFETY_ON_AVOID_LABELS[v]})),(v)=>{
+s.onAvoid=v;
+onSimChange();
+rebuildAll();
+}),
+s.onAvoid==='stop'
+?'避撞机制介入（本步本应朝向的方向被判定为不安全）时原地停止运动：不产生位移，计入「停止次数」并遵循「撞到障碍物」的结束规则与生命机制'
+:'避撞机制介入时自动切换到其他可行方向继续运动（默认，与旧版行为完全一致）'),
 note,
 field('碰撞预警提示',h('div',{class:'chips-line'},
 chkBind(s,'warnSelfCollision',()=>onSimChange(),'标记「下一步会撞到自身身体」的危险格')),
@@ -12041,6 +12735,60 @@ const changesLength=mi.effects.some((e)=>e.enabled&&(e.mode==='set'||Math.abs(Nu
 if(!changesLength)return null;
 return'⚠ 未启用「蛇长度可变」：当前「长度策略」为「固定」，长度恒等于初始长度，交互吞噬 / 触碰带来的长度变化不会生效。请把「长度策略」改为「可变」。';
 }
+function escHtml(s){
+return String(s??'').replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function markerStateTip(s){
+const cfg=state.cfg;
+const mi=cfg.caMode.markerInteraction;
+const active=mi.states.includes(s.name);
+const fxs=mi.effects.filter((e)=>e.enabled&&e.state===s.name);
+const types=cfg.markerTypes.filter((t)=>t.enabled&&t.state===s.name);
+const lines=[
+`<b>功能</b>：${active?'已设为交互标记物，蛇头进入该格时按下方反馈规则表产生效果。':'尚未设为交互标记物：勾选本状态后才会参与交互。'}`,
+`<b>生效规则</b>：${s.blocking
+?'当前标记为「阻挡」状态，移动体无法进入，交互反馈不会触发（需先取消阻挡）。'
+:`非阻挡状态，移动体可进入；共命中 ${fxs.length} 条启用中的反馈规则${fxs.length?`（${escHtml(fxs.map((e)=>e.name).join(' / '))}），按列表顺序自上而下匹配，可分别设置概率、消耗与变色`:'（可在下方反馈规则表新增）'}。`}`,
+`<b>使用场景</b>：${escHtml(markerUsageScene(s,fxs.length))}`,
+];
+if(types.length){
+const detail=types.map((t)=>`${t.name}·权重 ${t.weight}·${MARKER_CONDITION_LABELS[t.condition.type]}`).join('；');
+lines.push(`<b>自定义类型</b>：${escHtml(detail)}；运行时先判断生效条件，再按权重抽取其中一个生效。`);
+}
+return{name:`状态「${escHtml(stateLabelWithKey(s.name))}」`,desc:lines.join('<br>')};
+}
+function markerUsageScene(s,fxCount){
+const cfg=state.cfg;
+if(cfg.obstacleTypes.some((t)=>t.enabled&&t.state===s.name))return'该状态同时被某个障碍物类型引用，碰撞处理优先于标记物交互。';
+if(fxCount>0)return'常用于「吃食物变长」「踩到减速」「中毒缩短」等玩法：把食物格设为本状态并配置长度变化即可。';
+return'适合作为待激活的交互点：勾选后新增一条反馈规则即可让它对移动体产生影响。';
+}
+function markerStateChips(ca,mi){
+const box=h('div',{class:'chips'});
+for(const s of ca.states){
+const on=mi.states.includes(s.name);
+const chip=h('button',{
+type:'button',
+class:`chip${on?' on':''}`,
+title:`内部键名：${s.name}`,
+onclick:()=>{
+const i=mi.states.indexOf(s.name);
+if(i>=0)mi.states.splice(i,1);
+else mi.states.push(s.name);
+onSimChange();
+rebuildAll();
+},
+},stateLabelWithKey(s.name));
+const help=bindTermTip(h('button',{
+type:'button',
+class:'chip-help',
+title:'查看该标记物的详细说明',
+'aria-label':`${s.name} 标记物说明`,
+},'?'),markerStateTip(s));
+box.appendChild(h('span',{class:'chip-item'},chip,help));
+}
+return box;
+}
 function markerInteractionEditor(ca){
 const mi=ca.markerInteraction;
 const wrap=h('div',{class:'rule-list'});
@@ -12060,22 +12808,8 @@ toast('已把「长度策略」改为「可变」，长度变化即刻生效','s
 },'primary small'),
 ));
 }
-wrap.appendChild(field('交互标记物状态',h('div',{class:'chips'},
-...ca.states.map((s)=>{
-const on=mi.states.includes(s.name);
-return h('button',{
-type:'button',
-class:`chip${on?' on':''}`,
-title:`内部键名：${s.name}`,
-onclick:()=>{
-const i=mi.states.indexOf(s.name);
-if(i>=0)mi.states.splice(i,1);
-else mi.states.push(s.name);
-onSimChange();
-rebuildAll();
-},
-},stateLabelWithKey(s.name));
-})),'可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则'));
+wrap.appendChild(field('交互标记物状态',markerStateChips(ca,mi),
+'可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则。点击每个标记物右侧的「?」可查看该标记物的功能、生效规则与使用场景'));
 const list=h('div',{class:'rule-list'});
 mi.effects.forEach((fx,i)=>{
 const body=[
@@ -12226,6 +12960,299 @@ direction:'east',
 rebuildAll();
 },'ghost small'));
 return list;
+}
+function typeStateOptions(){
+return state.cfg.caMode.states
+.filter((s)=>s.name!=='empty')
+.map((s)=>({value:s.name,label:stateLabelWithKey(s.name)}));
+}
+function typeRenderOptions(){
+return[
+{value:'',label:'继承状态'},
+{value:'fill',label:'填充'},
+{value:'cross',label:'交叉'},
+{value:'dot',label:'圆点'},
+];
+}
+function typeSymbolInput(t){
+return h('input',{
+class:'input tiny',
+value:t.symbol||'',
+placeholder:'继承',
+maxlength:1,
+onchange:(e)=>{t.symbol=e.target.value.slice(0,1);onSimChange();rebuildAll();},
+});
+}
+function markerConditionRow(t){
+const c=t.condition;
+const label=c.type==='probability'?'生效概率'
+:c.type==='minLength'?'最小蛇长'
+:c.type==='maxLength'?'最大蛇长'
+:c.type==='minSteps'?'最小步数':'';
+return row(
+field('生效条件',selBind(c,'type',()=>{onSimChange();rebuildAll();},
+MARKER_CONDITION_TYPES.map((v)=>({value:v,label:MARKER_CONDITION_LABELS[v]}))),
+'条件不满足时本类型不参与抽取（不会消耗随机数）'),
+c.type==='always'?null:field(label,numBind(c,'value',()=>onSimChange(),
+c.type==='probability'?{min:0,max:1,step:0.01}:{min:0,max:100000})),
+);
+}
+function markerTypeEffectEditor(t){
+const box=h('div',{});
+box.appendChild(checkbox(!!t.effect,(v)=>{
+t.effect=v?{mode:'delta',value:1,probability:1,consume:true,consumeTo:'empty',color:''}:null;
+onSimChange();
+rebuildAll();
+},'使用本类型独立的反馈参数'));
+if(!t.effect)return box;
+const e=t.effect;
+box.appendChild(row(
+field('变化方式',selBind(e,'mode',()=>{onSimChange();rebuildAll();},[
+{value:'delta',label:'增减固定长度'},
+{value:'percent',label:'按当前长度百分比'},
+{value:'set',label:'直接设定长度'},
+])),
+field(e.mode==='percent'?'百分比（%，负数为缩短）':e.mode==='set'?'目标长度':'变化量（负数为缩短）',
+numBind(e,'value',()=>onSimChange(),e.mode==='set'?{min:1,max:100000}:{min:-1000,max:1000})),
+));
+box.appendChild(row(
+field('触发概率',rangeBind(e,'probability',()=>onSimChange(),{min:0,max:1,step:0.01})),
+field('消耗标记物',row(
+chkBind(e,'consume',()=>onSimChange(),'消耗'),
+select(e.consumeTo,stateOptions(),(v)=>{e.consumeTo=v;onSimChange();}),
+),'消耗后该格变为右侧状态'),
+field('反馈变色',row(
+colorInput(e.color||'#51cf66',(v)=>{e.color=v;onSimChange();}),
+button('清除',()=>{e.color='';onSimChange();rebuildAll();},'ghost small'),
+),'留空表示不变色'),
+));
+return box;
+}
+function markerTypesGroup(cfg){
+const list=h('div',{class:'rule-list'});
+cfg.markerTypes.forEach((t,i)=>{
+const body=[
+row(
+textBind(t,'name',()=>{}),
+chkBind(t,'enabled',()=>onSimChange(),'启用'),
+orderActions(
+button('↑',()=>{swap(cfg.markerTypes,i,i-1);rebuildAll();},'icon small'),
+button('↓',()=>{swap(cfg.markerTypes,i,i+1);rebuildAll();},'icon small'),
+button('✕',()=>{cfg.markerTypes.splice(i,1);rebuildAll();},'icon small danger'),
+),
+),
+field('引用状态',select(t.state,typeStateOptions(),(v)=>{t.state=v;onSimChange();rebuildAll();}),
+'挂载到哪个元胞状态：蛇头进入该状态的格子即视为碰到本标记物'),
+row(
+field('触发权重',rangeBind(t,'weight',()=>onSimChange(),{min:0,max:1,step:0.01,number:true}),
+'同一状态下多个类型按权重占比抽取一个生效'),
+markerConditionRow(t),
+),
+row(
+field('外观配色',row(
+colorInput(t.color||'#ffd43b',(v)=>{t.color=v;onSimChange();}),
+button('继承',()=>{t.color='';onSimChange();rebuildAll();},'ghost small'),
+),'留空（点「继承」）表示沿用状态本身的颜色'),
+field('外观符号',typeSymbolInput(t),'留空表示沿用状态符号'),
+field('绘制方式',select(t.render||'',typeRenderOptions(),(v)=>{t.render=v;onSimChange();rebuildAll();})),
+),
+field('内置反馈',markerTypeEffectEditor(t),'开启后本类型使用自己的反馈参数，不再走「反馈规则表」'),
+];
+list.appendChild(group(t.name||`标记物 ${i+1}`,body,{open:false,badge:t.enabled?'':'停用',key:`mk:${t.id}`}));
+});
+return group('自定义标记物类型',[
+h('div',{class:'hint'},'在「交互标记物状态」之上再挂一层「类型」：同一状态可拥有多个标记物类型，各自带外观样式、生效条件与触发权重。运行时先判条件、再按权重抽取一个生效；列表为空时行为与旧版完全一致（不启用类型层）。'),
+list,
+button('+ 添加标记物类型',()=>{
+if(cfg.markerTypes.length>=MAX_MARKER_TYPES){
+toast(`标记物类型最多 ${MAX_MARKER_TYPES} 个`,'warn');
+return;
+}
+const fallback=cfg.caMode.markerInteraction.states[0]
+||(cfg.caMode.states.find((s)=>s.name==='marker')||{}).name
+||cfg.caMode.states[1].name;
+cfg.markerTypes.push({
+id:`mk_${Math.random().toString(36).slice(2,8)}`,
+name:`标记物 ${cfg.markerTypes.length+1}`,
+enabled:true,
+state:fallback,
+weight:1,
+color:'',
+symbol:'',
+render:'',
+condition:{type:'always',value:0},
+effect:null,
+});
+rebuildAll();
+},'ghost'),
+],{open:false,badge:cfg.markerTypes.length?`${cfg.markerTypes.length} 个`:''});
+}
+function obstacleTypesGroup(cfg){
+const list=h('div',{class:'rule-list'});
+cfg.obstacleTypes.forEach((t,i)=>{
+const tr=t.trap;
+const body=[
+row(
+textBind(t,'name',()=>{}),
+chkBind(t,'enabled',()=>onSimChange(),'启用'),
+orderActions(
+button('↑',()=>{swap(cfg.obstacleTypes,i,i-1);rebuildAll();},'icon small'),
+button('↓',()=>{swap(cfg.obstacleTypes,i,i+1);rebuildAll();},'icon small'),
+button('✕',()=>{cfg.obstacleTypes.splice(i,1);rebuildAll();},'icon small danger'),
+),
+),
+row(
+field('引用状态',select(t.state,typeStateOptions(),(v)=>{t.state=v;onSimChange();rebuildAll();}),
+'撞到这个状态的格子即视为撞上本障碍物类型'),
+field('随机权重',numBind(t,'weight',()=>onSimChange(),{min:0,step:0.1}),
+'「随机放置」模式按权重占比抽取类型'),
+),
+row(
+field('外观配色',row(
+colorInput(t.color||'#868e96',(v)=>{t.color=v;onSimChange();}),
+button('继承',()=>{t.color='';onSimChange();rebuildAll();},'ghost small'),
+),'留空（点「继承」）表示沿用状态本身的颜色'),
+field('外观符号',typeSymbolInput(t),'留空表示沿用状态符号'),
+field('绘制方式',select(t.render||'',typeRenderOptions(),(v)=>{t.render=v;onSimChange();rebuildAll();})),
+),
+h('div',{class:'sub-title'},'陷阱属性'),
+switchField('启用陷阱',chkBind(tr,'enabled',()=>{onSimChange();rebuildAll();},'启用'),
+'开启后：蛇尝试移动到本类型格子时先判「触发概率」，触发后再判「死亡概率」；格子会在画布上叠加危险标识'),
+tr.enabled?row(
+field('触发概率',rangeBind(tr,'triggerProbability',()=>onSimChange(),{min:0,max:1,step:0.01,number:true}),
+'蛇尝试移动到陷阱格时触发判定的几率（0 = 从不触发）'),
+field('死亡概率',rangeBind(tr,'deathProbability',()=>onSimChange(),{min:0,max:1,step:0.01,number:true}),
+'触发后判定为死亡的几率（1 = 必死，0 = 只触发不死）'),
+):null,
+tr.enabled?switchField('记录判定日志',chkBind(tr,'log',()=>onSimChange(),'写入运行日志'),
+'在「运行日志」中逐次记录触发 / 未触发 / 死亡判定，便于调试概率参数'):null,
+];
+return list.appendChild(group(t.name||`障碍物 ${i+1}`,body,{
+open:false,
+badge:tr.enabled?'陷阱':'',
+key:`ob:${t.id}`,
+}));
+});
+const trapCount=cfg.obstacleTypes.filter((t)=>t.enabled&&t.trap.enabled).length;
+return group('自定义障碍物类型',[
+h('div',{class:'hint'},'每种障碍物类型可独立配置外观、引用状态、随机权重与陷阱属性。列表至少保留一项（清空时会自动回退到内置「障碍物」）。'),
+list,
+button('+ 添加障碍物类型',()=>{
+if(cfg.obstacleTypes.length>=MAX_OBSTACLE_TYPES){
+toast(`障碍物类型最多 ${MAX_OBSTACLE_TYPES} 个`,'warn');
+return;
+}
+cfg.obstacleTypes.push({
+id:`ob_${Math.random().toString(36).slice(2,8)}`,
+name:`障碍物 ${cfg.obstacleTypes.length+1}`,
+enabled:true,
+state:'obstacle',
+weight:1,
+color:'',
+symbol:'',
+render:'',
+trap:{enabled:false,triggerProbability:1,deathProbability:0.5,log:true},
+});
+rebuildAll();
+},'ghost'),
+],{open:false,badge:trapCount?`${trapCount} 个陷阱`:''});
+}
+function obstaclePoolEditor(cfg){
+const ce=cfg.cellEditor;
+const box=h('div',{class:'chips'});
+const candidates=cfg.obstacleTypes.filter((t)=>t.enabled);
+if(!candidates.length)box.appendChild(h('span',{class:'mini-label'},'没有启用的障碍物类型'));
+for(const t of candidates){
+box.appendChild(h('button',{
+type:'button',
+class:`chip${ce.randomPool.includes(t.id)?' on':''}`,
+title:`随机权重：${t.weight}`,
+onclick:()=>{
+const i=ce.randomPool.indexOf(t.id);
+if(i>=0)ce.randomPool.splice(i,1);
+else ce.randomPool.push(t.id);
+onSimChange();
+rebuildAll();
+},
+},`${t.name} · 权重 ${t.weight}`));
+}
+return box;
+}
+function cellEditorGroup(cfg){
+const ce=cfg.cellEditor;
+editorCountEl=h('div',{class:'hint'},'');
+syncEditorCount();
+const markerOptions=[
+{value:'',label:'自动（交互标记物首项）'},
+...cfg.markerTypes.filter((t)=>t.enabled).map((t)=>({value:t.id,label:t.name})),
+];
+const obstacleOptions=[
+{value:'',label:'自动（首个启用的类型）'},
+...cfg.obstacleTypes.filter((t)=>t.enabled).map((t)=>({value:t.id,label:t.name})),
+];
+const stateOptions=[
+{value:'',label:`自动（首个非空状态：${stateLabel(cellEditorStateName(cfg))||'无'}）`},
+...cfg.caMode.states.filter((s)=>s.name!=='empty')
+.map((s)=>({value:s.name,label:stateLabelWithKey(s.name)})),
+];
+const placedStateLabel=h('div',{class:'hint'},
+`本次点击将放置：${stateLabel(cellEditorStateName(cfg))||'无'}（${cellEditorStateName(cfg)||'—'}）`);
+const body=[
+switchField('启用画布格子编辑',chkBind(ce,'enabled',()=>{onSimChange();rebuildAll();},'启用'),
+'开启后：左键单击格子添加元素、再次单击同一格删除；关闭时点击画布仍是「跳到该格首次经过的步数」'),
+];
+if(!ce.enabled){
+body.push(h('div',{class:'hint'},'未启用：画布点击保持「跳转到首次经过步数」的原行为。'));
+return group('画布格子编辑器',body,{open:false});
+}
+body.push(
+h('div',{class:'sub-title'},'放置工具'),
+field('编辑工具',select(ce.tool,CELL_TOOLS.map((v)=>({value:v,label:CELL_TOOL_LABELS[v]})),(v)=>{ce.tool=v;onSimChange();rebuildAll();}),
+'标记物 / 障碍物 / 元胞自动机状态 / 擦除：擦除工具下点击即清空格子'),
+ce.tool==='marker'
+?field('标记物类型',select(ce.markerTypeId,markerOptions,(v)=>{ce.markerTypeId=v;onSimChange();rebuildAll();}),
+'选择要放置的标记物类型；选「自动」时使用交互标记物状态中的首项')
+:null,
+ce.tool==='state'
+?field('目标状态',select(ce.stateName,stateOptions,(v)=>{ce.stateName=v;onSimChange();rebuildAll();}),
+'把任意非空的环境状态直接写入格子（如生命游戏的「存活」＝alive）；选「自动」时取首个非空状态')
+:null,
+ce.tool==='state'?placedStateLabel:null,
+ce.tool==='obstacle'
+?switchField('随机放置模式',chkBind(ce,'randomObstacle',()=>{onSimChange();rebuildAll();},'启用'),
+'开启后从「随机池」按权重抽取类型；关闭则用下方选中的类型精准放置')
+:null,
+ce.tool==='obstacle'&& !ce.randomObstacle
+?field('障碍物类型',select(ce.obstacleTypeId,obstacleOptions,(v)=>{ce.obstacleTypeId=v;onSimChange();rebuildAll();}),
+'先选类型再点击格子，实现精准放置')
+:null,
+ce.tool==='obstacle'&&ce.randomObstacle
+?field('随机池',obstaclePoolEditor(cfg),'未选择任何类型时表示「全部启用的障碍物类型」')
+:null,
+ce.tool==='obstacle'&&ce.randomObstacle
+?field('放置概率',rangeBind(ce,'randomProbability',()=>onSimChange(),{min:0,max:1,step:0.01,number:true}),
+'每次点击有多大概率真的放置（低于 1 时可能出现「点了没放」）')
+:null,
+h('div',{class:'sub-title'},'编辑效率'),
+field('画笔尺寸',rangeBind(ce,'brushSize',()=>{onSimChange();rebuildAll();},{min:1,max:9,step:1,number:true}),
+'n×n 方块：以点击格为中心一次改写多格（画布上会预览实际范围）'),
+switchField('拖拽连画',chkBind(ce,'drag',()=>onSimChange(),'按住左键拖动连续绘制'),
+'默认开启：起手格已放置则本轮为连擦，否则为连画；整轮拖拽只记一条撤销历史'),
+switchField('右键擦除',chkBind(ce,'rightClickErase',()=>onSimChange(),'右键单击直接清空格子'),
+'仅在编辑模式下接管右键；关闭后右键恢复浏览器菜单'),
+field('撤销历史上限',numBind(ce,'historyLimit',()=>onSimChange(),{min:0,max:1000}),
+'0 表示关闭历史记录；快捷键 Ctrl+Z 撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做'),
+field('散布密度',rangeBind(ce,'scatterDensity',()=>onSimChange(),{min:0,max:1,step:0.01}),
+'「一键随机散布」按此密度在整个网格上随机落点'),
+row(
+button('一键随机散布',scatterPainted,'ghost'),
+button('撤销',()=>{if(!undoEdit())toast('没有可撤销的编辑','info');},'ghost'),
+button('重做',()=>{if(!redoEdit())toast('没有可重做的编辑','info');},'ghost'),
+button('清空手绘',clearPainted,'ghost danger'),
+),
+editorCountEl,
+);
+return group('画布格子编辑器',body,{open:false,badge:`${ce.painted.length} 格`});
 }
 const CA_TEMPLATE_PRESET_IDS={
 life:'life',
@@ -12578,7 +13605,7 @@ checkbox(s.hoverTipState,(v)=>{s.hoverTipState=v;onStyleChange();},'环境状态
 checkbox(s.hoverTipAgent,(v)=>{s.hoverTipAgent=v;onStyleChange();},'移动体'),
 checkbox(s.hoverTipTrail,(v)=>{s.hoverTipTrail=v;onStyleChange();},'轨迹回溯'),
 checkbox(s.hoverTipMarkers,(v)=>{s.hoverTipMarkers=v;onStyleChange();},'标记信息'),
-),'提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次 / 本次 / 上一次经过步数'),
+),'提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次经过步数、当前路径经过次数与历史累计经过次数'),
 switchField('穿越事件日志',
 checkbox(cfg.events.logCrossings,(v)=>{cfg.events.logCrossings=v;onSimChange();},'记录边界穿越到规则日志'),
 '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),

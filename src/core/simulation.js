@@ -1412,6 +1412,25 @@ export class Simulation {
     return out;
   }
 
+  /**
+   * 安全避撞「触发后的处理方式」中「立即停止运动」分支：
+   * 先按原始权重抽出「本步本应朝向的方向」，若该方向不在避撞筛出的可行集合内
+   * （即避撞机制确实介入了），则本步原地停止；否则照常沿该方向前进。
+   *
+   * 只能在 cfg.safety.onAvoid === 'stop' 时调用——默认模式（'turn'）完全走原路径，
+   * 因此随机序列与旧版本逐位一致，不产生任何行为漂移。
+   */
+  stopWhenAvoidTriggered(ctx, agent, options, safe) {
+    const rng = ctx.rng;
+    const safeKeys = new Set(safe.map((o) => o.key));
+    const usable = options.filter((o) => o.weight > 0);
+    // 全部权重为 0 时退化为「均匀抽取非停止方向」，与主路径的兜底语义一致
+    const pool = usable.length ? usable : options.filter((o) => !o.stop);
+    const { item } = rng.weighted(pool, (o) => o.weight);
+    if (!item || !safeKeys.has(item.key)) return { dir: agent.dir, turnKey: 'stop' };
+    return { dir: item.dir !== undefined ? item.dir : resolveTurn(item.key, agent, ctx.grid, rng), turnKey: item.key };
+  }
+
   /** 决定下一步转向：规则强制 > 条件概率规则 > 基础左/直/右权重（含安全避撞预设） */
   decideDirection(ctx, engine, self) {
     const cfg = ctx.config;
@@ -1472,6 +1491,13 @@ export class Simulation {
         return !c.ok || !this.isDeadEnd(ctx, agent, c.coord);
       });
       if (live.length) safe = live;
+    }
+    /**
+     * 避撞触发后的处理方式（仅「立即停止运动」模式生效）：避撞机制介入时本步原地停止。
+     * 「自动切换其他可行方向继续运动」（默认）不进入本分支，随机序列与旧版逐位一致。
+     */
+    if (safe && cfg.safety.onAvoid === 'stop') {
+      return this.stopWhenAvoidTriggered(ctx, agent, options, safe);
     }
     const pool = safe && safe.length ? safe : options;
     /**

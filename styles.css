@@ -145,6 +145,9 @@ html, body {
   padding: 4px 0;
 }
 .controls-line + .controls-line { border-top: 1px dashed var(--line); }
+/* 速度调节独占一行：滑杆占满剩余宽度，「步/秒」读数不被挤压 */
+.controls-line.speed-line { flex-wrap: nowrap; }
+.controls-line.speed-line .speed-wrap { flex: 1 1 auto; min-width: 120px; }
 
 /* 长跑运行提示：与轨迹筛选的加载态同一套动效语言 */
 .run-loading {
@@ -970,6 +973,8 @@ details.group.target {
   touch-action: pan-x pan-y pinch-zoom;
   -webkit-tap-highlight-color: transparent;
 }
+/* 格子编辑器开启时：画布光标换为十字准星，提示「点击 = 增删格子」已接管 */
+#canvas.editing { cursor: crosshair; }
 #tooltip { pointer-events: none; }
 
 @media (max-width: 860px) {

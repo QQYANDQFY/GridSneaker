@@ -7,14 +7,15 @@ import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
-  normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
+  normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig, migrate,
   buildShareUrl, isBodyEnabled, isSkinImage, stripSkinAssets,
   JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
   LIFE_MIN, LIFE_MAX, TRAIL_COLOR_MODES,
   DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
   MAX_AGENT_SLOTS, agentSafetyEnabled,
   MOVE_KEYS, MOVE_LABELS, CELL_TOOLS, CELL_TOOL_LABELS, MARKER_CONDITION_TYPES,
-  MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES,
+  MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES, DEFAULT_STATES,
+  SAFETY_ON_AVOID_MODES, SAFETY_ON_AVOID_LABELS,
   obstacleTypeForState, isTrapState, markerConditionMet, markerTypesForState,
 } from '../src/core/config.js';
 import {
@@ -3240,12 +3241,17 @@ section('悬浮提示：内容与已开启的显示状态严格同步');
   const textOn = mk({ showTrail: true, showCrossings: true }).describe(last, repCoord);
   const times = rep.ticks;
   ok(textOn.includes('轨迹：次序 #'), '开启「轨迹」时提示给出轨迹统计');
-  ok(textOn.includes(`本次经过：第 ${times[times.length - 1]} 步`), '提示中的本次经过为最近一次经过步数');
-  ok(textOn.includes(`上一次经过：第 ${times[times.length - 2]} 步`),
-    '提示中的上一次经过步数与轨迹模型记录一致');
+  ok(textOn.includes(`当前路径经过次数：第 ${rep.ticks.length} 次`),
+    '提示中的当前路径经过次数与轨迹模型截至当前的计数一致');
+  ok(textOn.includes(`最近一次经过：第 ${times[times.length - 1]} 步`),
+    '提示中的最近一次经过为当前播放进度下的末次步数');
+  ok(textOn.includes(`历史累计经过次数：共 ${times.length} 次`),
+    '提示中的历史累计经过次数为整轮经过总次数');
+  ok(textOn.includes(`上次经过：第 ${times[times.length - 2]} 步`),
+    '提示中的上次经过步数与轨迹模型记录一致');
   ok(!mk({ showTrail: false }).describe(last, repCoord).includes('轨迹：'),
-    '关闭「轨迹」后提示中不再出现轨迹信息（含上一次经过步数）');
-  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('上一次经过'),
+    '关闭「轨迹」后提示中不再出现轨迹信息');
+  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('历史累计经过次数'),
     '关闭「轨迹」后不再展示轨迹回溯内容');
 
   // 移动体 / 环境 / 各项内容开关 / 总开关
@@ -3394,7 +3400,8 @@ section('边界进出点独立显示与悬浮提示同步（源码级回归）')
     '悬浮提示中的边界进出点信息与显示开关同步');
   ok(/s\.showStartEnd && this\.startCoord/.test(canvas), '悬浮提示中的起点标记与「起点/终点」开关同步');
   ok(/visitStatsAt\(info, frame\.tick\)/.test(canvas), '悬浮提示按当前步数回溯访问记录');
-  ok(/上一次经过/.test(canvas), '悬浮提示新增「上一次经过步数」字段');
+  ok(/当前路径经过次数/.test(canvas) && /历史累计经过次数/.test(canvas),
+    '悬浮提示的经过次数字段采用「当前路径经过次数 / 历史累计经过次数」表述');
   ok(/renderer\.style\.hoverTip === false/.test(app), '悬浮提示总开关接入鼠标与触控悬浮处理');
   ok(/checkbox\(s\.showCrossings/.test(app) && /'边界进出点'/.test(app),
     '设置面板提供独立的「边界进出点」开关');
@@ -4258,7 +4265,11 @@ section('画布格子编辑器：配置规范化与幂等（自定义特性）')
   eq(d.cellEditor.brushSize, 1, '默认画笔为单格');
   eq(d.cellEditor.rightClickErase, true, '右键擦除默认开启');
   eq(d.cellEditor.painted.length, 0, '默认没有已绘制格子');
-  eq(CELL_TOOLS.length, 3, '提供「标记物 / 障碍物 / 擦除」三种工具');
+  eq(d.cellEditor.drag, true, '拖拽连画默认开启（连续编辑无需额外勾选）');
+  eq(d.cellEditor.stateName, '', '「元胞自动机状态」工具默认取首个非空状态（面板显示为「自动」）');
+  eq(CELL_TOOLS.length, 4, '提供「标记物 / 障碍物 / 元胞自动机状态 / 擦除」四种工具');
+  ok(CELL_TOOLS.includes('state') && CELL_TOOL_LABELS.state === '元胞自动机状态',
+    '新增「元胞自动机状态」工具，可用于放置「存活」等非空环境状态');
   ok(CELL_TOOLS.every((t) => !!CELL_TOOL_LABELS[t]), '每种工具都有中文文案');
 
   const raw = {
@@ -4268,6 +4279,7 @@ section('画布格子编辑器：配置规范化与幂等（自定义特性）')
       ...d.cellEditor,
       enabled: true,
       tool: '不存在的工具',
+      stateName: '不存在的状态',
       brushSize: 99,
       randomProbability: 1.7,
       scatterDensity: -1,
@@ -4286,6 +4298,24 @@ section('画布格子编辑器：配置规范化与幂等（自定义特性）')
   };
   const n = normalizeConfig(raw);
   eq(n.cellEditor.tool, 'marker', '非法工具回退默认值');
+  eq(n.cellEditor.stateName, '', '「目标状态」不存在时回退为「自动」（运行时取首个非空状态）');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, stateName: 'marker' } }).cellEditor.stateName, 'marker',
+    '合法的「目标状态」原样保留');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, stateName: 'empty' } }).cellEditor.stateName, '',
+    '「目标状态」不允许为空状态，回退为「自动」');
+  /* 旧版本（1.3 及更早）的配置升级到 1.4 时，「拖拽连画」由旧默认升级为默认开启 */
+  const legacy = normalizeConfig({
+    ...d, version: '1.3', cellEditor: { ...d.cellEditor, drag: false },
+  });
+  eq(legacy.cellEditor.drag, true, '1.3 配置升级后「拖拽连画」为开启（贴合新版默认）');
+  const mig = migrate({ version: '1.3', cellEditor: { drag: false } });
+  eq(mig.cellEditor.drag, true, '1.3 → 1.4 迁移把「拖拽连画」置为开启');
+  ok((mig.migrationNotes || []).some((n) => /拖拽连画/.test(n)),
+    '迁移说明中提示「拖拽连画」已升级为默认开启');
+  eq(migrate({ version: '1.4', cellEditor: { drag: false } }).cellEditor.drag, false,
+    '已是 1.4 的配置不再被迁移覆盖（用户主动关闭时保持关闭）');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, drag: false } }).cellEditor.drag, false,
+    '当前版本下用户主动关闭「拖拽连画」时保持关闭（不做覆盖）');
   eq(n.cellEditor.brushSize, 9, '画笔尺寸收敛到上限 9');
   eq(n.cellEditor.randomProbability, 1, '放置概率夹取到 [0,1]');
   eq(n.cellEditor.scatterDensity, 0, '散布密度夹取到 [0,1]');
@@ -4461,6 +4491,89 @@ section('格子绘制 / 障碍物陷阱 / 「停止」移动选项（行为级�
   eq(rStopEnd.stats.steps, 1, '第一步即按撞障碍物规则收尾');
 }
 
+section('画布格子编辑器：手工放置元胞自动机「存活」格（行为级）');
+{
+  /* 生命游戏式状态集：仅 empty / alive，没有任何 marker 状态 */
+  const LIFE_STATES = [
+    { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
+    { name: 'alive', color: '#51cf66', blocking: false, symbol: 'o', render: 'dot' },
+  ];
+
+  /* 1)「元胞自动机状态」工具：显式指定 alive，点击处写入存活格 */
+  const cfg = editorScene({
+    caMode: { states: LIFE_STATES, enabled: true, initial: { mode: 'empty', density: 0 } },
+    cellEditor: {
+      enabled: true, tool: 'state', stateName: 'alive',
+      painted: [{ col: 4, row: 2, state: 'alive' }, { col: 5, row: 2, state: 'alive' }],
+    },
+    endConditions: { maxSteps: 1 },
+  });
+  const r = new Simulation(cfg).run();
+  const w = cfg.grid.width;
+  eq(r.frames[0].cells[2 * w + 4], 1, '绘制的「存活」格写入了初始世界（状态索引 1 = alive）');
+  eq(r.frames[0].cells[2 * w + 5], 1, '同一行连续绘制的存活格一并写入');
+  eq(r.frames[0].cells[2 * w + 3], 0, '未绘制的格子仍为空');
+  ok(normalizeConfig(cfg).cellEditor.painted.length === 2, '存活格随配置保存');
+
+  /* 2) 状态名必须真实存在：旧配置里写着 alive、但状态集不含它时直接剔除（避免写入未定义状态） */
+  const stale = normalizeConfig({
+    ...editorScene(),
+    caMode: { ...defaultConfig().caMode, states: LIFE_STATES },
+    cellEditor: { ...defaultConfig().cellEditor, enabled: true, tool: 'state', painted: [{ col: 1, row: 1, state: 'alive' }] },
+  });
+  eq(stale.cellEditor.painted.length, 1, '状态集中存在 alive 时绘制格保留');
+  const dropped = normalizeConfig({
+    ...editorScene(),
+    caMode: { ...defaultConfig().caMode, states: DEFAULT_STATES },
+    cellEditor: { ...defaultConfig().cellEditor, enabled: true, tool: 'state', painted: [{ col: 1, row: 1, state: 'alive' }] },
+  });
+  eq(dropped.cellEditor.painted.length, 0, '状态集中不存在该状态时绘制格被剔除（不会写入未定义状态）');
+
+  /* 3)「自动」模式：未指定目标状态时取首个非空状态，生命游戏模板下即 alive */
+  const auto = normalizeConfig({
+    ...editorScene(),
+    caMode: { ...defaultConfig().caMode, states: LIFE_STATES },
+    cellEditor: { ...defaultConfig().cellEditor, enabled: true, tool: 'state', stateName: '' },
+  });
+  eq(auto.cellEditor.stateName, '', '「自动」模式保留为空（由运行时解析首个非空状态）');
+  const firstNonEmpty = LIFE_STATES.find((s) => s.name !== 'empty');
+  eq(firstNonEmpty.name, 'alive', '生命游戏状态集的首个非空状态为「存活」');
+}
+
+section('安全避撞：避撞触发后的处理方式（配置 + 行为级）');
+{
+  const d = defaultConfig();
+  eq(d.safety.onAvoid, 'turn', '默认「自动切换其他可行方向继续运动」（与旧版行为一致）');
+  ok(SAFETY_ON_AVOID_MODES.includes('stop') && SAFETY_ON_AVOID_MODES.includes('turn'),
+    '可选逻辑包含「立即停止运动」与「自动切换其他可行方向继续运动」');
+  ok(SAFETY_ON_AVOID_LABELS.stop === '立即停止运动' && SAFETY_ON_AVOID_LABELS.turn === '自动切换其他可行方向继续运动',
+    '两种模式都有中文文案');
+  eq(normalizeConfig({ ...d, safety: { ...d.safety, onAvoid: '不存在的模式' } }).safety.onAvoid, 'turn',
+    '非法取值回退默认（自动切换其他可行方向）');
+  const plain = normalizeConfig({ ...d, safety: { ...d.safety, onAvoid: 'stop' } });
+  eq(plain.safety.onAvoid, 'stop', '「立即停止运动」可被规范化保留');
+  eq(JSON.stringify(normalizeConfig(JSON.parse(JSON.stringify(plain)))), JSON.stringify(plain),
+    '安全避撞规范化幂等（新增字段不破坏往返一致）');
+  eq(decodeConfigFromToken(encodeConfigToToken(plain)).safety.onAvoid, 'stop',
+    '避撞处理方式可随分享链接往返');
+
+  /* 行为级：正前方（3,2）放一格障碍物，只保留「直行」权重，两种处理方式的差异即被放大 */
+  const obstacleScene = (onAvoid) => editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'obstacle' }] },
+    safety: { avoidObstacle: true, onAvoid },
+    endConditions: { maxSteps: 6 },
+  });
+  const rTurn = new Simulation(obstacleScene('turn')).run();
+  eq(rTurn.stats.stops, 0, '默认模式：前方受阻即自动切换其他可行方向，不产生「停止」');
+  const rStop = new Simulation(obstacleScene('stop')).run();
+  eq(rStop.stats.stops, 6, '「立即停止运动」模式：避撞介入的每一步都原地停止');
+  eq(rStop.summary.stops, 6, '统计汇总同步记录「立即停止运动」的次数');
+  const stopHead0 = rStop.frames[0].agents[0].segments[0].join(',');
+  const stopHeadN = rStop.frames[rStop.frames.length - 1].agents[0].segments[0].join(',');
+  eq(stopHead0, '2,2', '起点按配置落位');
+  eq(stopHeadN, stopHead0, '「立即停止运动」不产生任何位移');
+}
+
 section('自定义标记物类型：类型层内置反馈（行为级）');
 {
   const cfg = editorScene({
@@ -4562,6 +4675,61 @@ section('格子交互 / 自定义标记物 / 陷阱 的界面与差异比对（�
   ok(items.includes('停止权重'), '差异条目使用「停止权重」而非原始字段名');
   ok(items.includes('画笔尺寸'), '差异条目使用「画笔尺寸」而非原始字段名');
   ok(items.includes('启用'), '格子编辑器开关在差异条目中可读');
+}
+
+/* ---------- 本轮优化：搜索清除提示 / 元胞状态工具 / 避撞处理方式 / 悬浮文案 / 速度行 ---------- */
+
+section('本轮优化：交互文本、格子编辑、避撞处理与布局（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const canvas = readFileSync(new URL('../src/ui/canvas.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const cfgSrc = readFileSync(new URL('../src/core/config.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+  const simSrc = readFileSync(new URL('../src/core/simulation.js', import.meta.url), 'utf8');
+
+  /* 1) 搜索栏「清除」按钮：术语浮层给出完整说明，并保留原生 title 兜底 */
+  ok(/bindTermTip\(clearBtn/.test(app), '「清除」按钮接入统一术语浮层（悬停展示按钮作用）');
+  ok(/clearBtn\.title = '清除当前搜索框内的全部输入内容/.test(app),
+    '「清除」按钮保留原生 title 作为无 JS / 触控端兜底');
+  ok(/name: '清除搜索'/.test(app) && /不会改动任何已保存的设置项/.test(app),
+    '浮层文案说明清除范围（仅影响搜索结果，不改动设置项）');
+  ok(/clearBtn\.click\(\)/.test(app), '输入框内 Esc 与「清除」按钮走同一条清空链路');
+
+  /* 2) 画布格子编辑：新增「元胞自动机状态」工具，拖拽连画默认开启 */
+  ok(/CELL_TOOL_LABELS\.state/.test(cfgSrc) || /state: '元胞自动机状态'/.test(cfgSrc),
+    '配置层定义「元胞自动机状态」工具');
+  ok(/function cellEditorStateName\(/.test(app) && /if \(ce\.tool === 'state'\) return cellEditorStateName\(cfg\)/.test(app),
+    '「元胞自动机状态」工具解析出本次点击要写入的状态（含「自动」兜底）');
+  ok(/ce\.tool === 'state'[\s\S]{0,120}stateOptions/.test(app), '面板按工具切换出「目标状态」下拉');
+  ok(/本次点击将放置：/.test(app), '面板实时回显本次点击将放置的状态，消除「自动」的歧义');
+  ok(/chkBind\(ce, 'drag'/.test(app) && /drag: true/.test(cfgSrc), '拖拽连画可开关且默认开启');
+  ok(/classList\.toggle\('editing'/.test(app) && /#canvas\.editing \{ cursor: crosshair; \}/.test(css),
+    '编辑模式下画布光标切换为十字准星');
+  ok(/async function clearPainted\(\)/.test(app) && /confirmDialog\(\{[\s\S]{0,200}清空全部手绘格子/.test(app),
+    '「清空手绘」为破坏性操作，先经确认对话框');
+
+  /* 3) 安全避撞：新增「避撞触发后的处理」两种模式，并接入模拟主循环 */
+  ok(/SAFETY_ON_AVOID_MODES\.map/.test(app) && /'避撞触发后的处理'/.test(app),
+    '安全避撞面板提供「避撞触发后的处理」下拉');
+  ok(/stopWhenAvoidTriggered/.test(simSrc) && /cfg\.safety\.onAvoid === 'stop'/.test(simSrc),
+    '「立即停止运动」在方向决策阶段接入（默认模式不进入该分支）');
+  ok(/onAvoid: SAFETY_ON_AVOID_MODES\.includes\(src\.onAvoid\)/.test(cfgSrc),
+    '避撞处理方式按白名单规范化，非法值回退默认');
+  ok(/onAvoid: '避撞触发后的处理'/.test(diffSrc) && /'safety\.onAvoid': SAFETY_ON_AVOID_LABELS/.test(diffSrc),
+    '新增避撞字段在差异比对中有中文标签与取值文案');
+
+  /* 4) 悬浮提示文案：统一为「当前路径经过次数 / 历史累计经过次数」 */
+  ok(/当前路径经过次数：/.test(canvas) && /历史累计经过次数：/.test(canvas),
+    '悬浮提示改用专业表述');
+  ok(!/本次经过|上一次经过/.test(canvas), '语义不通顺的旧表述已从渲染层移除');
+  ok(/当前路径经过次数与历史累计经过次数/.test(app), '设置面板的提示说明同步更新');
+
+  /* 5) 速度调节独占一行：自适应速度之后强制换行 */
+  ok(/class: 'controls-line speed-line'/.test(app), '速度滑杆与读数独立成行');
+  ok(/\.controls-line\.speed-line \{ flex-wrap: nowrap; \}/.test(css)
+    && /\.controls-line\.speed-line \.speed-wrap \{ flex: 1 1 auto; min-width: 120px; \}/.test(css),
+    '速度行禁止换行且滑杆占满剩余宽度（读数不被挤压）');
 }
 
 /* ---------- 结果 ---------- */

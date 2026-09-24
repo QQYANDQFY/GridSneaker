@@ -9,7 +9,7 @@
  *  - 克制：仅比对普通对象与原始值，数组（规则表 / 状态表等）按整体内容变化报告一条，
  *    不递归展开，避免一条规则改动产生成百上千条噪声差异。
  */
-import { INTERACTION_LABELS, SPAWN_LABELS, CELL_TOOL_LABELS } from './config.js';
+import { INTERACTION_LABELS, SPAWN_LABELS, CELL_TOOL_LABELS, SAFETY_ON_AVOID_LABELS } from './config.js';
 import { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } from './ca.js';
 import { DIR_LABEL_CN } from './grid.js';
 
@@ -49,7 +49,7 @@ export const CONFIG_FIELD_LABELS = {
   maxLength: '最大长度', minLength: '最小长度', interval: '间隔',
   left: '左转权重', straight: '直行权重', right: '右转权重', stop: '停止权重',
   avoidAll: '避开全部（总开关）', avoidBody: '避让自身身体', avoidObstacle: '避让障碍物', avoidOtherAgents: '避让其它移动体',
-  avoidWall: '避让不可穿越边界', warnSelfCollision: '自撞预警提示',
+  avoidWall: '避让不可穿越边界', warnSelfCollision: '自撞预警提示', onAvoid: '避撞触发后的处理',
   times: '预定时间点', minInterval: '最小间隔', maxInterval: '最大间隔',
   maxAgents: '最大同时存在', length: '长度', events: '触发事件', colorPalette: '逐个体配色',
   maxTotal: '生成总数上限', perAgent: '逐条安全避撞开关', default: '新生移动体默认',
@@ -87,7 +87,7 @@ export const CONFIG_FIELD_LABELS = {
   showTraps: '陷阱格标识', trapColor: '陷阱标识色',
   weight: '触发权重', condition: '生效条件', symbol: '符号', render: '绘制方式',
   trap: '陷阱属性', triggerProbability: '触发概率', deathProbability: '死亡概率', log: '记录日志',
-  tool: '当前工具', markerTypeId: '标记物类型', obstacleTypeId: '障碍物类型',
+  tool: '当前工具', markerTypeId: '标记物类型', obstacleTypeId: '障碍物类型', stateName: '目标状态',
   randomObstacle: '随机放置障碍物', randomPool: '随机池', randomProbability: '随机放置概率',
   brushSize: '画笔尺寸', drag: '拖拽连画', rightClickErase: '右键擦除',
   historyLimit: '撤销历史上限', scatterDensity: '散布密度', painted: '已绘制格子',
@@ -121,6 +121,7 @@ const VALUE_LABELS_BY_PATH = {
   'style.trailJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
   'style.bodyJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
   'cellEditor.tool': CELL_TOOL_LABELS,
+  'safety.onAvoid': SAFETY_ON_AVOID_LABELS,
 };
 
 /** 按字段名匹配的枚举文案（无路径覆盖时使用） */

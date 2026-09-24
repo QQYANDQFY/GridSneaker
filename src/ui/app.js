@@ -9,6 +9,7 @@ import {
   DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT, MAX_AGENT_SLOTS,
   MOVE_KEYS, MOVE_LABELS, MARKER_CONDITION_TYPES, MARKER_CONDITION_LABELS,
   CELL_TOOLS, CELL_TOOL_LABELS, isTrapState, MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES,
+  SAFETY_ON_AVOID_MODES, SAFETY_ON_AVOID_LABELS,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -1194,7 +1195,14 @@ function applyRendererExtras(cfg) {
   const ce = cfg.cellEditor;
   renderer.editMode = !!ce.enabled;
   renderer.brushSize = ce.brushSize;
-  renderer.editAccent = ce.tool === 'erase' ? '#ff7b72' : (ce.tool === 'obstacle' ? '#ffa94d' : '#7cc0ff');
+  // 画笔预览配色按工具区分：擦除红 / 障碍物橙 / 元胞状态绿 / 标记物蓝
+  renderer.editAccent = ce.tool === 'erase' ? '#ff7b72'
+    : ce.tool === 'obstacle' ? '#ffa94d'
+      : ce.tool === 'state' ? '#63e6be' : '#7cc0ff';
+  // 编辑模式下把画布光标换成十字准星：一眼可知「点击画布 = 增删格子」已接管
+  if (renderer.canvas && renderer.canvas.classList) {
+    renderer.canvas.classList.toggle('editing', !!ce.enabled);
+  }
 }
 
 function recompute(opts = {}) {
@@ -1482,7 +1490,13 @@ function buildControls() {
   c.appendChild(h('div', { class: 'controls-line' },
     els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn, els.runLoading));
   c.appendChild(h('div', { class: 'controls-line' },
-    els.loopChk, els.autoChk, els.followChk, els.adaptiveChk,
+    els.loopChk, els.autoChk, els.followChk, els.adaptiveChk));
+  /**
+   * 速度调节独立成行：「自适应速度」之后的滑杆与读数强制换行。
+   * 原先与循环 / 自动运行 / 跟随 / 自适应挤在同一行，窄屏下换行位置不可控，
+   * 滑杆会被压缩到难以拖动、读数也可能被裁掉；独立成行后布局稳定且始终完整可见。
+   */
+  c.appendChild(h('div', { class: 'controls-line speed-line' },
     h('span', { class: 'mini-label' }, '速度'), els.speedRange, els.speedLabel));
   c.appendChild(h('div', { class: 'controls-line' },
     h('span', { class: 'mini-label' }, '速度档位'), ...speedBtns));
@@ -1721,13 +1735,28 @@ function brushCells(col, row, n) {
 }
 
 /**
+ * 「元胞自动机状态」工具当前要写入的状态名。
+ * 面板上明确选中的状态优先；选择「自动」（stateName 为空或已失效）时，
+ * 取状态集合中的首个非空状态——生命游戏等模板下即为「存活」（alive）。
+ */
+function cellEditorStateName(cfg) {
+  const ce = cfg.cellEditor;
+  const states = cfg.caMode.states;
+  if (ce.stateName && states.some((s) => s.name === ce.stateName)) return ce.stateName;
+  const first = states.find((s) => s.name !== 'empty');
+  return first ? first.name : '';
+}
+
+/**
  * 按当前工具 / 类型解析「本次点击要写入的状态名」，返回 '' 表示本次不放置。
  * 障碍物支持两种模式：先选类型再点击（精准放置）、随机放置（按权重从随机池抽取）。
+ * 元胞自动机状态工具直接把选中的环境状态写入格子（如生命游戏的「存活」）。
  */
 function paintStateForCell() {
   const cfg = state.cfg;
   const ce = cfg.cellEditor;
   if (ce.tool === 'erase') return '';
+  if (ce.tool === 'state') return cellEditorStateName(cfg);
   if (ce.tool === 'obstacle') {
     const types = cfg.obstacleTypes.filter((t) => t.enabled);
     if (!types.length) return '';
@@ -1845,9 +1874,18 @@ function scatterPainted() {
   toast(`已按 ${(ce.scatterDensity * 100).toFixed(0)}% 密度随机散布`, 'success');
 }
 
-/** 清空全部手绘格子（可撤销） */
-function clearPainted() {
-  if (!state.cfg.cellEditor.painted.length) { toast('当前没有手绘格子', 'info'); return; }
+/** 清空全部手绘格子（破坏性操作，先经确认；清空后仍可撤销） */
+async function clearPainted() {
+  const n = state.cfg.cellEditor.painted.length;
+  if (!n) { toast('当前没有手绘格子', 'info'); return; }
+  const okClear = await confirmDialog({
+    title: '清空全部手绘格子',
+    message: `将删除当前手工绘制的 ${n} 个格子（初始环境补丁），此操作可通过「撤销」回退。`,
+    confirmText: '清空',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!okClear) return;
   pushEditHistory();
   commitPainted(new Map());
   toast('已清空手绘格子', 'success');
@@ -3475,16 +3513,38 @@ function configSearchBar() {
     }, 120);
   });
   els.cfgSearchHint = h('span', { class: 'mini-label' }, '');
+  /**
+   * 「清除」按钮的悬浮提示：按钮文案本身只有两个字，光看标签无法判断它清除的是
+   * 搜索框内容还是整个配置。这里用项目统一的术语浮层（#tooltip）在悬停时给出完整说明，
+   * 同时保留原生 title 作为无 JS / 触控端的兜底文案。
+   */
+  const clearBtn = button('清除', () => {
+    if (cfgSearchTimer) { clearTimeout(cfgSearchTimer); cfgSearchTimer = null; }
+    state.cfgSearch = '';
+    input.value = '';
+    applyConfigSearch('');
+  }, 'ghost small');
+  clearBtn.title = '清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态';
+  bindTermTip(clearBtn, {
+    name: '清除搜索',
+    desc: '清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态；'
+      + '仅影响搜索过滤结果，不会改动任何已保存的设置项。',
+  });
+  const expandBtn = button('展开全部', () => setAllGroupsOpen(els.config, true), 'ghost small');
+  expandBtn.title = '展开当前选项卡下的全部折叠分组';
+  const collapseBtn = button('收起全部', () => setAllGroupsOpen(els.config, false), 'ghost small');
+  collapseBtn.title = '收起当前选项卡下的全部折叠分组';
+  // Esc 清空搜索：输入框聚焦时即可一键还原，无需把光标移到「清除」按钮
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    clearBtn.click();
+  });
   return h('div', { class: 'cfg-search' },
     input,
-    button('清除', () => {
-      if (cfgSearchTimer) { clearTimeout(cfgSearchTimer); cfgSearchTimer = null; }
-      state.cfgSearch = '';
-      input.value = '';
-      applyConfigSearch('');
-    }, 'ghost small'),
-    button('展开全部', () => setAllGroupsOpen(els.config, true), 'ghost small'),
-    button('收起全部', () => setAllGroupsOpen(els.config, false), 'ghost small'),
+    clearBtn,
+    expandBtn,
+    collapseBtn,
     els.cfgSearchHint);
 }
 
@@ -3961,6 +4021,11 @@ function safetySection(cfg) {
     note.textContent = on.length
       ? `已启用（${on.join(' / ')}）：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。`
       : '未启用：方向选择完全按基础 / 条件概率权重进行。';
+    if (on.length) {
+      note.textContent += s.onAvoid === 'stop'
+        ? ' 避撞触发后：立即停止运动。'
+        : ' 避撞触发后：自动切换其他可行方向继续运动。';
+    }
   };
   syncNote();
   /**
@@ -3993,6 +4058,15 @@ function safetySection(cfg) {
       wallMatters
         ? '当前边界不可穿越：开启后实体不再触碰边界，撞墙 / 反弹都只会发生在无路可走时'
         : '当前边界为「穿越到另一侧」：越界会环绕回网格内，本项不生效；把边界改为停止 / 反弹后会自动开启'),
+    field('避撞触发后的处理',
+      select(s.onAvoid, SAFETY_ON_AVOID_MODES.map((v) => ({ value: v, label: SAFETY_ON_AVOID_LABELS[v] })), (v) => {
+        s.onAvoid = v;
+        onSimChange();
+        rebuildAll();
+      }),
+      s.onAvoid === 'stop'
+        ? '避撞机制介入（本步本应朝向的方向被判定为不安全）时原地停止运动：不产生位移，计入「停止次数」并遵循「撞到障碍物」的结束规则与生命机制'
+        : '避撞机制介入时自动切换到其他可行方向继续运动（默认，与旧版行为完全一致）'),
     note,
     field('碰撞预警提示', h('div', { class: 'chips-line' },
       chkBind(s, 'warnSelfCollision', () => onSimChange(), '标记「下一步会撞到自身身体」的危险格')),
@@ -5166,6 +5240,15 @@ function cellEditorGroup(cfg) {
     { value: '', label: '自动（首个启用的类型）' },
     ...cfg.obstacleTypes.filter((t) => t.enabled).map((t) => ({ value: t.id, label: t.name })),
   ];
+  // 「元胞自动机状态」工具的可选状态：全部非空环境状态（含生命游戏的「存活」）
+  const stateOptions = [
+    { value: '', label: `自动（首个非空状态：${stateLabel(cellEditorStateName(cfg)) || '无'}）` },
+    ...cfg.caMode.states.filter((s) => s.name !== 'empty')
+      .map((s) => ({ value: s.name, label: stateLabelWithKey(s.name) })),
+  ];
+  // 「本次点击实际会写入哪个状态」的实时读数：把「自动」的解析结果摊开，避免选择歧义
+  const placedStateLabel = h('div', { class: 'hint' },
+    `本次点击将放置：${stateLabel(cellEditorStateName(cfg)) || '无'}（${cellEditorStateName(cfg) || '—'}）`);
   const body = [
     switchField('启用画布格子编辑', chkBind(ce, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用'),
       '开启后：左键单击格子添加元素、再次单击同一格删除；关闭时点击画布仍是「跳到该格首次经过的步数」'),
@@ -5177,11 +5260,16 @@ function cellEditorGroup(cfg) {
   body.push(
     h('div', { class: 'sub-title' }, '放置工具'),
     field('编辑工具', select(ce.tool, CELL_TOOLS.map((v) => ({ value: v, label: CELL_TOOL_LABELS[v] })), (v) => { ce.tool = v; onSimChange(); rebuildAll(); }),
-      '标记物 / 障碍物 / 擦除：擦除工具下点击即清空格子'),
+      '标记物 / 障碍物 / 元胞自动机状态 / 擦除：擦除工具下点击即清空格子'),
     ce.tool === 'marker'
       ? field('标记物类型', select(ce.markerTypeId, markerOptions, (v) => { ce.markerTypeId = v; onSimChange(); rebuildAll(); }),
         '选择要放置的标记物类型；选「自动」时使用交互标记物状态中的首项')
       : null,
+    ce.tool === 'state'
+      ? field('目标状态', select(ce.stateName, stateOptions, (v) => { ce.stateName = v; onSimChange(); rebuildAll(); }),
+        '把任意非空的环境状态直接写入格子（如生命游戏的「存活」＝alive）；选「自动」时取首个非空状态')
+      : null,
+    ce.tool === 'state' ? placedStateLabel : null,
     ce.tool === 'obstacle'
       ? switchField('随机放置模式', chkBind(ce, 'randomObstacle', () => { onSimChange(); rebuildAll(); }, '启用'),
         '开启后从「随机池」按权重抽取类型；关闭则用下方选中的类型精准放置')
@@ -5202,7 +5290,7 @@ function cellEditorGroup(cfg) {
     field('画笔尺寸', rangeBind(ce, 'brushSize', () => { onSimChange(); rebuildAll(); }, { min: 1, max: 9, step: 1, number: true }),
       'n×n 方块：以点击格为中心一次改写多格（画布上会预览实际范围）'),
     switchField('拖拽连画', chkBind(ce, 'drag', () => onSimChange(), '按住左键拖动连续绘制'),
-      '起手格已放置则本轮为连擦，否则为连画；整轮拖拽只记一条撤销历史'),
+      '默认开启：起手格已放置则本轮为连擦，否则为连画；整轮拖拽只记一条撤销历史'),
     switchField('右键擦除', chkBind(ce, 'rightClickErase', () => onSimChange(), '右键单击直接清空格子'),
       '仅在编辑模式下接管右键；关闭后右键恢复浏览器菜单'),
     field('撤销历史上限', numBind(ce, 'historyLimit', () => onSimChange(), { min: 0, max: 1000 }),
@@ -5625,7 +5713,7 @@ function visualOverlayGroup(cfg) {
       checkbox(s.hoverTipAgent, (v) => { s.hoverTipAgent = v; onStyleChange(); }, '移动体'),
       checkbox(s.hoverTipTrail, (v) => { s.hoverTipTrail = v; onStyleChange(); }, '轨迹回溯'),
       checkbox(s.hoverTipMarkers, (v) => { s.hoverTipMarkers = v; onStyleChange(); }, '标记信息'),
-    ), '提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次 / 本次 / 上一次经过步数'),
+    ), '提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次经过步数、当前路径经过次数与历史累计经过次数'),
     switchField('穿越事件日志',
       checkbox(cfg.events.logCrossings, (v) => { cfg.events.logCrossings = v; onSimChange(); }, '记录边界穿越到规则日志'),
       '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
