@@ -197,6 +197,15 @@ export class Agent {
     this.invincibleUntil = -1;
     /** 最近一次重生所在步数 */
     this.respawnTick = -1;
+    /**
+     * 逐蛇安全避撞序号：0 = 主移动体，n = 第 n 条生成的移动体（画布标签「蛇n」）。
+     * 两条生成路径（多蛇系统与环境规则「生成新移动体」）都按同一个生成序号编号，
+     * 因此画布上的标签与「多蛇生成与交互系统 → 逐蛇安全避撞」里的开关一一对应。
+     * null 表示调用方未提供序号，此时沿用「新生移动体默认」。
+     */
+    this.safetySlot = opts.safetySlot === undefined || opts.safetySlot === null
+      ? null
+      : Math.max(0, Math.round(Number(opts.safetySlot) || 0));
   }
 
   /** 头部坐标 */
@@ -221,6 +230,7 @@ export class Agent {
       isMain: this.isMain,
       spawnTick: this.spawnTick,
       lives: this.lives,
+      safetySlot: this.safetySlot,
     });
     a.alive = this.alive;
     a.pendingForcedStraights = this.pendingForcedStraights;

@@ -2,13 +2,21 @@
  * 配置模型：默认值、规范化、版本迁移、校验、URL 分享
  */
 import { normalizeStates } from './world.js';
-import { Grid, parseDir, DIR_LABEL_CN } from './grid.js';
+import { Grid, parseDir, dirNames, DIR_LABEL_CN } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
 export const CONFIG_VERSION = '1.2';
 
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
+
+/**
+ * 单次运行的安全帧上限（未勾选「结束规则 → 达到步数上限」时生效）。
+ * 默认值与上限值在此定义，simulation.js 再导出为 DEFAULT_FRAME_CAP / MAX_FRAME_CAP，
+ * 保证「配置里的默认值」与「模拟器的兜底值」永远一致。
+ */
+export const DEFAULT_RUN_FRAME_CAP = 20000;
+export const MAX_RUN_FRAME_CAP = 200000;
 
 /** 生命机制：初始生命数值的合法区间（含端点），界面上以滑动条呈现 */
 export const LIFE_MIN = 1;
@@ -80,6 +88,9 @@ export const SPAWN_EVENT_LABELS = {
   obstacle: '撞到障碍物',
   merge: '发生融合',
 };
+
+/** 逐蛇安全避撞列表的最大长度（与「最大同时存在」的上限保持一致） */
+export const MAX_AGENT_SLOTS = 64;
 
 export const DEFAULT_STATES = [
   { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
@@ -245,6 +256,8 @@ export function defaultConfig() {
         minInterval: 30,
         maxInterval: 90,
         maxAgents: 6,
+        /** 整轮生成总数上限（0 = 不限制）：长时间运行下防止蛇数量无限累积 */
+        maxTotal: 0,
         length: 3,
         direction: 'random',
         events: ['eat'],
@@ -254,8 +267,22 @@ export function defaultConfig() {
         mode: 'collide',
         colorPalette: ['#ff5d5d', '#ffd166', '#51cf66', '#4dabf7', '#c084fc', '#f783ac', '#63e6be', '#ffa94d'],
       },
+      /**
+       * 逐蛇安全避撞：为每条移动体单独开关「安全避撞预设」，实现逐条蛇的高度自定义。
+       *  - perAgent 按移动体的生成顺序记录（下标 0 = 主移动体，下标 n = 第 n 条生成的蛇「蛇n」）；
+       *    数组中的 null 表示「跟随 default」，因此不必为每条蛇都写死取值；
+       *  - default 用于未单独列出的移动体（含生成序号超出列表范围的蛇）；
+       *  - 多蛇系统未启用时本段不生效，所有移动体统一沿用全局「安全避撞预设」（cfg.safety）。
+       */
+      safety: { default: true, perAgent: [] },
     },
     ruleExecution: 'async',
+    /**
+     * 单次运行步数上限（安全帧上限）：未勾选「结束规则 → 达到步数上限」时，
+     * 一轮运行在本上限处停止，并由控制条的「继续运行 +N」继续推进。
+     * 调大可一次算完更长的过程，代价是单次计算量与内存占用同步上升。
+     */
+    frameCap: DEFAULT_RUN_FRAME_CAP,
     advancedRules: [],
     collision: {
       headIntoBody: true,
@@ -1017,7 +1044,20 @@ function normLife(rawL, states) {
   };
 }
 
-function normMultiSnake(raw = {}) {
+/**
+ * 新蛇生成方向的校正：方向名必须与当前网格类型匹配。
+ * 网格类型由方格切到六边形后，旧的「上 / 下 / 左 / 右」在该网格上并不存在，
+ * 若原样保留，parseDir 会静默解析成 0 号方向（六边形的「东」），
+ * 面板下拉框也会因为没有匹配项而显示成「随机」——显示与真实行为不一致。
+ * 因此不匹配时一律回退为「随机」，让面板与运行结果保持同一语义。
+ */
+function normSpawnDirection(raw, gridType, fallback) {
+  const v = str(raw, fallback);
+  if (v === 'random') return v;
+  return dirNames(gridType).includes(v) ? v : fallback;
+}
+
+function normMultiSnake(raw = {}, gridType = 'square') {
   const d = defaultConfig().multiSnake;
   const sp = raw.spawn || {};
   const it = raw.interaction || {};
@@ -1032,9 +1072,11 @@ function normMultiSnake(raw = {}) {
         .sort((a, b) => a - b),
       minInterval: clamp(Math.round(num(sp.minInterval, d.spawn.minInterval)), 1, 100000),
       maxInterval: clamp(Math.round(num(sp.maxInterval, d.spawn.maxInterval)), 1, 100000),
-      maxAgents: clamp(Math.round(num(sp.maxAgents, d.spawn.maxAgents)), 1, 64),
+      maxAgents: clamp(Math.round(num(sp.maxAgents, d.spawn.maxAgents)), 1, MAX_AGENT_SLOTS),
+      // 0 表示不限制整轮生成总数
+      maxTotal: clamp(Math.round(num(sp.maxTotal, d.spawn.maxTotal)), 0, 1000000),
       length: clamp(Math.round(num(sp.length, d.spawn.length)), 1, 200),
-      direction: str(sp.direction, d.spawn.direction),
+      direction: normSpawnDirection(sp.direction, gridType, d.spawn.direction),
       events: (Array.isArray(sp.events) ? sp.events : d.spawn.events).map(String).filter((e) => SPAWN_EVENTS.includes(e)),
       probability: clamp(num(sp.probability, d.spawn.probability), 0, 1),
     },
@@ -1042,7 +1084,42 @@ function normMultiSnake(raw = {}) {
       mode: INTERACTION_MODES.includes(it.mode) ? it.mode : d.interaction.mode,
       colorPalette: palette,
     },
+    safety: {
+      default: bool(raw.safety?.default, d.safety.default),
+      perAgent: normPerAgentSafety(raw.safety?.perAgent),
+    },
   };
+}
+
+/**
+ * 逐蛇安全避撞列表规范化：
+ *  - 逐项收敛为 true / false / null（null = 跟随「新生移动体默认」）；
+ *  - 截断到 MAX_AGENT_SLOTS 项，与「最大同时存在」的上限一致；
+ *  - 非数组（旧存档 / 非法形态）一律视为「没有单独设置」，全部跟随默认。
+ */
+function normPerAgentSafety(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, MAX_AGENT_SLOTS)
+    .map((v) => (v === true || v === false ? v : null));
+}
+
+/**
+ * 某条移动体是否启用「安全避撞预设」。
+ *
+ * @param {object} cfg 规范化后的配置
+ * @param {number|null} slot 移动体序号（0 = 主移动体，n = 第 n 条生成的蛇「蛇n」）；
+ *        为 null / 越界时沿用「新生移动体默认」
+ * @returns {boolean} 多蛇系统未启用时恒为 true（所有移动体沿用全局 cfg.safety）
+ */
+export function agentSafetyEnabled(cfg, slot) {
+  const ms = cfg && cfg.multiSnake;
+  if (!ms || !ms.enabled) return true;
+  const s = ms.safety || {};
+  const i = Number.isInteger(slot) && slot >= 0 ? slot : -1;
+  const v = i >= 0 && Array.isArray(s.perAgent) ? s.perAgent[i] : undefined;
+  if (v === true || v === false) return v;
+  return s.default !== false;
 }
 
 /**
@@ -1169,7 +1246,7 @@ export function normalizeConfig(rawInput = {}) {
     body,
     moveRules,
     safety: normSafety(raw.safety, grid.boundary),
-    multiSnake: normMultiSnake(raw.multiSnake),
+    multiSnake: normMultiSnake(raw.multiSnake, grid.type),
     ruleExecution: raw.ruleExecution === 'sync' ? 'sync' : 'async',
     advancedRules: normAdvancedRules(raw.advancedRules),
     collision,
@@ -1180,6 +1257,7 @@ export function normalizeConfig(rawInput = {}) {
     endConditions,
     seed: Math.abs(Math.round(num(raw.seed, d.seed))) || 1,
     speed: clamp(num(raw.speed, d.speed), 0.5, 120),
+    frameCap: clamp(Math.round(num(raw.frameCap, d.frameCap)), 1, MAX_RUN_FRAME_CAP),
     style: normalizeStyle(raw.style),
   };
 
@@ -1566,6 +1644,46 @@ export function diagnoseConfig(rawInput = {}) {
       title: '多蛇系统在无主移动体时启用',
       message: '蛇形实体已禁用，不会生成初始的主移动体；按规则生成出来的蛇将成为场上唯一的移动体，主移动体相关的结束条件不会触发。',
       suggestions: [],
+    });
+  }
+  // 多蛇生成：条件永远不成立的三种典型配置（开启后却一条新蛇都不会出现）
+  const msRaw = (raw.multiSnake && typeof raw.multiSnake === 'object') ? raw.multiSnake : {};
+  const msSpawnRaw = (msRaw.spawn && typeof msRaw.spawn === 'object') ? msRaw.spawn : {};
+  if (cfg.multiSnake.enabled && cfg.multiSnake.spawn.mode === 'event' && !cfg.multiSnake.spawn.events.length) {
+    out.push({
+      level: 'warning',
+      code: 'multiSnakeNoTrigger',
+      title: '多蛇系统不会生成任何新蛇',
+      message: '生成方式为「按特殊事件」，但没有勾选任何触发事件，因此整轮运行都不会生成新移动体。',
+      suggestions: [
+        { label: '勾选「吃到标记物」作为触发事件', patch: { multiSnake: { spawn: { events: ['eat'] } } } },
+        { label: '改为「按随机时间间隔」生成（30~90 步）', patch: { multiSnake: { spawn: { mode: 'interval', minInterval: 30, maxInterval: 90 } } } },
+      ],
+    });
+  }
+  if (cfg.multiSnake.enabled && msSpawnRaw.probability !== undefined && cfg.multiSnake.spawn.probability <= 0) {
+    out.push({
+      level: 'warning',
+      code: 'multiSnakeZeroProbability',
+      title: '生成概率为 0，多蛇系统不会生成新蛇',
+      message: '「生成概率」为 0 时每次触发都会被概率判定拦下，新移动体永远生成不出来。',
+      suggestions: [
+        { label: '改为 1（每次触发必定生成）', patch: { multiSnake: { spawn: { probability: 1 } } } },
+        { label: '改为 0.5（半概率生成）', patch: { multiSnake: { spawn: { probability: 0.5 } } } },
+      ],
+    });
+  }
+  const minAlive = bodyOn ? 2 : 1;
+  if (cfg.multiSnake.enabled && cfg.multiSnake.spawn.maxAgents < minAlive) {
+    out.push({
+      level: 'warning',
+      code: 'multiSnakeAliveCapReached',
+      title: '「最大同时存在」过小，多蛇系统无法生成新蛇',
+      message: `多蛇系统已启用，但「最大同时存在」为 ${cfg.multiSnake.spawn.maxAgents}：${bodyOn ? '初始的主移动体已占满名额，' : ''}生成条件永远不会成立。`,
+      suggestions: [
+        { label: '改为 6（多条蛇同场演化）', patch: { multiSnake: { spawn: { maxAgents: 6 } } } },
+        { label: `改为 ${minAlive}（最少可生成一条）`, patch: { multiSnake: { spawn: { maxAgents: minAlive } } } },
+      ],
     });
   }
   // 蛇死亡转化：概率为 0 时流程永不启动；开启死亡判定时「撞到自身」结束规则让位

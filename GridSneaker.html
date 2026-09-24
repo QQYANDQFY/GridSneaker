@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.6.5</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.6.6</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -201,6 +201,9 @@ this.lives=Math.max(0,Math.round(Number(opts.lives)||0));
 this.zombie=false;
 this.invincibleUntil= -1;
 this.respawnTick= -1;
+this.safetySlot=opts.safetySlot===undefined||opts.safetySlot===null
+?null
+:Math.max(0,Math.round(Number(opts.safetySlot)||0));
 }
 get head(){
 return this.segments[0];
@@ -220,6 +223,7 @@ tag:this.tag,
 isMain:this.isMain,
 spawnTick:this.spawnTick,
 lives:this.lives,
+safetySlot:this.safetySlot,
 });
 a.alive=this.alive;
 a.pendingForcedStraights=this.pendingForcedStraights;
@@ -553,7 +557,7 @@ for(let col=0;col<this.width;col++)out.push({col,row});
 return out;
 }
 }
-return{Grid,parseDir,DIR_LABEL_CN,dirNames,dirLabel};
+return{Grid,parseDir,dirNames,DIR_LABEL_CN,dirLabel};
 })();
 __MODULES["src/core/ca.js"]=(function(){
 const CA_UPDATE_LABELS={
@@ -810,10 +814,12 @@ return{patternStateNameAt,clearPatternCell,parsePatternText,CAEngine,CA_UPDATE_L
 })();
 __MODULES["src/core/config.js"]=(function(){
 const{normalizeStates}=__MODULES["src/core/world.js"];
-const{Grid,parseDir,DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
+const{Grid,parseDir,dirNames,DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const{patternStateNameAt,clearPatternCell,parsePatternText}=__MODULES["src/core/ca.js"];
 const CONFIG_VERSION='1.2';
 const MAX_STEPS_LIMIT=1e15;
+const DEFAULT_RUN_FRAME_CAP=20000;
+const MAX_RUN_FRAME_CAP=200000;
 const LIFE_MIN=1;
 const LIFE_MAX=9;
 const END_PRIORITY_DEFAULT=[
@@ -874,6 +880,7 @@ wall:'撞墙/越界',
 obstacle:'撞到障碍物',
 merge:'发生融合',
 };
+const MAX_AGENT_SLOTS=64;
 const DEFAULT_STATES=[
 {name:'empty',color:null,blocking:false,symbol:'.',render:'fill'},
 {name:'obstacle',color:'#5b6472',blocking:true,symbol:'#',render:'cross'},
@@ -1015,6 +1022,7 @@ times:[20,60,120],
 minInterval:30,
 maxInterval:90,
 maxAgents:6,
+maxTotal:0,
 length:3,
 direction:'random',
 events:['eat'],
@@ -1024,8 +1032,10 @@ interaction:{
 mode:'collide',
 colorPalette:['#ff5d5d','#ffd166','#51cf66','#4dabf7','#c084fc','#f783ac','#63e6be','#ffa94d'],
 },
+safety:{default:true,perAgent:[]},
 },
 ruleExecution:'async',
+frameCap:DEFAULT_RUN_FRAME_CAP,
 advancedRules:[],
 collision:{
 headIntoBody:true,
@@ -1605,7 +1615,12 @@ lossAmount:clamp(Math.round(num(it.lossAmount,d.items.lossAmount)),1,LIFE_MAX),
 },
 };
 }
-function normMultiSnake(raw={}){
+function normSpawnDirection(raw,gridType,fallback){
+const v=str(raw,fallback);
+if(v==='random')return v;
+return dirNames(gridType).includes(v)?v:fallback;
+}
+function normMultiSnake(raw={},gridType='square'){
 const d=defaultConfig().multiSnake;
 const sp=raw.spawn||{};
 const it=raw.interaction||{};
@@ -1620,9 +1635,10 @@ times:(Array.isArray(sp.times)?sp.times:d.spawn.times)
 .sort((a,b)=>a-b),
 minInterval:clamp(Math.round(num(sp.minInterval,d.spawn.minInterval)),1,100000),
 maxInterval:clamp(Math.round(num(sp.maxInterval,d.spawn.maxInterval)),1,100000),
-maxAgents:clamp(Math.round(num(sp.maxAgents,d.spawn.maxAgents)),1,64),
+maxAgents:clamp(Math.round(num(sp.maxAgents,d.spawn.maxAgents)),1,MAX_AGENT_SLOTS),
+maxTotal:clamp(Math.round(num(sp.maxTotal,d.spawn.maxTotal)),0,1000000),
 length:clamp(Math.round(num(sp.length,d.spawn.length)),1,200),
-direction:str(sp.direction,d.spawn.direction),
+direction:normSpawnDirection(sp.direction,gridType,d.spawn.direction),
 events:(Array.isArray(sp.events)?sp.events:d.spawn.events).map(String).filter((e)=>SPAWN_EVENTS.includes(e)),
 probability:clamp(num(sp.probability,d.spawn.probability),0,1),
 },
@@ -1630,7 +1646,26 @@ interaction:{
 mode:INTERACTION_MODES.includes(it.mode)?it.mode:d.interaction.mode,
 colorPalette:palette,
 },
+safety:{
+default:bool(raw.safety?.default,d.safety.default),
+perAgent:normPerAgentSafety(raw.safety?.perAgent),
+},
 };
+}
+function normPerAgentSafety(raw){
+if(!Array.isArray(raw))return[];
+return raw
+.slice(0,MAX_AGENT_SLOTS)
+.map((v)=>(v===true||v===false?v:null));
+}
+function agentSafetyEnabled(cfg,slot){
+const ms=cfg&&cfg.multiSnake;
+if(!ms|| !ms.enabled)return true;
+const s=ms.safety||{};
+const i=Number.isInteger(slot)&&slot>=0?slot:-1;
+const v=i>=0&&Array.isArray(s.perAgent)?s.perAgent[i]:undefined;
+if(v===true||v===false)return v;
+return s.default!==false;
 }
 function normalizeConfig(rawInput={}){
 const raw=migrate(rawInput);
@@ -1737,7 +1772,7 @@ start,
 body,
 moveRules,
 safety:normSafety(raw.safety,grid.boundary),
-multiSnake:normMultiSnake(raw.multiSnake),
+multiSnake:normMultiSnake(raw.multiSnake,grid.type),
 ruleExecution:raw.ruleExecution==='sync'?'sync':'async',
 advancedRules:normAdvancedRules(raw.advancedRules),
 collision,
@@ -1748,6 +1783,7 @@ caMode,
 endConditions,
 seed:Math.abs(Math.round(num(raw.seed,d.seed)))||1,
 speed:clamp(num(raw.speed,d.speed),0.5,120),
+frameCap:clamp(Math.round(num(raw.frameCap,d.frameCap)),1,MAX_RUN_FRAME_CAP),
 style:normalizeStyle(raw.style),
 };
 ensureCoreStates(cfg);
@@ -2064,6 +2100,45 @@ message:'蛇形实体已禁用，不会生成初始的主移动体；按规则�
 suggestions:[],
 });
 }
+const msRaw=(raw.multiSnake&&typeof raw.multiSnake==='object')?raw.multiSnake:{};
+const msSpawnRaw=(msRaw.spawn&&typeof msRaw.spawn==='object')?msRaw.spawn:{};
+if(cfg.multiSnake.enabled&&cfg.multiSnake.spawn.mode==='event'&& !cfg.multiSnake.spawn.events.length){
+out.push({
+level:'warning',
+code:'multiSnakeNoTrigger',
+title:'多蛇系统不会生成任何新蛇',
+message:'生成方式为「按特殊事件」，但没有勾选任何触发事件，因此整轮运行都不会生成新移动体。',
+suggestions:[
+{label:'勾选「吃到标记物」作为触发事件',patch:{multiSnake:{spawn:{events:['eat']}}}},
+{label:'改为「按随机时间间隔」生成（30~90 步）',patch:{multiSnake:{spawn:{mode:'interval',minInterval:30,maxInterval:90}}}},
+],
+});
+}
+if(cfg.multiSnake.enabled&&msSpawnRaw.probability!==undefined&&cfg.multiSnake.spawn.probability<=0){
+out.push({
+level:'warning',
+code:'multiSnakeZeroProbability',
+title:'生成概率为 0，多蛇系统不会生成新蛇',
+message:'「生成概率」为 0 时每次触发都会被概率判定拦下，新移动体永远生成不出来。',
+suggestions:[
+{label:'改为 1（每次触发必定生成）',patch:{multiSnake:{spawn:{probability:1}}}},
+{label:'改为 0.5（半概率生成）',patch:{multiSnake:{spawn:{probability:0.5}}}},
+],
+});
+}
+const minAlive=bodyOn?2:1;
+if(cfg.multiSnake.enabled&&cfg.multiSnake.spawn.maxAgents<minAlive){
+out.push({
+level:'warning',
+code:'multiSnakeAliveCapReached',
+title:'「最大同时存在」过小，多蛇系统无法生成新蛇',
+message:`多蛇系统已启用，但「最大同时存在」为 ${cfg.multiSnake.spawn.maxAgents}：${bodyOn?'初始的主移动体已占满名额，':''}生成条件永远不会成立。`,
+suggestions:[
+{label:'改为 6（多条蛇同场演化）',patch:{multiSnake:{spawn:{maxAgents:6}}}},
+{label:`改为 ${minAlive}（最少可生成一条）`,patch:{multiSnake:{spawn:{maxAgents:minAlive}}}},
+],
+});
+}
 if(cfg.transform.enabled&&(cfg.transform.globalProbability<=0||cfg.transform.segmentProbability<=0)){
 out.push({
 level:'warning',
@@ -2194,7 +2269,7 @@ console.warn('分享链接解析失败',e);
 return null;
 }
 }
-return{defaultConfig,defaultRule,defaultClause,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,INTERACTION_LABELS,SPAWN_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT};
+return{defaultConfig,defaultRule,defaultClause,MAX_AGENT_SLOTS,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP,INTERACTION_LABELS,SPAWN_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT};
 })();
 __MODULES["src/core/trail.js"]=(function(){
 function colOf(grid,index){
@@ -3144,20 +3219,20 @@ style:{cellSize:20,showMarkers:true,showEffects:true},
 {
 id:'multi-snake',
 name:'多蛇生态（生成 + 融合）',
-description:'按随机时间间隔持续生成新蛇，蛇相遇时相互融合并叠加长度；配合安全避撞与逐个体配色。',
+description:'按随机时间间隔持续生成新蛇，蛇相遇时相互融合并叠加长度。安全避撞只保留「自身身体」：蛇与蛇之间不再互相规避，融合与个体死亡因此会真实发生；「撞到自身」也不再终止整轮运行，自撞只由避撞机制兜住。',
 build:()=>base({
-meta:{name:'多蛇生态',description:'多蛇生成与融合交互'},
+meta:{name:'多蛇生态',description:'多蛇生成与融合交互（蛇与蛇之间互不规避）'},
 grid:{type:'square',width:42,height:28,boundary:'wrap'},
 start:{col:21,row:14,direction:'up'},
 body:{initialLength:4},
 moveRules:{left:0.33,straight:0.34,right:0.33},
-safety:{avoidBody:true,avoidObstacle:true,avoidOtherAgents:true},
+safety:{avoidAll:false,avoidBody:true,avoidObstacle:false,avoidOtherAgents:false,avoidWall:false},
 multiSnake:{
 enabled:true,
 spawn:{mode:'interval',minInterval:25,maxInterval:55,maxAgents:6,length:3,direction:'random',probability:0.9},
 interaction:{mode:'merge'},
 },
-endConditions:{maxSteps:400,wall:false,selfCollision:true,lengthReached:false},
+endConditions:{maxSteps:400,wall:false,selfCollision:false,lengthReached:false},
 style:{cellSize:18,showEffects:true,showEyes:true},
 }),
 },
@@ -3580,6 +3655,7 @@ return{evaluateCondition,describeCondition,OBJECT_LABELS,STAT_LABELS};
 __MODULES["src/core/actions.js"]=(function(){
 const{parseDir}=__MODULES["src/core/grid.js"];
 const{Agent}=__MODULES["src/core/world.js"];
+const{MAX_AGENT_SLOTS}=__MODULES["src/core/config.js"];
 const ACTION_LABELS={
 createObstacle:'产生障碍物',
 removeObstacle:'移除障碍物',
@@ -3814,7 +3890,7 @@ texts.push(`颜色改为 ${action.color}`);
 break;
 }
 case'spawnAgent':{
-if(ctx.agents.length>=32){
+if(ctx.agents.length>=MAX_AGENT_SLOTS){
 texts.push('移动体数量已达上限，未生成新移动体');
 break;
 }
@@ -3835,7 +3911,9 @@ segments.push({...cur});
 }
 if(ctx.stats)ctx.stats.spawns=(ctx.stats.spawns||0)+1;
 const n=ctx.stats?ctx.stats.spawns:ctx.agents.length;
-const na=new Agent(`a${n}`,segments,dir,{label:`蛇${n}`,isMain:false,spawnTick:ctx.tick});
+const na=new Agent(`a${n}`,segments,dir,{
+label:`蛇${n}`,isMain:false,spawnTick:ctx.tick,safetySlot:n,
+});
 ctx.agents.push(na);
 events.push({type:'spawn',coord:pos,highlight:true});
 texts.push(`生成新移动体（长度 ${segments.length}，位置 ${pos.col},${pos.row}）`);
@@ -4289,12 +4367,12 @@ const{RNG}=__MODULES["src/core/rng.js"];
 const{World,Agent}=__MODULES["src/core/world.js"];
 const{CAEngine}=__MODULES["src/core/ca.js"];
 const{RuleEngine}=__MODULES["src/core/rules.js"];
-const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX}=__MODULES["src/core/config.js"];
+const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP}=__MODULES["src/core/config.js"];
 const{resolveTurn,occupiedByAgent,findSpawnCoord}=__MODULES["src/core/actions.js"];
 const{evaluateCondition}=__MODULES["src/core/conditions.js"];
 const{computeScore}=__MODULES["src/core/score.js"];
-const DEFAULT_FRAME_CAP=20000;
-const MAX_FRAME_CAP=200000;
+const DEFAULT_FRAME_CAP=DEFAULT_RUN_FRAME_CAP;
+const MAX_FRAME_CAP=MAX_RUN_FRAME_CAP;
 const MAX_STORED_FRAMES=MAX_FRAME_CAP;
 const MAX_LOGS=50000;
 const MAX_TRANSFORM_HIGHLIGHTS=4000;
@@ -4315,7 +4393,7 @@ constructor(rawConfig,opts={}){
 this.config=normalizeConfig(rawConfig);
 this.grid=new Grid(this.config.grid);
 this.states=this.config.caMode.states;
-this.frameCap=clampFrameCap(opts.frameCap);
+this.frameCap=clampFrameCap(opts.frameCap===undefined?this.config.frameCap:opts.frameCap);
 this.runtimeDiagnostics=[];
 this.diagCodes=new Set();
 }
@@ -4392,6 +4470,7 @@ return new Agent('main',segments,dir,{
 label:'主移动体',
 isMain:true,
 spawnTick:0,
+safetySlot:0,
 lives:cfg.life.enabled?cfg.life.initialLives:0,
 });
 }
@@ -5244,6 +5323,7 @@ return true;
 }
 filterSafeOptions(ctx,agent,options,opts={}){
 const cfg=ctx.config;
+if(!agentSafetyEnabled(cfg,agent?agent.safetySlot:null))return null;
 const s=cfg.safety;
 const allowTail=opts.allowTail===true&& !cfg.collision.headIntoTail;
 const repel=cfg.multiSnake.enabled&&cfg.multiSnake.interaction.mode==='repel';
@@ -5547,6 +5627,7 @@ if(!ms.enabled)return;
 const sp=ms.spawn;
 const aliveCount=ctx.agents.filter((a)=>a.alive).length;
 if(aliveCount>=sp.maxAgents)return;
+if(sp.maxTotal>0&&(ctx.stats.spawns||0)>=sp.maxTotal)return;
 let trigger=false;
 if(sp.mode==='time'){
 trigger=sp.times.includes(ctx.tick);
@@ -5602,7 +5683,9 @@ segments.push({...cur});
 const n=(ctx.stats.spawns=(ctx.stats.spawns||0)+1);
 const palette=ctx.config.multiSnake.interaction.colorPalette;
 const color=palette.length?palette[(n-1)%palette.length]:null;
-const agent=new Agent(`a${n}`,segments,dir,{label:`蛇${n}`,color,isMain:false,spawnTick:ctx.tick});
+const agent=new Agent(`a${n}`,segments,dir,{
+label:`蛇${n}`,color,isMain:false,spawnTick:ctx.tick,safetySlot:n,
+});
 ctx.agents.push(agent);
 return agent;
 }
@@ -5781,6 +5864,7 @@ const CONFIG_SECTION_LABELS={
 meta:'场景信息',
 seed:'随机种子',
 speed:'播放速度',
+frameCap:'单次运行步数上限',
 ruleExecution:'规则执行方式',
 grid:'网格与坐标',
 start:'起点与方向',
@@ -5809,6 +5893,7 @@ avoidAll:'避开全部（总开关）',avoidBody:'避让自身身体',avoidObsta
 avoidWall:'避让不可穿越边界',warnSelfCollision:'自撞预警提示',
 times:'预定时间点',minInterval:'最小间隔',maxInterval:'最大间隔',
 maxAgents:'最大同时存在',length:'长度',events:'触发事件',colorPalette:'逐个体配色',
+maxTotal:'生成总数上限',perAgent:'逐条安全避撞开关',default:'新生移动体默认',
 headIntoBody:'撞到自身身体',headIntoTail:'撞到尾部',wall:'撞墙',outOfBounds:'越界',
 obstacle:'撞障碍物',countMode:'碰撞计数方式',
 action:'处理动作',n:'次数',maxConsecutive:'连续上限',
@@ -8428,7 +8513,7 @@ return openDialog({...opts,alert:true});
 return{h,clear,group,field,row,button,numberInput,textInput,textArea,select,checkbox,range,colorInput,numBind,selBind,chkBind,textBind,rangeBind,colorBind,toast,formatNumber,confirmDialog,alertDialog,dialogOpen,switchField};
 })();
 __MODULES["src/ui/app.js"]=(function(){
-const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT}=__MODULES["src/core/config.js"];
+const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MAX_AGENT_SLOTS}=__MODULES["src/core/config.js"];
 const{defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText}=__MODULES["src/core/trail.js"];
 const{PRESETS,buildPresetConfig,matchPreset}=__MODULES["src/core/presets.js"];
 const{Simulation,DEFAULT_FRAME_CAP,MAX_FRAME_CAP,MAX_STORED_FRAMES}=__MODULES["src/core/simulation.js"];
@@ -9293,6 +9378,10 @@ if(!state.result)return;
 renderer.setStyle(state.cfg.style,state.cfg.body);
 draw();
 }
+function clampFrameCap(v){
+if(!Number.isFinite(v))return DEFAULT_FRAME_CAP;
+return Math.min(MAX_FRAME_CAP,Math.max(1,Math.round(v)));
+}
 function recompute(opts={}){
 let normalized;
 try{
@@ -9305,7 +9394,7 @@ syncDerived(normalized);
 const cfg=normalized;
 const frameCap=Number.isFinite(opts.frameCap)
 ?Math.min(MAX_FRAME_CAP,Math.max(1,Math.round(opts.frameCap)))
-:DEFAULT_FRAME_CAP;
+:clampFrameCap(cfg.frameCap);
 state.frameCap=frameCap;
 const effCap=cfg.endConditions.maxSteps===false
 ?frameCap
@@ -9509,7 +9598,7 @@ els.timeline=slider(0,(v)=>{pause();gotoFrame(Number(v));},{min:0,max:1,step:1,c
 els.frameLabel=h('span',{class:'frame-label'},'');
 els.endLabel=h('span',{class:'end-label'},'');
 els.endJumpBtn=button('查看结束规则',()=>focusEndReason(),'ghost small');
-els.continueBtn=button('继续运行 +'+DEFAULT_FRAME_CAP,()=>continueRun(),'primary small');
+els.continueBtn=button(`继续运行 +${continueStep()}`,()=>continueRun(),'primary small');
 els.scoreLabel=h('span',{class:'score-label'},'得分：尚未运行');
 els.diffLabel=h('span',{class:'hint'},'');
 els.evalLine=h('div',{class:'controls-line'},els.scoreLabel,els.diffLabel);
@@ -9544,13 +9633,17 @@ updateSpeedLabel();
 function updateSpeedLabel(){
 els.speedLabel.textContent=`步/秒`;
 }
+function continueStep(){
+const v=state.cfg?Number(state.cfg.frameCap):NaN;
+return Number.isFinite(v)&&v>0?clampFrameCap(v):DEFAULT_FRAME_CAP;
+}
 function continueRun(){
 if(!state.result)return;
 if(state.result.endReason?.code!=='frameLimit'){
 toast('本次运行并非因安全步数上限而停止','warn');
 return;
 }
-const next=Math.min(MAX_FRAME_CAP,state.frameCap+DEFAULT_FRAME_CAP);
+const next=Math.min(MAX_FRAME_CAP,state.frameCap+continueStep());
 if(next<=state.frameCap){
 toast(`已达到最大安全步数上限（${MAX_FRAME_CAP} 步）`,'warn');
 return;
@@ -10822,12 +10915,13 @@ function syncControlBar(){
 if(els.speedSlider)els.speedSlider.value=String(state.cfg.speed);
 if(els.speedNum)els.speedNum.value=String(state.cfg.speed);
 if(els.followInput)els.followInput.checked= !!state.cfg.style.followAgent;
+if(els.continueBtn)els.continueBtn.textContent=`继续运行 +${continueStep()}`;
 updateSpeedLabel();
 }
 const CONFIG_TABS=[
 {key:'core',label:'核心规则',hint:'网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则'},
 {key:'visual',label:'视觉显示',hint:'基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置'},
-{key:'scene',label:'场景与运行',hint:'场景名称与描述、随机种子、规则执行方式'},
+{key:'scene',label:'场景与运行',hint:'场景名称与描述、随机种子、规则执行方式、模拟帧率、单次运行步数上限、网格边界与多移动体规模'},
 {key:'extend',label:'扩展机制',hint:'多蛇与交互、蛇死亡转化、生命机制、元胞自动机'},
 ];
 let activateCfgTab=()=>{};
@@ -10881,7 +10975,7 @@ visualEffectsGroup(cfg),
 visualOverlayGroup(cfg),
 visualThemeGroup(cfg),
 );
-panels.get('scene').append(sceneGroup(cfg));
+panels.get('scene').append(sceneGroup(cfg),runControlGroup(cfg),sceneScaleGroup(cfg));
 tabs.appendChild(nav);
 for(const t of CONFIG_TABS)tabs.appendChild(panels.get(t.key));
 root.appendChild(tabs);
@@ -10990,7 +11084,63 @@ button('🎲 随机',()=>{cfg.seed=Math.floor(Math.random()*1e9)+1;rebuildAll();
 field('规则执行方式',selBind(cfg,'ruleExecution',()=>onSimChange(),[
 {value:'async',label:'异步（逐条即时生效）'},
 {value:'sync',label:'同步（基于阶段快照）'},
-])),
+]),'同步方式让同一步内的规则基于同一份快照判定，结果与规则书写顺序无关；异步则逐条即时生效'),
+],{open:false});
+}
+function runControlGroup(cfg){
+const capHint=h('div',{class:'hint'});
+const syncCapHint=()=>{
+const on=cfg.endConditions.maxSteps!==false;
+capHint.textContent=on
+?`当前「结束规则 → 达到步数上限」已启用（${Math.round(cfg.endConditions.maxSteps)} 步），本上限暂不参与判定，仅作为兜底保护。`
+:`未启用「达到步数上限」：一轮运行在本上限处停止，可用控制条「继续运行」逐级推进（每次 +${continueStep()} 步）。`;
+};
+syncCapHint();
+return group('运行控制',[
+field('模拟帧率（步/秒）',range(cfg.speed,(v)=>setSpeed(v),{
+min:0.5,max:120,step:0.5,number:true,
+}),'与控制条上的速度滑块是同一个设置：只影响播放快慢，不改变任何计算结果'),
+field('单次运行步数上限',numBind(cfg,'frameCap',()=>{syncCapHint();onSimChange(0);},{
+min:1,max:MAX_FRAME_CAP,step:100,
+}),'调大可一次算完更长的过程，代价是单次计算时间与画面缓存占用同步上升'),
+capHint,
+],{open:false});
+}
+function sceneScaleGroup(cfg){
+const g=cfg.grid;
+const sp=cfg.multiSnake.spawn;
+const syncStart=()=>{
+cfg.start.col=Math.min(cfg.start.col,g.width-1);
+cfg.start.row=Math.min(cfg.start.row,g.height-1);
+};
+const sizeLabel=h('div',{class:'hint'});
+const syncSizeLabel=()=>{sizeLabel.textContent=`网格共 ${g.width*g.height} 格`;};
+syncSizeLabel();
+return group('场景边界与规模',[
+row(
+field('宽',numBind(g,'width',()=>{syncStart();syncSizeLabel();onSimChange();rebuildAll();},{min:2,max:400})),
+field('高',numBind(g,'height',()=>{syncStart();syncSizeLabel();onSimChange();rebuildAll();},{min:2,max:400})),
+),
+field('边界行为',selBind(g,'boundary',()=>{
+syncBoundaryAvoidance();
+onSimChange();
+rebuildAll();
+},[
+{value:'stop',label:'停止（撞墙即停）'},
+{value:'bounce',label:'反弹'},
+{value:'wrap',label:'穿越到另一侧'},
+{value:'randomTurn',label:'随机转向'},
+{value:'custom',label:'自定义（由环境规则决定）'},
+]),'与「核心规则 → 网格与坐标 → 边界行为」是同一个设置；改为不可穿越时自动补开「安全避撞 → 边界规避」'),
+sizeLabel,
+switchField('启用多蛇系统',
+chkBind(cfg.multiSnake,'enabled',()=>{onSimChange(0);rebuildAll();},'启用'),
+'多蛇生态的规模开关；生成方式 / 交互结果 / 逐蛇安全避撞等细节见「扩展机制 → 多蛇生成与交互系统」'),
+row(
+field('最大同时存在',numBind(sp,'maxAgents',()=>onSimChange(),{min:1,max:MAX_AGENT_SLOTS})),
+field('生成总数上限',numBind(sp,'maxTotal',()=>onSimChange(),{min:0,max:1000000})),
+),
+h('div',{class:'hint'},'「生成总数上限」为 0 表示不限制；长时间运行时建议与「最大同时存在」配合设一个总数，避免蛇数量无限累积。'),
 ],{open:false});
 }
 function gridGroup(cfg){
@@ -11316,8 +11466,10 @@ chkBind(m,'enabled',()=>{onSimChange(0);rebuildAll();},'启用'),
 '主移动体终止时整场结束，其它蛇终止只计入「移动体消失」'),
 row(
 field('生成方式',selBind(sp,'mode',()=>{onSimChange();rebuildAll();},Object.entries(SPAWN_LABELS).map(([value,label])=>({value,label})))),
-field('最大同时存在',numBind(sp,'maxAgents',()=>onSimChange(),{min:1,max:64})),
+field('最大同时存在',numBind(sp,'maxAgents',()=>onSimChange(),{min:1,max:MAX_AGENT_SLOTS})),
 ),
+field('生成总数上限',numBind(sp,'maxTotal',()=>onSimChange(),{min:0,max:1000000}),
+'整轮运行累计生成的蛇数量上限；0 表示不限制。与「最大同时存在」配合，可避免长跑时蛇数量无限累积'),
 ];
 if(sp.mode==='time'){
 bodies.push(field('预定时间点（步）',textInput(sp.times.join(', '),(v)=>{
@@ -11355,7 +11507,60 @@ bodies.push(h('div',{class:'hint'},'融合：较短的蛇并入较长的一条�
 }else if(it.mode==='collide'){
 bodies.push(h('div',{class:'hint'},'碰撞：两蛇头对头相遇时双方消失；涉及主移动体则整场结束。'));
 }
+bodies.push(perAgentSafetySection(m));
 return group('多蛇生成与交互系统',bodies,{open:false,badge:m.enabled?'已启用':''});
+}
+function perAgentSafetySection(m){
+const safety=m.safety;
+const perAgent=safety.perAgent;
+const ensureSlots=(n)=>{while(perAgent.length<n)perAgent.push(null);};
+const slotOn=(i)=>{
+const v=perAgent[i];
+return v===true||v===false?v:safety.default!==false;
+};
+const commit=()=>{onSimChange();rebuildAll();};
+const chip=(i,label)=>checkbox(slotOn(i),(v)=>{
+ensureSlots(i+1);
+perAgent[i]=v;
+commit();
+},label);
+const snakeCount=Math.max(0,perAgent.length-1);
+const chips=[chip(0,'主移动体')];
+for(let i=1;i<=snakeCount;i++)chips.push(chip(i,`蛇${i}`));
+const explicit=perAgent.filter((v)=>v===true||v===false).length;
+return group('逐蛇安全避撞',[
+switchField('新生移动体默认',
+chkBind(safety,'default',()=>commit(),'启用'),
+'未在下方单独设置的移动体沿用本项；关闭后这些移动体不再规避，会真实撞上身体 / 障碍物 / 其它移动体 / 边界'),
+field('逐条开关',h('div',{class:'chips-line'},...chips),
+'按生成顺序对应：主移动体、蛇1、蛇2……与画布上的标签一致。关闭某条即该移动体不参与安全避撞'),
+row(
+button('＋ 增加一条蛇',()=>{
+if(perAgent.length>=MAX_AGENT_SLOTS){
+toast(`逐蛇开关最多配置 ${MAX_AGENT_SLOTS} 条`,'warn');
+return;
+}
+ensureSlots(perAgent.length===0?2:perAgent.length+1);
+commit();
+},'ghost small'),
+button('－ 减少一条蛇',()=>{
+if(perAgent.length<=1){
+toast('至少保留「主移动体」一个槽位；要全部跟随默认请用「跟随默认」','warn');
+return;
+}
+perAgent.pop();
+commit();
+},'ghost small'),
+button('跟随默认',()=>{
+safety.perAgent=[];
+commit();
+},'ghost small'),
+),
+h('div',{class:'hint'},
+m.enabled
+?'关闭安全避撞的移动体不再剔除被阻塞的方向，因此会真实发生自撞与碰撞——这正是观察「哪些个体会被淘汰」所需要的。'
+:'当前未启用多蛇系统：所有移动体统一沿用「核心规则 → 安全避撞预设」。启用本系统后，这里的逐条设置才会生效。'),
+],{open:false,badge:explicit?`已单独设置 ${explicit} 条`:''});
 }
 function collisionGroup(cfg){
 const c=cfg.collision;

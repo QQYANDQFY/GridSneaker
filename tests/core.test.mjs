@@ -12,6 +12,7 @@ import {
   JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
   LIFE_MIN, LIFE_MAX, TRAIL_COLOR_MODES,
   DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
+  MAX_AGENT_SLOTS, agentSafetyEnabled,
 } from '../src/core/config.js';
 import {
   buildTrail, unwrapTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -4022,6 +4023,226 @@ section('任务5 优化：回放帧的统计口径与画面快照逐帧自洽（
   const repelled = new Simulation(repel).run();
   ok(repelled.stats.repels > 0, '排斥交互仍会触发回退（按需备份没有漏掉该路径）', `排斥 ${repelled.stats.repels} 次`);
   ok(repelled.stats.agents >= 2, '排斥模式下双方均生存', `存活 ${repelled.stats.agents}`);
+}
+
+/* ---------- 逐蛇安全避撞：逐条独立开关 ---------- */
+
+section('逐蛇安全避撞：配置层与逐条判定入口');
+{
+  const d = defaultConfig();
+  eq(d.multiSnake.safety.default, true, '默认：未单独设置的移动体沿用安全避撞');
+  eq(d.multiSnake.safety.perAgent.length, 0, '默认不逐条设置（全部跟随默认）');
+  eq(d.multiSnake.spawn.maxTotal, 0, '默认不限制整轮生成总数');
+  eq(d.frameCap, DEFAULT_FRAME_CAP, '配置里的单次运行步数上限与模拟器兜底值一致');
+
+  const norm = (safety) => normalizeConfig({
+    ...d, multiSnake: { ...d.multiSnake, enabled: true, safety },
+  }).multiSnake.safety;
+  eq(norm({}).default, true, '未提供 default 时回退为开启');
+  eq(norm({}).perAgent.length, 0, '未提供 perAgent 时视为「全部跟随默认」');
+  eq(norm({ perAgent: 'x' }).perAgent.length, 0, '非法形态回退为「全部跟随默认」');
+  eq(norm({ default: false, perAgent: [true, null, 'x', 1, false] }).perAgent.join(','),
+    'true,,,,false', '逐项收敛为 true / false / null（null 表示跟随默认）');
+  eq(norm({ perAgent: Array.from({ length: 200 }, () => false) }).perAgent.length, MAX_AGENT_SLOTS,
+    '逐蛇列表截断到「最大同时存在」的上限');
+
+  // agentSafetyEnabled：唯一的逐条判定入口
+  const mkCfg = (enabled, safety) => normalizeConfig({
+    ...d, multiSnake: { ...d.multiSnake, enabled, safety },
+  });
+  const c1 = mkCfg(true, { default: true, perAgent: [false] });
+  eq(agentSafetyEnabled(c1, 0), false, '主移动体（下标 0）可被单独关闭');
+  eq(agentSafetyEnabled(c1, 1), true, '未单独设置的槽位跟随默认（开启）');
+  const c2 = mkCfg(true, { default: false, perAgent: [null, true] });
+  eq(agentSafetyEnabled(c2, 0), false, 'null 槽位跟随默认（关闭）');
+  eq(agentSafetyEnabled(c2, 1), true, '显式开启的槽位不受默认影响');
+  eq(agentSafetyEnabled(c2, 999), false, '序号超出列表范围时沿用默认');
+  eq(agentSafetyEnabled(mkCfg(false, { default: false }), 0), true,
+    '多蛇系统未启用时本段不生效（所有移动体统一沿用全局安全避撞）');
+  eq(agentSafetyEnabled(mkCfg(true, { default: false }), null), false, '未提供序号的移动体同样遵循默认');
+
+  // 行为：关闭安全避撞的移动体不再剔除被阻塞的方向（会真实自撞）
+  const mkSim = (perAgent) => {
+    const cfg = mkCfg(true, { default: false, perAgent });
+    cfg.grid = { type: 'square', width: 5, height: 5, boundary: 'wrap' };
+    cfg.safety = { avoidAll: false, avoidBody: true, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false, warnSelfCollision: false };
+    return new Simulation(cfg);
+  };
+  const segments = [{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 3, row: 3 }];
+  const opts = [{ key: 'left', weight: 1 }, { key: 'straight', weight: 1 }, { key: 'right', weight: 1 }];
+  const probe = (sim, slot) => {
+    const agent = new Agent(slot === 0 ? 'main' : `a${slot}`, segments.map((s) => ({ ...s })), 1,
+      { isMain: slot === 0, safetySlot: slot });
+    const ctx = {
+      grid: sim.grid, world: new World(sim.grid, sim.states), agents: [agent],
+      config: sim.config, rng: new RNG(11), tick: 1,
+    };
+    return sim.filterSafeOptions(ctx, agent, opts);
+  };
+  eq(probe(mkSim([true]), 0).length, 2, '主移动体单独开启 → 仍剔除压在自身身体上的方向');
+  eq(probe(mkSim([true]), 1), null, '「蛇1」跟随默认（关闭）→ 不做筛选，自撞会真实发生');
+  eq(probe(mkSim([false, true]), 0), null, '主移动体单独关闭 → 不做筛选');
+  eq(probe(mkSim([false, true]), 1).length, 2, '「蛇1」单独开启 → 恢复规避（同一条配置里两种行为并存）');
+  eq(probe(mkSim([false, true]), 2), null, '未列出的「蛇2」跟随默认（关闭）');
+}
+
+section('多蛇：生成序号即逐蛇开关下标 / 整轮生成总数上限（行为级）');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { type: 'square', width: 8, height: 8, boundary: 'wrap' };
+  cfg.multiSnake = {
+    ...cfg.multiSnake,
+    enabled: true,
+    spawn: {
+      ...cfg.multiSnake.spawn,
+      mode: 'interval', minInterval: 1, maxInterval: 1,
+      maxAgents: 5, maxTotal: 2, length: 2, direction: 'random', probability: 1,
+    },
+  };
+  const sim = new Simulation(cfg);
+  const ctx = {
+    grid: sim.grid, world: new World(sim.grid, sim.states), config: sim.config,
+    rng: new RNG(9), tick: 1, agents: [new Agent('main', [{ col: 0, row: 0 }], 0, { isMain: true, safetySlot: 0 })],
+    stats: {}, highlights: [], spawnCtl: { nextTick: null }, log: () => {},
+  };
+  sim.maybeSpawn(ctx, []);           // 第 1 次只安排下一个生成时间点
+  ctx.tick = 2; sim.maybeSpawn(ctx, []);
+  ctx.tick = 3; sim.maybeSpawn(ctx, []);
+  eq(ctx.stats.spawns, 2, '按间隔生成两条新蛇');
+  eq(ctx.agents[1].safetySlot, 1, '第 1 条生成的蛇占用槽位 1（与标签「蛇1」一致）');
+  eq(ctx.agents[2].safetySlot, 2, '第 2 条生成的蛇占用槽位 2');
+  eq(ctx.agents[0].safetySlot, 0, '主移动体固定占用槽位 0');
+  ctx.tick = 4; sim.maybeSpawn(ctx, []);
+  eq(ctx.stats.spawns, 2, '达到「生成总数上限」后不再生成新蛇');
+
+  // 上限为 0 时不受总数限制
+  const free = defaultConfig();
+  free.grid = cfg.grid;
+  free.multiSnake = { ...cfg.multiSnake, spawn: { ...cfg.multiSnake.spawn, maxTotal: 0, maxAgents: 5 } };
+  const sim2 = new Simulation(free);
+  const ctx2 = {
+    ...ctx, config: sim2.config, world: new World(sim2.grid, sim2.states), rng: new RNG(9), tick: 1,
+    agents: [new Agent('main', [{ col: 0, row: 0 }], 0, { isMain: true, safetySlot: 0 })],
+    stats: {}, highlights: [], spawnCtl: { nextTick: null },
+  };
+  for (let t = 1; t <= 8; t++) { ctx2.tick = t; sim2.maybeSpawn(ctx2, []); }
+  eq(ctx2.stats.spawns, 4, '上限为 0 时持续生成（直到「最大同时存在」为止）');
+
+  // 「最大同时存在」同样是最新生效的闸门
+  const tight = defaultConfig();
+  tight.grid = cfg.grid;
+  tight.multiSnake = { ...cfg.multiSnake, spawn: { ...cfg.multiSnake.spawn, maxTotal: 0, maxAgents: 2 } };
+  const sim3 = new Simulation(tight);
+  const ctx3 = {
+    ...ctx2, config: sim3.config, world: new World(sim3.grid, sim3.states), rng: new RNG(9), tick: 1,
+    agents: [new Agent('main', [{ col: 0, row: 0 }], 0, { isMain: true, safetySlot: 0 })],
+    stats: {}, spawnCtl: { nextTick: null }, highlights: [],
+  };
+  for (let t = 1; t <= 8; t++) { ctx3.tick = t; sim3.maybeSpawn(ctx3, []); }
+  eq(ctx3.stats.spawns, 1, '存活数达到「最大同时存在」后停止生成');
+
+  // Agent 载体：序号随克隆保留（生命机制重生时逐蛇开关不会丢失）
+  const snake = new Agent('a1', [{ col: 0, row: 0 }], 0, { label: '蛇1', isMain: false, safetySlot: 1 });
+  eq(snake.safetySlot, 1, 'Agent 记录逐蛇安全避撞序号');
+  eq(snake.clone().safetySlot, 1, '克隆后序号保持（重生 / 快照不丢配置）');
+  eq(new Agent('x', [{ col: 0, row: 0 }], 0, {}).safetySlot, null, '未提供序号时记为 null（跟随默认）');
+  eq(new Agent('y', [{ col: 0, row: 0 }], 0, { safetySlot: -3 }).safetySlot, 0, '非法序号收敛到 0');
+}
+
+section('新蛇方向与网格类型的一致性 / 单次运行步数上限');
+{
+  const d = defaultConfig();
+  const spawnDir = (patch) => normalizeConfig({
+    ...d, ...patch, multiSnake: { ...d.multiSnake, spawn: { ...d.multiSnake.spawn, direction: patch.direction } },
+  }).multiSnake.spawn.direction;
+  eq(spawnDir({ direction: 'up' }), 'up', '方格网格保留合法的方向名');
+  eq(spawnDir({ direction: 'random' }), 'random', '「随机」始终保持');
+  eq(spawnDir({ direction: 'up', grid: { ...d.grid, type: 'hex' } }), 'random',
+    '六边形网格上不存在的方向名回退为「随机」（不再静默变成 0 号方向）');
+  eq(spawnDir({ direction: 'east', grid: { ...d.grid, type: 'hex' } }), 'east', '六边形网格保留合法方向名');
+
+  const cap = (v) => normalizeConfig({ ...d, frameCap: v }).frameCap;
+  eq(d.frameCap, DEFAULT_FRAME_CAP, '单次运行步数上限默认等于安全帧上限');
+  eq(cap(500), 500, '可按配置调整');
+  eq(cap(0), 1, '下限收敛到 1');
+  eq(cap(-99), 1, '负数收敛到 1');
+  eq(cap(MAX_FRAME_CAP + 1000), MAX_FRAME_CAP, '上限收敛到最大安全帧上限');
+  eq(cap('abc'), DEFAULT_FRAME_CAP, '非法值回退为默认');
+
+  // 行为：未勾选「达到步数上限」时，配置里的上限真的决定运行长度
+  const cfg = defaultConfig();
+  cfg.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+  cfg.frameCap = 30;
+  cfg.endConditions = { ...cfg.endConditions, maxSteps: false, wall: false, selfCollision: false, outOfBounds: false, obstacle: false, noMove: false };
+  const r = new Simulation(cfg).run();
+  eq(r.endReason.code, 'frameLimit', '运行在配置的步数上限处停止');
+  ok(r.stats.steps <= 30, '实际步数不超过配置上限', `实际 ${r.stats.steps}`);
+  eq(new Simulation(cfg, { frameCap: 12 }).run().stats.steps <= 12, true, '显式传入的上限优先于配置（「继续运行」链路）');
+}
+
+/* ---------- 逐蛇安全避撞 UI 与「场景与运行」选项卡扩充（源码级回归） ---------- */
+
+section('逐蛇安全避撞 UI 与「场景与运行」选项卡扩充（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+
+  /* 1) 逐蛇安全避撞面板 */
+  ok(/function perAgentSafetySection\(m\)/.test(app), '多蛇分组内提供逐蛇安全避撞面板');
+  ok(/group\('逐蛇安全避撞'/.test(app), '逐蛇安全避撞以独立折叠分组呈现（默认收起）');
+  ok(/chips = \[chip\(0, '主移动体'\)\]/.test(app) && /chips\.push\(chip\(i, `蛇\$\{i\}`\)\)/.test(app),
+    '逐条开关按「主移动体 + 蛇n」列出，与画布标签一一对应');
+  ok(/chkBind\(safety, 'default'/.test(app), '提供「新生移动体默认」开关（覆盖未逐条列出的移动体）');
+  ok(/button\('＋ 增加一条蛇'/.test(app) && /button\('－ 减少一条蛇'/.test(app) && /button\('跟随默认'/.test(app),
+    '提供增删槽位与「跟随默认」重置按钮（高度自定义）');
+  ok(/if \(!v\) s\.avoidAll = false;/.test(app), '全局「避开全部」与子项的联动逻辑未被逐蛇面板破坏');
+  ok(/badge: explicit \? `已单独设置 \$\{explicit\} 条` : ''/.test(app), '分组徽标显示已单独设置的条数');
+  ok(/numBind\(sp, 'maxTotal'/.test(app), '面板提供「生成总数上限」输入（防止长跑时数量无限累积）');
+
+  /* 2)「场景与运行」选项卡扩充 */
+  ok(/function runControlGroup\(cfg\)/.test(app) && /function sceneScaleGroup\(cfg\)/.test(app),
+    '新增「运行控制」与「场景边界与规模」两个分组');
+  ok(/panels\.get\('scene'\)\.append\(sceneGroup\(cfg\), runControlGroup\(cfg\), sceneScaleGroup\(cfg\)\);/.test(app),
+    '两个新分组装配进「场景与运行」选项卡');
+  ok(/group\('运行控制'/.test(app) && /group\('场景边界与规模'/.test(app), '两个分组均有独立标题');
+  ok(/range\(cfg\.speed, \(v\) => setSpeed\(v\)/.test(app), '提供模拟帧率调节（与控制条共享同一设置）');
+  ok(/numBind\(cfg, 'frameCap'/.test(app), '提供单次运行步数上限（运行时长限制）');
+  ok(/numBind\(g, 'width'[\s\S]{0,60}syncStart\(\)/.test(app), '场景边界与规模中可调整网格宽高并同步收敛起点');
+  ok(/selBind\(g, 'boundary'[\s\S]{0,80}syncBoundaryAvoidance\(\);/.test(app), '场景边界与规模中可调整边界行为并保持边界规避联动');
+  ok(/label: '场景与运行', hint: '[^']*模拟帧率[^']*单次运行步数上限[^']*'/.test(app),
+    '选项卡提示语覆盖新增设置（进入分类即知有哪些内容）');
+
+  /* 3) 配置差异比对标签 */
+  ok(/maxTotal: '生成总数上限'/.test(diffSrc) && /perAgent: '逐条安全避撞开关'/.test(diffSrc)
+    && /default: '新生移动体默认'/.test(diffSrc), '逐蛇安全避撞与总数上限在差异比对中有中文标签');
+  ok(/frameCap: '单次运行步数上限'/.test(diffSrc), '单次运行步数上限在差异比对中有中文标签');
+
+  /* 4) 分享链接往返：新增字段不丢失 */
+  const cfg = defaultConfig();
+  cfg.multiSnake = {
+    ...cfg.multiSnake,
+    enabled: true,
+    spawn: { ...cfg.multiSnake.spawn, maxTotal: 9 },
+    safety: { default: false, perAgent: [true, false, null] },
+  };
+  cfg.frameCap = 1234;
+  const back = decodeConfigFromToken(encodeConfigToToken(normalizeConfig(cfg)));
+  eq(back.frameCap, 1234, '单次运行步数上限可随分享链接传递');
+  eq(back.multiSnake.spawn.maxTotal, 9, '生成总数上限可随分享链接传递');
+  eq(back.multiSnake.safety.default, false, '逐蛇默认开关可随分享链接传递');
+  eq(back.multiSnake.safety.perAgent.join(','), 'true,false,', '逐蛇开关逐项可随分享链接传递（null 原样保留）');
+
+  /* 5)「继续运行」跨度与「单次运行步数上限」保持一致 */
+  ok(/function continueStep\(\)/.test(app), '「继续运行」的跨度由 continueStep() 统一给出');
+  ok(/Math\.min\(MAX_FRAME_CAP, state\.frameCap \+ continueStep\(\)\)/.test(app),
+    '继续运行按配置跨度提升上限，且仍受最大安全步数上限约束');
+  ok(!/state\.frameCap \+ DEFAULT_FRAME_CAP/.test(app), '不再写死默认跨度（改上限后按钮语义随之变化）');
+  ok(/els\.continueBtn\.textContent = `继续运行 \+\$\{continueStep\(\)\}`/.test(app),
+    '面板内改动单次运行步数上限后，控制条按钮文案同步刷新');
+  ok(/每次 \+\$\{continueStep\(\)\} 步/.test(app), '运行控制提示语给出的推进步数与按钮文案一致');
+  ok(/const v = state\.cfg \? Number\(state\.cfg\.frameCap\) : NaN;/.test(app)
+    && /return Number\.isFinite\(v\) && v > 0 \? clampFrameCap\(v\) : DEFAULT_FRAME_CAP;/.test(app),
+    '跨度取值与配置同样收敛到 [1, MAX_FRAME_CAP]，缺省时回退默认值');
 }
 
 /* ---------- 结果 ---------- */

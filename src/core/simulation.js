@@ -10,15 +10,15 @@ import { RNG } from './rng.js';
 import { World, Agent } from './world.js';
 import { CAEngine } from './ca.js';
 import { RuleEngine } from './rules.js';
-import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, LIFE_MAX } from './config.js';
+import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, LIFE_MAX, agentSafetyEnabled, DEFAULT_RUN_FRAME_CAP, MAX_RUN_FRAME_CAP } from './config.js';
 import { resolveTurn, occupiedByAgent, findSpawnCoord } from './actions.js';
 import { evaluateCondition } from './conditions.js';
 import { computeScore } from './score.js';
 
 /** 单次运行默认的安全帧上限（未启用「达到步数上限」时的保护值，可由界面「继续运行」递增） */
-export const DEFAULT_FRAME_CAP = 20000;
+export const DEFAULT_FRAME_CAP = DEFAULT_RUN_FRAME_CAP;
 /** 单次运行的绝对帧上限，防止无限运行拖垮浏览器 */
-export const MAX_FRAME_CAP = 200000;
+export const MAX_FRAME_CAP = MAX_RUN_FRAME_CAP;
 /**
  * 单次运行最多缓存的画面帧数。
  * 「达到步数上限」可设到 1e15，逐步全量缓存不可能（内存与时间都不允许），
@@ -57,7 +57,8 @@ export class Simulation {
     this.config = normalizeConfig(rawConfig);
     this.grid = new Grid(this.config.grid);
     this.states = this.config.caMode.states;
-    this.frameCap = clampFrameCap(opts.frameCap);
+    // 帧上限优先级：显式传入（界面「继续运行」逐级推进）> 配置中的「单次运行步数上限」> 默认值
+    this.frameCap = clampFrameCap(opts.frameCap === undefined ? this.config.frameCap : opts.frameCap);
     /** 运行期诊断（与配置诊断同结构，供界面合并展示） */
     this.runtimeDiagnostics = [];
     this.diagCodes = new Set();
@@ -147,6 +148,8 @@ export class Simulation {
       label: '主移动体',
       isMain: true,
       spawnTick: 0,
+      // 逐蛇安全避撞：主移动体固定占用序号 0（面板上的「主移动体」开关即对应它）
+      safetySlot: 0,
       // 生命机制：主移动体携带初始生命；未启用时为 0，致命判定的旧行为不变
       lives: cfg.life.enabled ? cfg.life.initialLives : 0,
     });
@@ -1236,6 +1239,9 @@ export class Simulation {
    */
   filterSafeOptions(ctx, agent, options, opts = {}) {
     const cfg = ctx.config;
+    // 逐蛇安全避撞：该移动体单独关闭规避时不做任何筛选，保持原随机序列；
+    // 关闭的个体因此会真实地撞上自身身体 / 障碍物 / 其它移动体 / 边界。
+    if (!agentSafetyEnabled(cfg, agent ? agent.safetySlot : null)) return null;
     const s = cfg.safety;
     const allowTail = opts.allowTail === true && !cfg.collision.headIntoTail;
     const repel = cfg.multiSnake.enabled && cfg.multiSnake.interaction.mode === 'repel';
@@ -1605,6 +1611,8 @@ export class Simulation {
     const sp = ms.spawn;
     const aliveCount = ctx.agents.filter((a) => a.alive).length;
     if (aliveCount >= sp.maxAgents) return;
+    // 整轮生成总数上限（0 = 不限制）：长期运行时防止移动体数量持续累积
+    if (sp.maxTotal > 0 && (ctx.stats.spawns || 0) >= sp.maxTotal) return;
 
     let trigger = false;
     if (sp.mode === 'time') {
@@ -1665,7 +1673,10 @@ export class Simulation {
     const n = (ctx.stats.spawns = (ctx.stats.spawns || 0) + 1);
     const palette = ctx.config.multiSnake.interaction.colorPalette;
     const color = palette.length ? palette[(n - 1) % palette.length] : null;
-    const agent = new Agent(`a${n}`, segments, dir, { label: `蛇${n}`, color, isMain: false, spawnTick: ctx.tick });
+    // 逐蛇安全避撞序号：第 n 条生成的蛇对应面板上的「蛇n」开关（下标 0 留给主移动体）
+    const agent = new Agent(`a${n}`, segments, dir, {
+      label: `蛇${n}`, color, isMain: false, spawnTick: ctx.tick, safetySlot: n,
+    });
     ctx.agents.push(agent);
     return agent;
   }

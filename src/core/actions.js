@@ -4,6 +4,7 @@
  */
 import { parseDir } from './grid.js';
 import { Agent } from './world.js';
+import { MAX_AGENT_SLOTS } from './config.js';
 
 export const ACTION_LABELS = {
   createObstacle: '产生障碍物',
@@ -257,7 +258,8 @@ export function applyAction(action, subject, ctx) {
       break;
     }
     case 'spawnAgent': {
-      if (ctx.agents.length >= 32) {
+      // 与「多蛇生成」共用同一套数量口径（MAX_AGENT_SLOTS），避免两条生成路径的上限各不相同
+      if (ctx.agents.length >= MAX_AGENT_SLOTS) {
         texts.push('移动体数量已达上限，未生成新移动体');
         break;
       }
@@ -278,7 +280,10 @@ export function applyAction(action, subject, ctx) {
       }
       if (ctx.stats) ctx.stats.spawns = (ctx.stats.spawns || 0) + 1;
       const n = ctx.stats ? ctx.stats.spawns : ctx.agents.length;
-      const na = new Agent(`a${n}`, segments, dir, { label: `蛇${n}`, isMain: false, spawnTick: ctx.tick });
+      // 与「多蛇生成」保持一致：生成序号即逐蛇安全避撞开关的下标，画布上的标签与开关一一对应
+      const na = new Agent(`a${n}`, segments, dir, {
+        label: `蛇${n}`, isMain: false, spawnTick: ctx.tick, safetySlot: n,
+      });
       ctx.agents.push(na);
       events.push({ type: 'spawn', coord: pos, highlight: true });
       texts.push(`生成新移动体（长度 ${segments.length}，位置 ${pos.col},${pos.row}）`);

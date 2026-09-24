@@ -567,20 +567,32 @@ export const PRESETS = [
   {
     id: 'multi-snake',
     name: '多蛇生态（生成 + 融合）',
-    description: '按随机时间间隔持续生成新蛇，蛇相遇时相互融合并叠加长度；配合安全避撞与逐个体配色。',
+    description: '按随机时间间隔持续生成新蛇，蛇相遇时相互融合并叠加长度。安全避撞只保留「自身身体」：蛇与蛇之间不再互相规避，融合与个体死亡因此会真实发生；「撞到自身」也不再终止整轮运行，自撞只由避撞机制兜住。',
     build: () => base({
-      meta: { name: '多蛇生态', description: '多蛇生成与融合交互' },
+      meta: { name: '多蛇生态', description: '多蛇生成与融合交互（蛇与蛇之间互不规避）' },
       grid: { type: 'square', width: 42, height: 28, boundary: 'wrap' },
       start: { col: 21, row: 14, direction: 'up' },
       body: { initialLength: 4 },
       moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
-      safety: { avoidBody: true, avoidObstacle: true, avoidOtherAgents: true },
+      /**
+       * 安全避撞只保留「自身身体」一项，其余碰撞检测范围全部移除：
+       *  - 规避「其它移动体」会让蛇永远碰不到一起，「融合」与蛇的正常死亡永远不会发生，
+       *    生态模拟退化成各走各的独角戏；
+       *  - 边界为「穿越到另一侧」，越界即环绕，不需要边界规避；
+       *  - 本模板地图上没有任何障碍物。
+       * 保留「自身身体」规避后，自撞不再靠运气，而是只在「所有方向都被自己封死」时才发生。
+       */
+      safety: { avoidAll: false, avoidBody: true, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false },
       multiSnake: {
         enabled: true,
         spawn: { mode: 'interval', minInterval: 25, maxInterval: 55, maxAgents: 6, length: 3, direction: 'random', probability: 0.9 },
         interaction: { mode: 'merge' },
       },
-      endConditions: { maxSteps: 400, wall: false, selfCollision: true, lengthReached: false },
+      /**
+       * 关闭「撞到自身」结束规则：自撞只触发安全避撞机制，不会直接结束整轮运行，
+       * 整个生态因此能持续演化到步数上限，期间靠融合产生个体死亡（生态淘汰）。
+       */
+      endConditions: { maxSteps: 400, wall: false, selfCollision: false, lengthReached: false },
       style: { cellSize: 18, showEffects: true, showEyes: true },
     }),
   },

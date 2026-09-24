@@ -6,7 +6,7 @@ import {
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
   SKIN_MIME_TYPES, stripSkinAssets, LIFE_MIN, LIFE_MAX,
-  DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
+  DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT, MAX_AGENT_SLOTS,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -1145,6 +1145,12 @@ function onStyleChange() {
   draw();
 }
 
+/** 把配置中的安全帧上限收敛到 [1, MAX_FRAME_CAP]；缺省时回退到默认值 */
+function clampFrameCap(v) {
+  if (!Number.isFinite(v)) return DEFAULT_FRAME_CAP;
+  return Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(v)));
+}
+
 function recompute(opts = {}) {
   let normalized;
   try {
@@ -1155,10 +1161,11 @@ function recompute(opts = {}) {
   }
   syncDerived(normalized);
   const cfg = normalized;
-  // 未启用「达到步数上限」时使用的安全帧上限；可通过「继续运行」逐级提升
+  // 未启用「达到步数上限」时使用的安全帧上限；可由「场景与运行 → 单次运行步数上限」配置，
+  // 也可由控制条的「继续运行」逐级提升（opts.frameCap 优先）
   const frameCap = Number.isFinite(opts.frameCap)
     ? Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(opts.frameCap)))
-    : DEFAULT_FRAME_CAP;
+    : clampFrameCap(cfg.frameCap);
   state.frameCap = frameCap;
   const effCap = cfg.endConditions.maxSteps === false
     ? frameCap
@@ -1402,7 +1409,7 @@ function buildControls() {
   els.frameLabel = h('span', { class: 'frame-label' }, '');
   els.endLabel = h('span', { class: 'end-label' }, '');
   els.endJumpBtn = button('查看结束规则', () => focusEndReason(), 'ghost small');
-  els.continueBtn = button('继续运行 +' + DEFAULT_FRAME_CAP, () => continueRun(), 'primary small');
+  els.continueBtn = button(`继续运行 +${continueStep()}`, () => continueRun(), 'primary small');
 
   // 运行评价读数：得分 / 评分等级 + 难度 / 拥挤度，默认隐藏，可在「展示样式 → 界面配置」开启
   els.scoreLabel = h('span', { class: 'score-label' }, '得分：尚未运行');
@@ -1446,6 +1453,16 @@ function updateSpeedLabel() {
   els.speedLabel.textContent = `步/秒`;
 }
 
+/**
+ * 「继续运行」每次推进的步数：跟随「场景与运行 → 单次运行步数上限」。
+ * 用户把单次运行长度调大后，继续运行的跨度同步放大，两处语义始终一致；
+ * 未配置时回退到默认值。
+ */
+function continueStep() {
+  const v = state.cfg ? Number(state.cfg.frameCap) : NaN;
+  return Number.isFinite(v) && v > 0 ? clampFrameCap(v) : DEFAULT_FRAME_CAP;
+}
+
 /** 未启用「达到步数上限」时，逐级提升安全帧上限并重新运行 */
 function continueRun() {
   if (!state.result) return;
@@ -1453,7 +1470,7 @@ function continueRun() {
     toast('本次运行并非因安全步数上限而停止', 'warn');
     return;
   }
-  const next = Math.min(MAX_FRAME_CAP, state.frameCap + DEFAULT_FRAME_CAP);
+  const next = Math.min(MAX_FRAME_CAP, state.frameCap + continueStep());
   if (next <= state.frameCap) {
     toast(`已达到最大安全步数上限（${MAX_FRAME_CAP} 步）`, 'warn');
     return;
@@ -3048,6 +3065,8 @@ function syncControlBar() {
   if (els.speedSlider) els.speedSlider.value = String(state.cfg.speed);
   if (els.speedNum) els.speedNum.value = String(state.cfg.speed);
   if (els.followInput) els.followInput.checked = !!state.cfg.style.followAgent;
+  // 「继续运行 +N」的跨度跟随「单次运行步数上限」，面板内改动后按钮文案同步刷新
+  if (els.continueBtn) els.continueBtn.textContent = `继续运行 +${continueStep()}`;
   updateSpeedLabel();
 }
 
@@ -3069,7 +3088,7 @@ function syncControlBar() {
 const CONFIG_TABS = [
   { key: 'core', label: '核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
   { key: 'visual', label: '视觉显示', hint: '基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置' },
-  { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式' },
+  { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式、模拟帧率、单次运行步数上限、网格边界与多移动体规模' },
   { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机' },
 ];
 
@@ -3129,7 +3148,7 @@ function renderConfigPanel() {
     visualOverlayGroup(cfg), // 悬停与提示
     visualThemeGroup(cfg),   // 色彩主题配置
   );
-  panels.get('scene').append(sceneGroup(cfg));
+  panels.get('scene').append(sceneGroup(cfg), runControlGroup(cfg), sceneScaleGroup(cfg));
 
   tabs.appendChild(nav);
   for (const t of CONFIG_TABS) tabs.appendChild(panels.get(t.key));
@@ -3270,7 +3289,75 @@ function sceneGroup(cfg) {
     field('规则执行方式', selBind(cfg, 'ruleExecution', () => onSimChange(), [
       { value: 'async', label: '异步（逐条即时生效）' },
       { value: 'sync', label: '同步（基于阶段快照）' },
-    ])),
+    ]), '同步方式让同一步内的规则基于同一份快照判定，结果与规则书写顺序无关；异步则逐条即时生效'),
+  ], { open: false });
+}
+
+/**
+ * 运行控制：决定「一轮运行跑多远、播放多快」的场景级参数。
+ * 与控制条上的同名控件是同一份设置（速度写入 cfg.speed，帧上限写入 cfg.frameCap），
+ * 面板内改动后靠 syncControlBar / rebuildAll 让两处读数保持一致。
+ */
+function runControlGroup(cfg) {
+  const capHint = h('div', { class: 'hint' });
+  const syncCapHint = () => {
+    const on = cfg.endConditions.maxSteps !== false;
+    capHint.textContent = on
+      ? `当前「结束规则 → 达到步数上限」已启用（${Math.round(cfg.endConditions.maxSteps)} 步），本上限暂不参与判定，仅作为兜底保护。`
+      : `未启用「达到步数上限」：一轮运行在本上限处停止，可用控制条「继续运行」逐级推进（每次 +${continueStep()} 步）。`;
+  };
+  syncCapHint();
+  return group('运行控制', [
+    field('模拟帧率（步/秒）', range(cfg.speed, (v) => setSpeed(v), {
+      min: 0.5, max: 120, step: 0.5, number: true,
+    }), '与控制条上的速度滑块是同一个设置：只影响播放快慢，不改变任何计算结果'),
+    field('单次运行步数上限', numBind(cfg, 'frameCap', () => { syncCapHint(); onSimChange(0); }, {
+      min: 1, max: MAX_FRAME_CAP, step: 100,
+    }), '调大可一次算完更长的过程，代价是单次计算时间与画面缓存占用同步上升'),
+    capHint,
+  ], { open: false });
+}
+
+/**
+ * 场景边界与规模：直接决定地图形态与生态容量的三个参数。
+ * 这些参数在「核心规则 / 扩展机制」里也有对应分组，此处提供集中调整的入口，
+ * 改动后会重建面板，保证两处读数不会出现一旧一新。
+ */
+function sceneScaleGroup(cfg) {
+  const g = cfg.grid;
+  const sp = cfg.multiSnake.spawn;
+  const syncStart = () => {
+    cfg.start.col = Math.min(cfg.start.col, g.width - 1);
+    cfg.start.row = Math.min(cfg.start.row, g.height - 1);
+  };
+  const sizeLabel = h('div', { class: 'hint' });
+  const syncSizeLabel = () => { sizeLabel.textContent = `网格共 ${g.width * g.height} 格`; };
+  syncSizeLabel();
+  return group('场景边界与规模', [
+    row(
+      field('宽', numBind(g, 'width', () => { syncStart(); syncSizeLabel(); onSimChange(); rebuildAll(); }, { min: 2, max: 400 })),
+      field('高', numBind(g, 'height', () => { syncStart(); syncSizeLabel(); onSimChange(); rebuildAll(); }, { min: 2, max: 400 })),
+    ),
+    field('边界行为', selBind(g, 'boundary', () => {
+      syncBoundaryAvoidance();
+      onSimChange();
+      rebuildAll();
+    }, [
+      { value: 'stop', label: '停止（撞墙即停）' },
+      { value: 'bounce', label: '反弹' },
+      { value: 'wrap', label: '穿越到另一侧' },
+      { value: 'randomTurn', label: '随机转向' },
+      { value: 'custom', label: '自定义（由环境规则决定）' },
+    ]), '与「核心规则 → 网格与坐标 → 边界行为」是同一个设置；改为不可穿越时自动补开「安全避撞 → 边界规避」'),
+    sizeLabel,
+    switchField('启用多蛇系统',
+      chkBind(cfg.multiSnake, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用'),
+      '多蛇生态的规模开关；生成方式 / 交互结果 / 逐蛇安全避撞等细节见「扩展机制 → 多蛇生成与交互系统」'),
+    row(
+      field('最大同时存在', numBind(sp, 'maxAgents', () => onSimChange(), { min: 1, max: MAX_AGENT_SLOTS })),
+      field('生成总数上限', numBind(sp, 'maxTotal', () => onSimChange(), { min: 0, max: 1000000 })),
+    ),
+    h('div', { class: 'hint' }, '「生成总数上限」为 0 表示不限制；长时间运行时建议与「最大同时存在」配合设一个总数，避免蛇数量无限累积。'),
   ], { open: false });
 }
 
@@ -3651,8 +3738,10 @@ function multiSnakeGroup(cfg) {
       '主移动体终止时整场结束，其它蛇终止只计入「移动体消失」'),
     row(
       field('生成方式', selBind(sp, 'mode', () => { onSimChange(); rebuildAll(); }, Object.entries(SPAWN_LABELS).map(([value, label]) => ({ value, label })))),
-      field('最大同时存在', numBind(sp, 'maxAgents', () => onSimChange(), { min: 1, max: 64 })),
+      field('最大同时存在', numBind(sp, 'maxAgents', () => onSimChange(), { min: 1, max: MAX_AGENT_SLOTS })),
     ),
+    field('生成总数上限', numBind(sp, 'maxTotal', () => onSimChange(), { min: 0, max: 1000000 }),
+      '整轮运行累计生成的蛇数量上限；0 表示不限制。与「最大同时存在」配合，可避免长跑时蛇数量无限累积'),
   ];
 
   if (sp.mode === 'time') {
@@ -3694,7 +3783,75 @@ function multiSnakeGroup(cfg) {
     bodies.push(h('div', { class: 'hint' }, '碰撞：两蛇头对头相遇时双方消失；涉及主移动体则整场结束。'));
   }
 
+  bodies.push(perAgentSafetySection(m));
+
   return group('多蛇生成与交互系统', bodies, { open: false, badge: m.enabled ? '已启用' : '' });
+}
+
+/**
+ * 逐蛇安全避撞：为每条移动体单独开关「安全避撞预设」。
+ *
+ * 之所以按「出现顺序」而不是「当前存活顺序」编号：每个移动体的身份必须稳定，
+ * 否则中途有蛇死亡时，后面所有蛇的开关都会跟着错位，用户看到的行为会在运行中漂移。
+ * 因此下标 0 固定给主移动体、下标 n 固定给第 n 条生成的蛇（画布上的「蛇n」）。
+ * 未单独设置的槽位记为 null，跟随上方「新生移动体默认」，用户只需关心真正要区别对待的那几条。
+ */
+function perAgentSafetySection(m) {
+  const safety = m.safety;
+  const perAgent = safety.perAgent;
+  /** 保证 perAgent 至少有 n 个槽位（新槽位默认 null = 跟随默认） */
+  const ensureSlots = (n) => { while (perAgent.length < n) perAgent.push(null); };
+  /** 该槽位当前生效的取值：已显式设置则用它，否则跟随「新生移动体默认」 */
+  const slotOn = (i) => {
+    const v = perAgent[i];
+    return v === true || v === false ? v : safety.default !== false;
+  };
+  const commit = () => { onSimChange(); rebuildAll(); };
+  const chip = (i, label) => checkbox(slotOn(i), (v) => {
+    ensureSlots(i + 1);
+    perAgent[i] = v;
+    commit();
+  }, label);
+
+  const snakeCount = Math.max(0, perAgent.length - 1);
+  const chips = [chip(0, '主移动体')];
+  for (let i = 1; i <= snakeCount; i++) chips.push(chip(i, `蛇${i}`));
+  const explicit = perAgent.filter((v) => v === true || v === false).length;
+
+  return group('逐蛇安全避撞', [
+    switchField('新生移动体默认',
+      chkBind(safety, 'default', () => commit(), '启用'),
+      '未在下方单独设置的移动体沿用本项；关闭后这些移动体不再规避，会真实撞上身体 / 障碍物 / 其它移动体 / 边界'),
+    field('逐条开关', h('div', { class: 'chips-line' }, ...chips),
+      '按生成顺序对应：主移动体、蛇1、蛇2……与画布上的标签一致。关闭某条即该移动体不参与安全避撞'),
+    row(
+      button('＋ 增加一条蛇', () => {
+        if (perAgent.length >= MAX_AGENT_SLOTS) {
+          toast(`逐蛇开关最多配置 ${MAX_AGENT_SLOTS} 条`, 'warn');
+          return;
+        }
+        // 首次增加时槽位 0（主移动体）也一并占位，保证下标与「蛇n」编号对齐
+        ensureSlots(perAgent.length === 0 ? 2 : perAgent.length + 1);
+        commit();
+      }, 'ghost small'),
+      button('－ 减少一条蛇', () => {
+        if (perAgent.length <= 1) {
+          toast('至少保留「主移动体」一个槽位；要全部跟随默认请用「跟随默认」', 'warn');
+          return;
+        }
+        perAgent.pop();
+        commit();
+      }, 'ghost small'),
+      button('跟随默认', () => {
+        safety.perAgent = [];
+        commit();
+      }, 'ghost small'),
+    ),
+    h('div', { class: 'hint' },
+      m.enabled
+        ? '关闭安全避撞的移动体不再剔除被阻塞的方向，因此会真实发生自撞与碰撞——这正是观察「哪些个体会被淘汰」所需要的。'
+        : '当前未启用多蛇系统：所有移动体统一沿用「核心规则 → 安全避撞预设」。启用本系统后，这里的逐条设置才会生效。'),
+  ], { open: false, badge: explicit ? `已单独设置 ${explicit} 条` : '' });
 }
 
 /* ---------------- 碰撞与边界 ---------------- */
