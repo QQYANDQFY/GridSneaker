@@ -4,8 +4,11 @@
 import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
-  isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS,
+  isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES,
 } from '../core/config.js';
+import {
+  defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
+} from '../core/trail.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
 import { Renderer } from './canvas.js';
@@ -78,6 +81,13 @@ const POSITIONS = [
 ];
 const BASE_OBJECTS = ['empty', 'obstacle', 'marker', 'head', 'body', 'boundary', 'visited', 'other', 'any'];
 
+/** 轨迹 / 蛇身的连接方式选项（与 config.js 的 JOIN_MODES 对应） */
+const JOIN_OPTIONS = [
+  { value: 'curve', label: '曲线（贝塞尔）' },
+  { value: 'line', label: '直线' },
+  { value: 'angle', label: '预设角度切角' },
+];
+
 /* ------------------------------------------------------------------ */
 /* 状态                                                                */
 /* ------------------------------------------------------------------ */
@@ -95,6 +105,12 @@ const state = {
   logFilter: 'all',
   logLimit: 400,
   frameCap: DEFAULT_FRAME_CAP,
+  /** 坐标筛选查询条件（上下限 / 与或 / 反选） */
+  trailQuery: defaultTrailQuery(),
+  /** 最近一次筛选命中的格下标集合（用于高亮与导出） */
+  trailFilter: null,
+  /** 最近一次筛选命中的轨迹点（含次序 / 次数 / 首末步） */
+  trailCells: [],
 };
 
 const els = {};
@@ -309,7 +325,6 @@ function recompute(opts = {}) {
   if (est > 4e8) {
     toast('当前网格与步数组合数据量较大，可能占用较多内存与时间', 'warn');
   }
-  const t0 = performance.now();
   let result;
   try {
     result = new Simulation(cfg, { frameCap }).run();
@@ -328,10 +343,8 @@ function recompute(opts = {}) {
   renderLog();
   updateControls();
   draw();
+  refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
-  if (opts.immediate !== true && performance.now() - t0 > 400) {
-    toast(`已重新计算 ${result.frames.length} 帧`, 'info');
-  }
 }
 
 /**
@@ -352,6 +365,12 @@ function syncDerived(normalized) {
   if (typeof normalized.endConditions.maxSteps === 'number') {
     endParamMemory.maxSteps = normalized.endConditions.maxSteps;
   }
+}
+
+/** 仅重绘画布（播放中每个动画帧调用，不含任何 DOM 更新） */
+function drawFrameOnly() {
+  if (!state.result) return;
+  renderer.draw(state.frameIndex, state.frameAlpha);
 }
 
 function draw() {
@@ -407,10 +426,12 @@ function loopTick(ts) {
   while (acc >= stepMs && guard++ < 400) {
     acc -= stepMs;
     if (!advance()) break;
-    frameChanged();
+    frameChanged(); // 跨帧时才做帧统计 / 控件 / 日志高亮等 DOM 更新
   }
-  // 剩余时间比例即帧间进度，交由渲染器做体节位置插值，得到流畅的连续位移
+  // 剩余时间比例即帧间进度：每个动画帧都按该进度重绘一次，
+  // 低速度下也能得到逐帧连续的位移，而不会长时间静止后突然跳格。
   state.frameAlpha = Math.max(0, Math.min(1, acc / stepMs));
+  drawFrameOnly();
   rafId = requestAnimationFrame(loopTick);
 }
 
@@ -929,10 +950,139 @@ function renderSidePanel() {
     ...state.cfg.environmentRules.map((r) => ({ value: r.id, label: r.name })),
   ], (v) => { state.logFilter = v; renderLog(); });
 
+  side.appendChild(trailQueryGroup());
+
   side.appendChild(group('规则触发日志', [
     row(filterSel, els.logCount),
     els.logHost,
   ], { open: true }));
+}
+
+/* ------------------------------------------------------------------ */
+/* 坐标筛选查询                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 坐标筛选查询面板：
+ * 按轨迹点的「经过次序」「经过次数（序数）」「首次经过步数」的上下限筛选坐标，
+ * 支持「全部满足 / 任一满足」组合与反选，结果在画面上高亮并可跳转 / 复制 / 导出。
+ * 上限填 0 表示该侧不限。
+ */
+function trailQueryGroup() {
+  const q = state.trailQuery;
+  const inputs = {};
+  const num = (key) => {
+    const el = numberInput(q[key], (v) => { q[key] = v; applyTrailQuery(false); }, { min: 0, step: 1, default: q[key] });
+    inputs[key] = el;
+    return el;
+  };
+  const dash = () => h('span', { class: 'query-dash' }, '~');
+  els.trailQueryStat = h('div', { class: 'hint' }, '尚未执行筛选');
+  els.trailQueryList = h('div', { class: 'query-list' });
+  const logicSel = select(q.logic, [
+    { value: 'and', label: '全部满足（且）' },
+    { value: 'or', label: '任一满足（或）' },
+  ], (v) => { q.logic = v; applyTrailQuery(false); });
+  const invertChk = checkbox(q.invert, (v) => { q.invert = v; applyTrailQuery(false); });
+  els.trailLogicSel = logicSel;
+  els.trailInvertChk = invertChk;
+
+  const reset = () => {
+    Object.assign(q, defaultTrailQuery());
+    for (const [k, el] of Object.entries(inputs)) el.value = String(q[k]);
+    logicSel.value = q.logic;
+    invertChk.checked = q.invert;
+    applyTrailQuery(true);
+  };
+
+  return group('坐标筛选查询', [
+    h('div', { class: 'hint' }, '按轨迹点的上下限筛选坐标：上限填 0 表示不限。可用「反选」取出未匹配的坐标，结果会在画面上高亮。'),
+    field('经过次序', row(num('orderMin'), dash(), num('orderMax')), '按首次经过时间排序的名次，从 1 起算'),
+    field('经过次数', row(num('visitsMin'), dash(), num('visitsMax')), '该坐标被经过的总次数（序数）'),
+    field('首次步数', row(num('stepMin'), dash(), num('stepMax')), '首次经过该坐标时的步数'),
+    field('组合方式', row(
+      logicSel,
+      h('label', { class: 'check-wrap' }, invertChk, h('span', {}, '反选')),
+    )),
+    row(
+      button('执行筛选', () => applyTrailQuery(true), 'primary'),
+      button('清除筛选', reset, 'ghost'),
+      button('复制坐标', () => copyText(trailCellsToText(state.trailCells || []), '已复制筛选结果坐标')),
+      button('导出 CSV', () => downloadText('trail-query.csv', trailCellsToCSV(state.trailCells || []), 'text/csv;charset=utf-8')),
+    ),
+    els.trailQueryStat,
+    els.trailQueryList,
+  ], { key: 'trail-query', open: false });
+}
+
+/** 列表最多渲染的条目数（超出仅提示，数据仍可完整导出） */
+const TRAIL_QUERY_LIMIT = 400;
+
+/**
+ * 执行坐标筛选：更新画面高亮与结果列表。
+ * rerender 为 false 时只刷新高亮（调整数值时用，避免频繁重建 DOM）。
+ */
+function applyTrailQuery(rerender = true) {
+  const stat = els.trailQueryStat;
+  const list = els.trailQueryList;
+  if (!stat || !list) return;
+  if (!state.result || !renderer) {
+    stat.textContent = '尚未运行模拟';
+    state.trailCells = [];
+    state.trailFilter = null;
+    if (rerender) clear(list);
+    return;
+  }
+  const res = queryTrail(renderer.trail, state.trailQuery);
+  const active = trailQueryActive(state.trailQuery);
+  if (!active) {
+    state.trailCells = [];
+    state.trailFilter = null;
+    renderer.setFilter(null);
+    stat.textContent = `未设置筛选条件（共 ${res.total} 个轨迹坐标）`;
+    if (rerender) clear(list);
+    drawFrameOnly();
+    return;
+  }
+  state.trailCells = res.cells;
+  state.trailFilter = res.cells.map((c) => c.index);
+  renderer.setFilter(state.trailFilter);
+  stat.textContent = `匹配 ${res.matched} / ${res.total} 个坐标 · ${trailQueryLabel(state.trailQuery)}`;
+  if (!rerender) {
+    drawFrameOnly();
+    return;
+  }
+  clear(list);
+  if (!res.cells.length) {
+    list.appendChild(h('div', { class: 'hint' }, '没有匹配的坐标'));
+    drawFrameOnly();
+    return;
+  }
+  for (const c of res.cells.slice(0, TRAIL_QUERY_LIMIT)) list.appendChild(trailCellRow(c));
+  if (res.cells.length > TRAIL_QUERY_LIMIT) {
+    list.appendChild(h('div', { class: 'hint' }, `仅显示前 ${TRAIL_QUERY_LIMIT} 项，可用「复制坐标 / 导出 CSV」获取全部结果`));
+  }
+  drawFrameOnly();
+}
+
+/** 筛选结果行：点击跳转到该坐标首次经过的步数 */
+function trailCellRow(c) {
+  const el = h('div', { class: 'query-item', title: '点击跳转到首次经过该坐标的步数' },
+    h('span', { class: 'query-coord' }, `(${c.col}, ${c.row})`),
+    h('span', { class: 'query-meta' }, `次序 #${c.order}`),
+    h('span', { class: 'query-meta' }, `经过 ${c.visits} 次`),
+    h('span', { class: 'query-meta' }, `首次第 ${c.first} 步`));
+  el.addEventListener('click', () => {
+    pause();
+    gotoFrame(frameIndexForTick(c.first));
+  });
+  return el;
+}
+
+/** 重算后按当前条件刷新筛选（无匹配条件时保持关闭高亮） */
+function refreshTrailFilter() {
+  if (!renderer) return;
+  applyTrailQuery(true);
 }
 
 function withResult(fn) {
@@ -2175,14 +2325,19 @@ function styleGroup(cfg) {
       checkbox(s.showMarkers, (v) => { s.showMarkers = v; onStyleChange(); }, '标记物'),
       checkbox(s.highlightRules, (v) => { s.highlightRules = v; onStyleChange(); }, '规则高亮'),
     )),
+    field('连接方式', row(
+      h('span', { class: 'mini-label' }, '轨迹'),
+      selBind(s, 'trailJoin', () => onStyleChange(), JOIN_OPTIONS),
+      h('span', { class: 'mini-label' }, '蛇身'),
+      selBind(s, 'bodyJoin', () => onStyleChange(), JOIN_OPTIONS),
+    ), '曲线：贝塞尔平滑 · 直线：直线段折线 · 预设角度：按指定夹角切角连接的直线型折线'),
+    field('切角角度', rangeBind(s, 'trailAngle', () => onStyleChange(), { min: 5, max: 85, step: 1 }), '仅「预设角度」连接方式生效：连接线与进入方向的夹角（度）'),
     field('渲染效果', row(
-      checkbox(s.smoothTrail, (v) => { s.smoothTrail = v; onStyleChange(); }, '轨迹平滑曲线'),
-      checkbox(s.smoothBody, (v) => { s.smoothBody = v; onStyleChange(); }, '蛇身曲线连接'),
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
       checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
       checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
       checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛'),
-    ), '轨迹与蛇身默认按贝塞尔曲线平滑渲染；蛇头眼睛默认隐藏，勾选后显示'),
+    ), '蛇头眼睛默认隐藏，勾选后显示'),
   ], { open: false });
 }
 

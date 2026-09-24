@@ -7,8 +7,12 @@ import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
   normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
-  isBodyEnabled, END_PRIORITY_DEFAULT, END_LABELS,
+  isBodyEnabled, JOIN_MODES, END_PRIORITY_DEFAULT, END_LABELS,
 } from '../src/core/config.js';
+import {
+  buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
+  trailQueryLabel, trailCellsToCSV, trailCellsToText,
+} from '../src/core/trail.js';
 import { World, Agent } from '../src/core/world.js';
 import { evaluateClause, describeClause } from '../src/core/conditions.js';
 import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
@@ -1229,6 +1233,111 @@ section('新增预设模板');
   const avoid = new Simulation(buildPresetConfig('avoid-lab')).run();
   eq(avoid.frames[0].agents[0].segments.length, 22, '安全避撞预设的初始身体完整为 22 节');
   ok(avoid.stats.steps > 0, '安全避撞预设可运行');
+}
+
+/* ---------- 新增：轨迹模型与坐标筛选查询 ---------- */
+section('轨迹模型与坐标筛选查询');
+{
+  const r = new Simulation(buildPresetConfig('avoid-lab')).run();
+  const trail = buildTrail(r.grid, r.frames);
+
+  ok(trail.path.length > 0, '轨迹路径非空');
+  eq(trail.order.length, trail.info.size, 'order 与 info 数量一致');
+  eq(new Set(trail.order).size, trail.order.length, 'order 中每个坐标只出现一次');
+
+  let sorted = true;
+  for (let i = 1; i < trail.path.length; i++) {
+    if (trail.path[i].tick < trail.path[i - 1].tick) { sorted = false; break; }
+  }
+  ok(sorted, '轨迹路径按经过时间升序（新轨迹绘制在后，可完全覆盖旧轨迹）');
+
+  const cnt = new Map();
+  const firstOf = new Map();
+  const lastOf = new Map();
+  for (const p of trail.path) {
+    cnt.set(p.index, (cnt.get(p.index) || 0) + 1);
+    if (!firstOf.has(p.index)) firstOf.set(p.index, p.tick);
+    lastOf.set(p.index, p.tick);
+  }
+  let visitsOk = true;
+  let firstOk = true;
+  for (const [index, cell] of trail.info) {
+    if (cell.visits !== cnt.get(index)) visitsOk = false;
+    if (cell.first !== firstOf.get(index) || cell.last !== lastOf.get(index)) firstOk = false;
+  }
+  ok(visitsOk, 'info.visits 与路径经过次数一致');
+  ok(firstOk, 'info 首末步与路径一致');
+
+  const byFirst = [...trail.info.values()].sort((a, b) => a.first - b.first || a.order - b.order);
+  let orderOk = true;
+  byFirst.forEach((c, i) => { if (c.order !== i + 1) orderOk = false; });
+  ok(orderOk, '经过次序按首次经过时间从 1 连续编号');
+
+  const all = queryTrail(trail, defaultTrailQuery());
+  eq(all.matched, trail.order.length, '默认查询匹配全部坐标');
+  ok(!trailQueryActive(defaultTrailQuery()), '默认查询视为「未设置筛选」');
+  ok(trailQueryActive({ orderMax: 3 }), '设置上限即视为有效筛选');
+
+  const head5 = queryTrail(trail, { ...defaultTrailQuery(), orderMax: 5 });
+  eq(head5.matched, Math.min(5, trail.order.length), '按次序上限筛选');
+  ok(head5.cells.every((c) => c.order <= 5), '次序筛选结果均不超过上限');
+
+  const andRes = queryTrail(trail, { orderMin: 2, orderMax: 4, visitsMin: 2, logic: 'and' });
+  ok(andRes.cells.every((c) => c.order >= 2 && c.order <= 4 && c.visits >= 2), '「且」逻辑同时满足全部范围条件');
+
+  const orRes = queryTrail(trail, { orderMax: 1, visitsMin: 100, logic: 'or' });
+  ok(orRes.cells.every((c) => c.order <= 1 || c.visits >= 100), '「或」逻辑满足任一范围条件');
+
+  const inv = queryTrail(trail, { orderMax: 3, invert: true });
+  eq(inv.matched, trail.order.length - Math.min(3, trail.order.length), '反选结果为匹配集合的补集');
+  ok(inv.cells.every((c) => c.order > 3), '反选排除已匹配坐标');
+
+  const stepRes = queryTrail(trail, { stepMin: 3, stepMax: 10 });
+  ok(stepRes.cells.every((c) => c.first >= 3 && c.first <= 10), '按首次经过步数范围筛选');
+
+  const norm = normalizeTrailQuery({ orderMin: -3, orderMax: -1, visitsMin: 0, logic: 'xor', invert: 1 });
+  eq(norm.orderMin, 1, '次序下限至少为 1');
+  eq(norm.orderMax, 0, '负数上限视为不限');
+  eq(norm.visitsMin, 1, '经过次数下限至少为 1');
+  eq(norm.logic, 'and', '非法逻辑回退为 and');
+  eq(norm.invert, true, '反选按布尔规范化');
+
+  const csv = trailCellsToCSV(all.cells.slice(0, 3));
+  eq(csv.split('\n').length, 4, '筛选结果 CSV 为表头 + 3 行');
+  ok(csv.startsWith('col,row,order,visits,firstStep,lastStep'), '筛选结果 CSV 表头正确');
+  ok(trailCellsToText(all.cells.slice(0, 2)).includes('次序 #'), '筛选结果文本包含次序信息');
+  ok(trailQueryLabel({ orderMin: 2, orderMax: 6 }).includes('次序'), '筛选条件可读描述包含次序');
+  ok(trailQueryLabel({ invert: true }).startsWith('反选'), '反选条件描述带反选前缀');
+}
+
+/* ---------- 新增：轨迹 / 蛇身连接方式 ---------- */
+section('轨迹 / 蛇身连接方式');
+{
+  eq(JOIN_MODES.join(','), 'curve,line,angle', '连接方式枚举为 曲线 / 直线 / 预设角度');
+
+  const d = defaultConfig();
+  eq(d.style.trailJoin, 'curve', '默认轨迹连接方式为曲线');
+  eq(d.style.bodyJoin, 'curve', '默认蛇身连接方式为曲线');
+
+  const line = normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'line' } });
+  eq(line.style.trailJoin, 'line', '轨迹可配置为直线连接');
+  eq(line.style.smoothTrail, false, '直线连接派生的 smoothTrail 为 false');
+
+  const angle = normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'angle', bodyJoin: 'angle', trailAngle: 30 } });
+  eq(angle.style.trailJoin, 'angle', '轨迹可配置为预设角度切角连接');
+  eq(angle.style.bodyJoin, 'angle', '蛇身可配置为预设角度切角连接');
+  eq(angle.style.trailAngle, 30, '保留预设角度');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailAngle: 200 } }).style.trailAngle, 85, '预设角度上限收敛到 85');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailAngle: 1 } }).style.trailAngle, 5, '预设角度下限收敛到 5');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'zigzag' } }).style.trailJoin, 'curve', '非法连接方式回退为默认曲线');
+
+  // 旧配置兼容：只有布尔 smoothTrail / smoothBody 时按「开=曲线，关=直线」换算
+  const legacy = normalizeConfig({
+    ...d,
+    style: { ...d.style, trailJoin: undefined, bodyJoin: undefined, smoothTrail: false, smoothBody: true },
+  });
+  eq(legacy.style.trailJoin, 'line', '旧配置 smoothTrail=false 兼容为直线连接');
+  eq(legacy.style.bodyJoin, 'curve', '旧配置 smoothBody=true 兼容为曲线连接');
 }
 
 /* ---------- 结果 ---------- */

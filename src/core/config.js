@@ -327,7 +327,12 @@ export function defaultConfig() {
       showEyes: false,
       showEffects: true,
       glow: false,
-      /** 轨迹 / 蛇身默认使用贝塞尔曲线平滑渲染 */
+      /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
+      trailJoin: 'curve',
+      bodyJoin: 'curve',
+      /** angle 模式下的预设角度（度）：连接线与进入方向的夹角 */
+      trailAngle: 45,
+      /** 由连接方式派生，保留以兼容旧配置与导出 */
       smoothTrail: true,
       smoothBody: true,
       /** 播放时自动滚动视图跟随首个移动体，默认关闭 */
@@ -598,8 +603,24 @@ function normCaRules(raw) {
   });
 }
 
+/** 轨迹 / 蛇身的连接方式 */
+export const JOIN_MODES = ['curve', 'line', 'angle'];
+
+/**
+ * 连接方式规范化：
+ * 优先读取 trailJoin / bodyJoin；旧配置只有 smoothTrail / smoothBody 布尔值时按
+ * 「开 = 曲线，关 = 直线」换算，保证历史配置与分享链接的表现不变。
+ */
+function normJoin(raw, joinKey, smoothKey, fallback) {
+  if (JOIN_MODES.includes(raw[joinKey])) return raw[joinKey];
+  if (raw[joinKey] !== undefined) return fallback;
+  return bool(raw[smoothKey], fallback === 'curve') ? 'curve' : 'line';
+}
+
 function normalizeStyle(raw = {}) {
   const d = defaultConfig().style;
+  const trailJoin = normJoin(raw, 'trailJoin', 'smoothTrail', d.trailJoin);
+  const bodyJoin = normJoin(raw, 'bodyJoin', 'smoothBody', d.bodyJoin);
   return {
     ...d,
     ...raw,
@@ -620,8 +641,11 @@ function normalizeStyle(raw = {}) {
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),
     glow: bool(raw.glow, d.glow),
-    smoothTrail: bool(raw.smoothTrail, d.smoothTrail),
-    smoothBody: bool(raw.smoothBody, d.smoothBody),
+    trailJoin,
+    bodyJoin,
+    trailAngle: clamp(num(raw.trailAngle, d.trailAngle), 5, 85),
+    smoothTrail: trailJoin === 'curve',
+    smoothBody: bodyJoin === 'curve',
     followAgent: bool(raw.followAgent, d.followAgent),
   };
 }
