@@ -632,6 +632,30 @@ export function defaultConfig() {
       hoverTipTrail: true,
       /** 悬浮提示：显示起点 / 终点 / 边界进出点等标记信息（仍与对应的显示开关同步） */
       hoverTipMarkers: true,
+      /**
+       * 单蛇场景的提示精简：画面中只有一条移动体时，「历史累计经过次数」与
+       * 「轨迹」行的「共 N 次」完全同值（同一份轨迹模型的全量口径），属重复信息；
+       * 开启后单蛇场景只保留随播放进度变化的「当前路径经过次数」，多蛇场景两条口径并存。
+       */
+      hoverTipSlimSingleSnake: true,
+      /** 轨迹方向箭头：沿已播放的轨迹按间隔绘制指向前进方向的箭头，默认关闭 */
+      showTrailArrows: false,
+      /** 方向箭头的间隔（格，1 ~ 12） */
+      trailArrowSpacing: 3,
+      /** 方向箭头的尺寸倍数（0.4 ~ 2.2） */
+      trailArrowScale: 1,
+      /** 方向箭头的颜色 */
+      trailArrowColor: '#ffd43b',
+      /** 帧间变化高亮：标出「当前帧相对上一帧环境状态发生变化」的格子，默认关闭 */
+      showStepDiff: false,
+      /** 帧间变化高亮的填充不透明度（0.05 ~ 0.5） */
+      stepDiffAlpha: 0.22,
+      /** 帧间变化高亮的颜色 */
+      stepDiffColor: '#7cf5d0',
+      /** 热点轨迹过滤：只绘制「该格经过次数达到阈值」的轨迹段，默认关闭 */
+      trailHotOnly: false,
+      /** 热点轨迹的经过次数阈值（2 ~ 20） */
+      trailHotMin: 3,
       /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
       trailJoin: 'line',
       bodyJoin: 'line',
@@ -1049,6 +1073,16 @@ function normalizeStyle(raw = {}) {
     hoverTipAgent: bool(raw.hoverTipAgent, d.hoverTipAgent),
     hoverTipTrail: bool(raw.hoverTipTrail, d.hoverTipTrail),
     hoverTipMarkers: bool(raw.hoverTipMarkers, d.hoverTipMarkers),
+    hoverTipSlimSingleSnake: bool(raw.hoverTipSlimSingleSnake, d.hoverTipSlimSingleSnake),
+    showTrailArrows: bool(raw.showTrailArrows, d.showTrailArrows),
+    trailArrowSpacing: clamp(Math.round(num(raw.trailArrowSpacing, d.trailArrowSpacing)), 1, 12),
+    trailArrowScale: clamp(num(raw.trailArrowScale, d.trailArrowScale), 0.4, 2.2),
+    trailArrowColor: HEX_COLOR.test(String(raw.trailArrowColor || '')) ? String(raw.trailArrowColor) : d.trailArrowColor,
+    showStepDiff: bool(raw.showStepDiff, d.showStepDiff),
+    stepDiffAlpha: clamp(num(raw.stepDiffAlpha, d.stepDiffAlpha), 0.05, 0.5),
+    stepDiffColor: HEX_COLOR.test(String(raw.stepDiffColor || '')) ? String(raw.stepDiffColor) : d.stepDiffColor,
+    trailHotOnly: bool(raw.trailHotOnly, d.trailHotOnly),
+    trailHotMin: clamp(Math.round(num(raw.trailHotMin, d.trailHotMin)), 2, 20),
     trailJoin,
     bodyJoin,
     trailAngle: clamp(num(raw.trailAngle, d.trailAngle), 5, 85),

@@ -70,6 +70,36 @@ export const STYLE_DEFAULTS = {
   hoverTipTrail: true,
   /** 悬浮提示：起点 / 终点 / 边界进出点等标记信息（仍与对应显示开关同步） */
   hoverTipMarkers: true,
+  /**
+   * 单蛇场景的提示精简：画面中只有一条移动体时，提示里的「历史累计经过次数」
+   * 与「轨迹」行的「共 N 次」完全同值（同一份轨迹模型的全量口径），属重复信息，
+   * 开启后单蛇场景只保留随播放进度变化的「当前路径经过次数」；多蛇场景两条口径并存。
+   */
+  hoverTipSlimSingleSnake: true,
+  /** 轨迹方向箭头：沿已播放的轨迹按间隔绘制指向前进方向的箭头，默认关闭 */
+  showTrailArrows: false,
+  /** 方向箭头的间隔（格）：数值越小箭头越密 */
+  trailArrowSpacing: 3,
+  /** 方向箭头的尺寸倍数 */
+  trailArrowScale: 1,
+  /** 方向箭头的颜色 */
+  trailArrowColor: '#ffd43b',
+  /**
+   * 本步变化高亮：把「当前帧相对上一帧环境状态发生变化」的格子标出来
+   * （元胞自动机演化、标记物生成 / 消耗、障碍物变化等），默认关闭。
+   */
+  showStepDiff: false,
+  /** 本步变化高亮的填充不透明度 */
+  stepDiffAlpha: 0.22,
+  /** 本步变化高亮的颜色 */
+  stepDiffColor: '#7cf5d0',
+  /**
+   * 热点轨迹过滤：只绘制「该格经过次数达到阈值」的轨迹段，
+   * 让人一眼看出反复踩踏的热点路径，默认关闭（行为与旧版本一致）。
+   */
+  trailHotOnly: false,
+  /** 热点轨迹的经过次数阈值 */
+  trailHotMin: 3,
   /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
   trailJoin: 'line',
   bodyJoin: 'line',
@@ -180,6 +210,12 @@ export class Renderer {
     this.trailLo = 0;
     /** 重访格高亮缓存（按步数 / 阈值缓存，避免每帧全量重扫） */
     this._revisitCache = null;
+    /** 热点轨迹掩码（按阈值 / 轨迹长度缓存，0 = 该点被过滤掉） */
+    this.trailMask = null;
+    this.trailMaskMin = 0;
+    this.trailMaskLen = -1;
+    /** 本步变化高亮缓存（按帧下标缓存「状态变化的格子」，避免每帧重新比较两份环境数组） */
+    this._stepDiffCache = null;
     this.pixDirty = true;
     /** 颜色分级取值缓冲（按轨迹点下标）；fade 模式下为 null */
     this.trailCv = null;
@@ -283,6 +319,9 @@ export class Renderer {
     this.trail = buildTrail(grid, this.result.frames);
     this.trailInfo = this.trail.info;
     this._revisitCache = null;
+    // 轨迹 / 环境都换了，热点掩码与本步变化高亮的缓存随之失效
+    this.trailMask = null;
+    this._stepDiffCache = null;
     this.prepareCrossingCells(grid);
     this.pixDirty = true;
     this.collisionPoints = [];
@@ -342,9 +381,10 @@ export class Renderer {
     const path = this.trail.path;
     const n = path.length;
     const un = new Float32Array(n * 2);
-    // 轨迹变了，颜色分级取值缓冲随之失效
+    // 轨迹变了，颜色分级取值缓冲与热点掩码随之失效
     this.trailCv = null;
     this.trailCvMode = '';
+    this.trailMask = null;
     if (!n) {
       this.trailUn = un;
       this.trailRuns = [];
@@ -468,7 +508,10 @@ export class Renderer {
     // 边界进出点与轨迹主体完全独立：关闭「轨迹」后仍按其自身开关单独绘制。
     // 未绘制轨迹时仍需按播放进度推进轨迹上界，标记才会随播放依次出现。
     else if (s.showCrossings) this.syncTrailCursor(tickF);
+    // 方向箭头依附于轨迹：轨迹关闭时一并隐藏（上界已由 drawTrail / syncTrailCursor 推进）
+    if (s.showTrail && s.showTrailArrows) this.drawTrailArrows(tickF);
     if (s.showCrossings) this.drawTrailCrossings();
+    if (s.showStepDiff) this.drawStepDiff(i0, frame);
     if (s.showRevisit) this.drawRevisit(tickF);
     this.drawCompare();
     this.drawFilterHighlight();
@@ -636,6 +679,62 @@ export class Renderer {
   }
 
   /**
+   * 轨迹方向箭头：沿「已经绘制到」的轨迹按固定间隔放置箭头，指向该处的前进方向。
+   *
+   * 间隔按像素距离累计（而非按轨迹点计数），因此转弯与直线上的箭头疏密一致；
+   * 箭头亮度与轨迹渐隐 / 热点过滤同步（复用同一套段与亮度解算，过滤掉的段自然没有箭头），
+   * 跨边界处按连续段绘制，不会在留白区留下指错方向的箭头。
+   */
+  drawTrailArrows(tick) {
+    const lo = this.trailLo;
+    if (lo < 2) return;
+    const s = this.style;
+    const spec = this.fadeSpec();
+    const runs = this.trailRunsUpTo(lo, tick);
+    if (!runs.length) return;
+    const un = this.trailUn;
+    const path = this.trail.path;
+    const step = Math.max(1, Math.round(s.trailArrowSpacing) || 1) * (s.cellSize + s.gap);
+    const size = Math.max(2, s.cellSize * 0.26 * (Number.isFinite(s.trailArrowScale) ? s.trailArrowScale : 1));
+    const ctx = this.ctx;
+    ctx.save();
+    this.clipTrail();
+    ctx.fillStyle = s.trailArrowColor || '#ffd43b';
+    for (const run of runs) {
+      let acc = 0;
+      for (let k = run.from + 1; k <= run.to; k++) {
+        const x0 = un[(k - 1) * 2] + run.ox;
+        const y0 = un[(k - 1) * 2 + 1] + run.oy;
+        const x1 = un[k * 2] + run.ox;
+        const y1 = un[k * 2 + 1] + run.oy;
+        acc += Math.hypot(x1 - x0, y1 - y0);
+        if (acc < step) continue;
+        acc = 0;
+        const t = spec.on ? this.fadeProgress(tick - path[k].tick, spec) : 1;
+        if (t <= 0) continue;
+        this.drawTrailArrow(ctx, x1, y1, Math.atan2(y1 - y0, x1 - x0), size, t);
+      }
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  /** 单个轨迹方向箭头：以 (x, y) 为尖端、朝向 ang 的实心三角 */
+  drawTrailArrow(ctx, x, y, ang, size, t) {
+    ctx.save();
+    ctx.globalAlpha = 0.95 * Math.max(0, Math.min(1, t));
+    ctx.translate(x, y);
+    ctx.rotate(ang);
+    ctx.beginPath();
+    ctx.moveTo(size * 0.62, 0);
+    ctx.lineTo(-size * 0.46, size * 0.52);
+    ctx.lineTo(-size * 0.46, -size * 0.52);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
    * 只推进轨迹上界、不描边轨迹。
    * 「边界进出点」独立于「轨迹」显示时，标记仍需按播放进度依次出现，
    * 因此这里复用与 drawTrail 完全相同的二分口径（保证两种显示方式下标记出现的时机一致）。
@@ -663,11 +762,15 @@ export class Renderer {
    *   - 无论总步数是 50 还是 5000，尾巴都在固定 fadeLength 步内完整淡出；
    *   - age ≥ fadeLength 的点 alpha 已为 0，直接跳过（同时用二分把起点后移），
    *     高步数下不会再去遍历、量化、描边上万个早已看不见的点。
+   *
+   * 开启「热点轨迹过滤」时，被过滤掉的点在此处就切成断点：段内只保留连续的「热点点」，
+   * 于是直线 / 切角 / 曲线三种连接方式都天然不会跨过被过滤的区间连线。
    */
   trailRunsUpTo(lo, tick) {
     const out = [];
     const src = this.trailRuns;
     const spec = this.fadeSpec();
+    const mask = this.ensureTrailMask();
     const minTick = spec.on ? tick - spec.len : -Infinity;
     const path = this.trail.path;
     for (let ri = 0; ri < src.length; ri++) {
@@ -689,7 +792,22 @@ export class Renderer {
         from = loI;
       }
       if (from > to) continue;
-      out.push({ from, to, ox: run.ox, oy: run.oy });
+      if (!mask) {
+        out.push({ from, to, ox: run.ox, oy: run.oy });
+        continue;
+      }
+      let start = -1;
+      for (let k = from; k <= to; k++) {
+        if (mask[k]) {
+          if (start < 0) start = k;
+          continue;
+        }
+        if (start >= 0) {
+          out.push({ from: start, to: k - 1, ox: run.ox, oy: run.oy });
+          start = -1;
+        }
+      }
+      if (start >= 0) out.push({ from: start, to, ox: run.ox, oy: run.oy });
     }
     return out;
   }
@@ -815,7 +933,11 @@ export class Renderer {
     const ramp = this.colorRamp();
     const cols = ramp ? FADE_BUCKETS : 1;
     const c = this._fadeTable;
-    if (c && c.th === th && c.baseWidth === baseWidth && c.fade === !!this.style.trailFade && c.cols === cols) return c;
+    // ramp 必须进入缓存键：热度 / 次序两种分级的档数都是 FADE_BUCKETS，
+    // 只比较 cols 会把「按经过次数」与「按经过次序」视为同一张表，
+    // 于是切换颜色分级后仍沿用旧色带（需等主题 / 线宽 / 渐隐开关变化才刷新）。
+    if (c && c.th === th && c.baseWidth === baseWidth && c.fade === !!this.style.trailFade
+      && c.cols === cols && c.ramp === ramp) return c;
     const size = FADE_BUCKETS * cols;
     const alphas = new Float64Array(size);
     const widths = new Float64Array(size);
@@ -829,9 +951,39 @@ export class Renderer {
         colors[i] = ramp ? paletteColor(ramp, (cb + 0.5) / FADE_BUCKETS) : base.color;
       }
     }
-    const table = { th, baseWidth, fade: !!this.style.trailFade, cols, alphas, widths, colors };
+    const table = { th, baseWidth, fade: !!this.style.trailFade, cols, ramp, alphas, widths, colors };
     this._fadeTable = table;
     return table;
+  }
+
+  /**
+   * 热点轨迹掩码：按「该格的经过次数 ≥ 阈值」逐点标记（1 = 保留，0 = 过滤）。
+   *
+   * 掩码交给 trailRunsUpTo() 把被过滤的点切成段断点：段内只保留连续的热点点，
+   * 于是热点过滤自动适配三种连接方式（直线 / 切角 / 曲线）与两种颜色分级，
+   * 无需为每种几何单独实现，也不会跨过被过滤的区间连线。
+   * 经过次数取整轮口径（与「按经过次数取色」一致），因此过滤结果稳定，
+   * 不会随播放进度反复显隐；阈值或轨迹变化时重建。
+   */
+  ensureTrailMask() {
+    if (!this.style.trailHotOnly) {
+      this.trailMask = null;
+      return null;
+    }
+    const min = Math.max(2, Math.round(this.style.trailHotMin) || 2);
+    const n = this.trail.path.length;
+    if (this.trailMask && this.trailMaskMin === min && this.trailMaskLen === n) return this.trailMask;
+    const path = this.trail.path;
+    const info = this.trailInfo;
+    const mask = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const cell = info.get(path[i].index);
+      mask[i] = cell && cell.visits >= min ? 1 : 0;
+    }
+    this.trailMask = mask;
+    this.trailMaskMin = min;
+    this.trailMaskLen = n;
+    return mask;
   }
 
   /**
@@ -968,6 +1120,49 @@ export class Renderer {
     }
     this._revisitCache = { tick, min, cells };
     return cells;
+  }
+
+  /**
+   * 帧间变化高亮：把「当前帧与上一帧环境状态不同」的格子标出来 ——
+   * 元胞自动机的出生 / 死亡、标记物的生成与消耗、障碍物增删都能一眼看到。
+   *
+   * 帧按采样步长存储（长跑时 frameStride 会翻倍），因此两帧之间可能相隔多步，
+   * 此时高亮的是这段间隔内的净变化；比较结果按帧下标缓存，
+   * 播放中同一帧被反复重绘时不会重复遍历两份环境数组。
+   */
+  drawStepDiff(i0, frame) {
+    const prev = this.result.frames[i0 - 1];
+    if (!prev) return;
+    const cache = this._stepDiffCache;
+    let cells;
+    if (cache && cache.i0 === i0 && cache.frame === frame && cache.prev === prev) {
+      cells = cache.cells;
+    } else {
+      cells = [];
+      const a = frame.cells;
+      const b = prev.cells;
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) if (a[i] !== b[i]) cells.push(i);
+      this._stepDiffCache = { i0, frame, prev, cells };
+    }
+    if (!cells.length) return;
+    const ctx = this.ctx;
+    const s = this.style;
+    const color = s.stepDiffColor || '#7cf5d0';
+    const half = (s.cellSize - s.gap) / 2;
+    ctx.save();
+    ctx.globalAlpha = Number.isFinite(s.stepDiffAlpha) ? s.stepDiffAlpha : 0.22;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, s.cellSize * 0.07);
+    for (const i of cells) {
+      const p = this.center(this.grid.coord(i));
+      if (this.grid.type === 'hex') pathHex(ctx, p.x, p.y, half * 0.92);
+      else roundRect(ctx, p.x - half, p.y - half, half * 2, half * 2, s.cellSize * 0.18);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /**
@@ -2139,7 +2334,8 @@ export class Renderer {
    *
    * 内容与「已开启的显示状态」严格同步：起始点 / 终点标记、边界进出点标记、轨迹、移动体
    * 各自跟随对应的显示开关，未开启的可视化元素不会在提示中出现；
-   * 轨迹部分额外给出「当前路径经过次数」与「历史累计经过次数」，保证轨迹回溯信息完整。
+   * 轨迹部分给出「当前路径经过次数」，并在多蛇场景下额外给出「历史累计经过次数」
+   * （单蛇场景下该值与「轨迹」行的「共 N 次」重复，按 hoverTipSlimSingleSnake 自动省略）。
    */
   describe(frameIndex, coord) {
     const s = this.style;
@@ -2197,9 +2393,15 @@ export class Renderer {
         // 统一表述：at.count 是「截至当前步数」的经过次数，info.visits 则是整轮累计，
         // 前者随播放进度增长、后者是最终结果，两者分开陈述可避免「统计口径」歧义。
         lines.push(`当前路径经过次数：第 ${at.count} 次（最近一次经过：第 ${at.last} 步）`);
-        lines.push(at.prev === null
-          ? `历史累计经过次数：共 ${info.visits} 次（本格首次经过，此前无经过记录）`
-          : `历史累计经过次数：共 ${info.visits} 次（上次经过：第 ${at.prev} 步）`);
+        // 单蛇场景（画面中只有一条移动体）没有「多蛇聚合」的歧义：「轨迹」行的「共 N 次」
+        // 即整轮累计，再列一条同值的「历史累计经过次数」纯属重复信息，
+        // 因此此时只保留随播放进度变化的「当前路径经过次数」，提示更简洁精准。
+        const slim = s.hoverTipSlimSingleSnake !== false && frame.agents.length <= 1;
+        if (!slim) {
+          lines.push(at.prev === null
+            ? `历史累计经过次数：共 ${info.visits} 次（本格首次经过，此前无经过记录）`
+            : `历史累计经过次数：共 ${info.visits} 次（上次经过：第 ${at.prev} 步）`);
+        }
       }
     }
     return lines.join('\n');

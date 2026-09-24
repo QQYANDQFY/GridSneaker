@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.9.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.10.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -1223,6 +1223,16 @@ hoverTipState:true,
 hoverTipAgent:true,
 hoverTipTrail:true,
 hoverTipMarkers:true,
+hoverTipSlimSingleSnake:true,
+showTrailArrows:false,
+trailArrowSpacing:3,
+trailArrowScale:1,
+trailArrowColor:'#ffd43b',
+showStepDiff:false,
+stepDiffAlpha:0.22,
+stepDiffColor:'#7cf5d0',
+trailHotOnly:false,
+trailHotMin:3,
 trailJoin:'line',
 bodyJoin:'line',
 trailAngle:45,
@@ -1562,6 +1572,16 @@ hoverTipState:bool(raw.hoverTipState,d.hoverTipState),
 hoverTipAgent:bool(raw.hoverTipAgent,d.hoverTipAgent),
 hoverTipTrail:bool(raw.hoverTipTrail,d.hoverTipTrail),
 hoverTipMarkers:bool(raw.hoverTipMarkers,d.hoverTipMarkers),
+hoverTipSlimSingleSnake:bool(raw.hoverTipSlimSingleSnake,d.hoverTipSlimSingleSnake),
+showTrailArrows:bool(raw.showTrailArrows,d.showTrailArrows),
+trailArrowSpacing:clamp(Math.round(num(raw.trailArrowSpacing,d.trailArrowSpacing)),1,12),
+trailArrowScale:clamp(num(raw.trailArrowScale,d.trailArrowScale),0.4,2.2),
+trailArrowColor:HEX_COLOR.test(String(raw.trailArrowColor||''))?String(raw.trailArrowColor):d.trailArrowColor,
+showStepDiff:bool(raw.showStepDiff,d.showStepDiff),
+stepDiffAlpha:clamp(num(raw.stepDiffAlpha,d.stepDiffAlpha),0.05,0.5),
+stepDiffColor:HEX_COLOR.test(String(raw.stepDiffColor||''))?String(raw.stepDiffColor):d.stepDiffColor,
+trailHotOnly:bool(raw.trailHotOnly,d.trailHotOnly),
+trailHotMin:clamp(Math.round(num(raw.trailHotMin,d.trailHotMin)),2,20),
 trailJoin,
 bodyJoin,
 trailAngle:clamp(num(raw.trailAngle,d.trailAngle),5,85),
@@ -6437,6 +6457,11 @@ hoverCrosshair:'悬停行列准线',hoverCrosshairWidth:'准线宽度',
 showRevisit:'重访格高亮',revisitMin:'重访判定次数',revisitAlpha:'重访高亮不透明度',
 hoverTip:'悬浮提示',hoverTipState:'提示：环境状态',hoverTipAgent:'提示：移动体',
 hoverTipTrail:'提示：轨迹信息',hoverTipMarkers:'提示：标记信息',
+hoverTipSlimSingleSnake:'单蛇提示精简',
+showTrailArrows:'轨迹方向箭头',trailArrowSpacing:'箭头间隔',trailArrowScale:'箭头尺寸',
+trailArrowColor:'箭头颜色',
+trailHotOnly:'热点轨迹过滤',trailHotMin:'热点判定次数',
+showStepDiff:'本步变化高亮',stepDiffAlpha:'变化高亮不透明度',stepDiffColor:'变化高亮颜色',
 trailJoin:'轨迹连接方式',bodyJoin:'蛇身连接方式',trailAngle:'切角角度',
 followAgent:'跟随移动体',axisLabels:'坐标轴',
 hiddenStats:'隐藏的统计项',tabColors:'选项卡配色',compact:'紧凑排版',statFlash:'统计切换淡入',
@@ -6616,6 +6641,16 @@ hoverTipState:true,
 hoverTipAgent:true,
 hoverTipTrail:true,
 hoverTipMarkers:true,
+hoverTipSlimSingleSnake:true,
+showTrailArrows:false,
+trailArrowSpacing:3,
+trailArrowScale:1,
+trailArrowColor:'#ffd43b',
+showStepDiff:false,
+stepDiffAlpha:0.22,
+stepDiffColor:'#7cf5d0',
+trailHotOnly:false,
+trailHotMin:3,
 trailJoin:'line',
 bodyJoin:'line',
 trailAngle:45,
@@ -6677,6 +6712,10 @@ this.trailCrossings=[];
 this.crossingCells=new Map();
 this.trailLo=0;
 this._revisitCache=null;
+this.trailMask=null;
+this.trailMaskMin=0;
+this.trailMaskLen= -1;
+this._stepDiffCache=null;
 this.pixDirty=true;
 this.trailCv=null;
 this.trailCvMode='';
@@ -6751,6 +6790,8 @@ const grid=this.grid;
 this.trail=buildTrail(grid,this.result.frames);
 this.trailInfo=this.trail.info;
 this._revisitCache=null;
+this.trailMask=null;
+this._stepDiffCache=null;
 this.prepareCrossingCells(grid);
 this.pixDirty=true;
 this.collisionPoints=[];
@@ -6791,6 +6832,7 @@ const n=path.length;
 const un=new Float32Array(n*2);
 this.trailCv=null;
 this.trailCvMode='';
+this.trailMask=null;
 if(!n){
 this.trailUn=un;
 this.trailRuns=[];
@@ -6888,7 +6930,9 @@ if(s.showGrid)this.drawGrid();
 this.drawCells(frame,th);
 if(s.showTrail)this.drawTrail(frame,th,tickF);
 else if(s.showCrossings)this.syncTrailCursor(tickF);
+if(s.showTrail&&s.showTrailArrows)this.drawTrailArrows(tickF);
 if(s.showCrossings)this.drawTrailCrossings();
+if(s.showStepDiff)this.drawStepDiff(i0,frame);
 if(s.showRevisit)this.drawRevisit(tickF);
 this.drawCompare();
 this.drawFilterHighlight();
@@ -7033,6 +7077,52 @@ if(mode==='curve'&&lo>1)this.drawTrailCurve(th,lo,tick);
 else if(mode==='angle'&&lo>1)this.drawTrailAngle(th,lo,tick);
 else this.drawTrailLine(th,lo,tick);
 }
+drawTrailArrows(tick){
+const lo=this.trailLo;
+if(lo<2)return;
+const s=this.style;
+const spec=this.fadeSpec();
+const runs=this.trailRunsUpTo(lo,tick);
+if(!runs.length)return;
+const un=this.trailUn;
+const path=this.trail.path;
+const step=Math.max(1,Math.round(s.trailArrowSpacing)||1)*(s.cellSize+s.gap);
+const size=Math.max(2,s.cellSize*0.26*(Number.isFinite(s.trailArrowScale)?s.trailArrowScale:1));
+const ctx=this.ctx;
+ctx.save();
+this.clipTrail();
+ctx.fillStyle=s.trailArrowColor||'#ffd43b';
+for(const run of runs){
+let acc=0;
+for(let k=run.from+1;k<=run.to;k++){
+const x0=un[(k-1)*2]+run.ox;
+const y0=un[(k-1)*2+1]+run.oy;
+const x1=un[k*2]+run.ox;
+const y1=un[k*2+1]+run.oy;
+acc+=Math.hypot(x1-x0,y1-y0);
+if(acc<step)continue;
+acc=0;
+const t=spec.on?this.fadeProgress(tick-path[k].tick,spec):1;
+if(t<=0)continue;
+this.drawTrailArrow(ctx,x1,y1,Math.atan2(y1-y0,x1-x0),size,t);
+}
+}
+ctx.restore();
+ctx.globalAlpha=1;
+}
+drawTrailArrow(ctx,x,y,ang,size,t){
+ctx.save();
+ctx.globalAlpha=0.95*Math.max(0,Math.min(1,t));
+ctx.translate(x,y);
+ctx.rotate(ang);
+ctx.beginPath();
+ctx.moveTo(size*0.62,0);
+ctx.lineTo(-size*0.46,size*0.52);
+ctx.lineTo(-size*0.46,-size*0.52);
+ctx.closePath();
+ctx.fill();
+ctx.restore();
+}
 syncTrailCursor(tickF){
 const path=this.trail.path;
 if(!path.length)return;
@@ -7050,6 +7140,7 @@ trailRunsUpTo(lo,tick){
 const out=[];
 const src=this.trailRuns;
 const spec=this.fadeSpec();
+const mask=this.ensureTrailMask();
 const minTick=spec.on?tick-spec.len:-Infinity;
 const path=this.trail.path;
 for(let ri=0;ri<src.length;ri++){
@@ -7070,7 +7161,22 @@ else loI=mid+1;
 from=loI;
 }
 if(from>to)continue;
+if(!mask){
 out.push({from,to,ox:run.ox,oy:run.oy});
+continue;
+}
+let start= -1;
+for(let k=from;k<=to;k++){
+if(mask[k]){
+if(start<0)start=k;
+continue;
+}
+if(start>=0){
+out.push({from:start,to:k-1,ox:run.ox,oy:run.oy});
+start= -1;
+}
+}
+if(start>=0)out.push({from:start,to,ox:run.ox,oy:run.oy});
 }
 return out;
 }
@@ -7158,7 +7264,8 @@ fadeStyleTable(th,baseWidth){
 const ramp=this.colorRamp();
 const cols=ramp?FADE_BUCKETS:1;
 const c=this._fadeTable;
-if(c&&c.th===th&&c.baseWidth===baseWidth&&c.fade=== !!this.style.trailFade&&c.cols===cols)return c;
+if(c&&c.th===th&&c.baseWidth===baseWidth&&c.fade=== !!this.style.trailFade
+&&c.cols===cols&&c.ramp===ramp)return c;
 const size=FADE_BUCKETS*cols;
 const alphas=new Float64Array(size);
 const widths=new Float64Array(size);
@@ -7172,9 +7279,29 @@ widths[i]=base.width;
 colors[i]=ramp?paletteColor(ramp,(cb+0.5)/FADE_BUCKETS):base.color;
 }
 }
-const table={th,baseWidth,fade:!!this.style.trailFade,cols,alphas,widths,colors};
+const table={th,baseWidth,fade:!!this.style.trailFade,cols,ramp,alphas,widths,colors};
 this._fadeTable=table;
 return table;
+}
+ensureTrailMask(){
+if(!this.style.trailHotOnly){
+this.trailMask=null;
+return null;
+}
+const min=Math.max(2,Math.round(this.style.trailHotMin)||2);
+const n=this.trail.path.length;
+if(this.trailMask&&this.trailMaskMin===min&&this.trailMaskLen===n)return this.trailMask;
+const path=this.trail.path;
+const info=this.trailInfo;
+const mask=new Float32Array(n);
+for(let i=0;i<n;i++){
+const cell=info.get(path[i].index);
+mask[i]=cell&&cell.visits>=min?1:0;
+}
+this.trailMask=mask;
+this.trailMaskMin=min;
+this.trailMaskLen=n;
+return mask;
 }
 clipTrail(){
 const ctx=this.ctx;
@@ -7281,6 +7408,40 @@ if(revisitReached(info,tick,min))cells.push(info);
 }
 this._revisitCache={tick,min,cells};
 return cells;
+}
+drawStepDiff(i0,frame){
+const prev=this.result.frames[i0-1];
+if(!prev)return;
+const cache=this._stepDiffCache;
+let cells;
+if(cache&&cache.i0===i0&&cache.frame===frame&&cache.prev===prev){
+cells=cache.cells;
+}else{
+cells=[];
+const a=frame.cells;
+const b=prev.cells;
+const n=Math.min(a.length,b.length);
+for(let i=0;i<n;i++)if(a[i]!==b[i])cells.push(i);
+this._stepDiffCache={i0,frame,prev,cells};
+}
+if(!cells.length)return;
+const ctx=this.ctx;
+const s=this.style;
+const color=s.stepDiffColor||'#7cf5d0';
+const half=(s.cellSize-s.gap)/2;
+ctx.save();
+ctx.globalAlpha=Number.isFinite(s.stepDiffAlpha)?s.stepDiffAlpha:0.22;
+ctx.fillStyle=color;
+ctx.strokeStyle=color;
+ctx.lineWidth=Math.max(1,s.cellSize*0.07);
+for(const i of cells){
+const p=this.center(this.grid.coord(i));
+if(this.grid.type==='hex')pathHex(ctx,p.x,p.y,half*0.92);
+else roundRect(ctx,p.x-half,p.y-half,half*2,half*2,s.cellSize*0.18);
+ctx.fill();
+ctx.stroke();
+}
+ctx.restore();
 }
 drawHoverCrosshair(){
 const ctx=this.ctx;
@@ -8301,9 +8462,12 @@ lines.push(`轨迹：次序 #${info.order} · 首次第 ${info.first} 步 · 末
 const at=visitStatsAt(info,frame.tick);
 if(at){
 lines.push(`当前路径经过次数：第 ${at.count} 次（最近一次经过：第 ${at.last} 步）`);
+const slim=s.hoverTipSlimSingleSnake!==false&&frame.agents.length<=1;
+if(!slim){
 lines.push(at.prev===null
 ?`历史累计经过次数：共 ${info.visits} 次（本格首次经过，此前无经过记录）`
 :`历史累计经过次数：共 ${info.visits} 次（上次经过：第 ${at.prev} 步）`);
+}
 }
 }
 return lines.join('\n');
@@ -14160,6 +14324,27 @@ checkbox(s.showEyes,(v)=>{s.showEyes=v;onStyleChange();},'蛇头眼睛'),
 ),'「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；蛇头眼睛默认隐藏，勾选后显示'),
 field('进出点标记尺寸',rangeBind(s,'crossingScale',()=>onStyleChange(),{min:0.4,max:3,step:0.1}),
 '边界进出点标记（滑出空心环 / 滑入实心点）的尺寸倍数；仅在开启「边界进出点」时可见'),
+switchField('轨迹方向箭头',
+checkbox(s.showTrailArrows,(v)=>{s.showTrailArrows=v;onStyleChange();},'开启'),
+'沿已播放的轨迹按间隔绘制指向前进方向的箭头，便于一眼看清行进方向；依附于「轨迹」显示，关闭轨迹时一并隐藏'),
+field('箭头间隔（格）',rangeBind(s,'trailArrowSpacing',()=>onStyleChange(),{min:1,max:12,step:1,number:true}),
+'相邻两个方向箭头之间大致相隔的格数；数值越小箭头越密'),
+field('箭头尺寸',rangeBind(s,'trailArrowScale',()=>onStyleChange(),{min:0.4,max:2.2,step:0.1}),
+'方向箭头的尺寸倍数；箭头亮度与轨迹一致，会随「轨迹渐隐」变暗'),
+field('箭头颜色',colorBind(s,'trailArrowColor',()=>onStyleChange()),
+'方向箭头的颜色；与轨迹颜色分级叠加，仍保留自身色相便于区分轨迹本体'),
+switchField('热点轨迹过滤',
+checkbox(s.trailHotOnly,(v)=>{s.trailHotOnly=v;onStyleChange();},'开启'),
+'只绘制「该格经过次数达到阈值」的轨迹段，突出反复踩踏的热点路径；关闭时显示完整轨迹（与旧版本一致）'),
+field('热点判定次数',rangeBind(s,'trailHotMin',()=>onStyleChange(),{min:2,max:20,step:1,number:true}),
+'经过次数达到该值的轨迹段才绘制；数值越大，只保留最密集的热点路径'),
+switchField('本步变化高亮',
+checkbox(s.showStepDiff,(v)=>{s.showStepDiff=v;onStyleChange();},'开启'),
+'把「当前步相对上一步环境状态发生变化」的格子标出来（元胞演化、标记物生成 / 消耗、障碍物变化等），便于逐帧追踪环境演进'),
+field('变化高亮不透明度',rangeBind(s,'stepDiffAlpha',()=>onStyleChange(),{min:0.05,max:0.5,step:0.01}),
+'本步变化高亮的填充不透明度；调低可与轨迹、重访高亮叠加观察'),
+field('变化高亮颜色',colorBind(s,'stepDiffColor',()=>onStyleChange()),
+'本步变化高亮的填充与描边颜色'),
 ],{key:'visual-effects',open:false});
 }
 function visualOverlayGroup(cfg){
@@ -14185,7 +14370,10 @@ checkbox(s.hoverTipState,(v)=>{s.hoverTipState=v;onStyleChange();},'环境状态
 checkbox(s.hoverTipAgent,(v)=>{s.hoverTipAgent=v;onStyleChange();},'移动体'),
 checkbox(s.hoverTipTrail,(v)=>{s.hoverTipTrail=v;onStyleChange();},'轨迹回溯'),
 checkbox(s.hoverTipMarkers,(v)=>{s.hoverTipMarkers=v;onStyleChange();},'标记信息'),
-),'提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次经过步数、当前路径经过次数与历史累计经过次数'),
+),'提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次经过步数、当前路径经过次数与历史累计经过次数（单蛇场景下历史累计经过次数自动省略，见下方「单蛇提示精简」）'),
+switchField('单蛇提示精简',
+checkbox(s.hoverTipSlimSingleSnake,(v)=>{s.hoverTipSlimSingleSnake=v;onStyleChange();},'开启'),
+'画面中只有一条移动体时，「历史累计经过次数」与「轨迹」行的「共 N 次」完全同值属重复信息，开启后自动省略、只保留随播放进度变化的「当前路径经过次数」；多移动体场景两条口径并存'),
 switchField('穿越事件日志',
 checkbox(cfg.events.logCrossings,(v)=>{cfg.events.logCrossings=v;onSimChange();},'记录边界穿越到规则日志'),
 '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),

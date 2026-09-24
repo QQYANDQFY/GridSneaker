@@ -3248,14 +3248,44 @@ section('悬浮提示：内容与已开启的显示状态严格同步');
     '提示中的当前路径经过次数与轨迹模型截至当前的计数一致');
   ok(textOn.includes(`最近一次经过：第 ${times[times.length - 1]} 步`),
     '提示中的最近一次经过为当前播放进度下的末次步数');
-  ok(textOn.includes(`历史累计经过次数：共 ${times.length} 次`),
-    '提示中的历史累计经过次数为整轮经过总次数');
-  ok(textOn.includes(`上次经过：第 ${times[times.length - 2]} 步`),
-    '提示中的上次经过步数与轨迹模型记录一致');
+  ok(textOn.includes(`共 ${times.length} 次`),
+    '单蛇场景下整轮经过总次数仍由「轨迹」行给出（提示精简不丢信息）');
+  // 单蛇场景（本场景只有一条移动体）：提示精简默认开启，
+  //「历史累计经过次数」与「轨迹」行的「共 N 次」完全同值，属重复信息，应被省略。
+  ok(!textOn.includes('历史累计经过次数'),
+    '单蛇场景默认省略「历史累计经过次数」（与「轨迹」行的整轮总数重复）');
+  ok(textOn.includes('当前路径经过次数'),
+    '单蛇场景保留随播放进度变化的「当前路径经过次数」');
+  // 关闭精简开关即回退旧行为：两条口径并存
+  const textFull = mk({ showTrail: true, hoverTipSlimSingleSnake: false }).describe(last, repCoord);
+  ok(textFull.includes(`历史累计经过次数：共 ${times.length} 次`),
+    '关闭「单蛇提示精简」后恢复「历史累计经过次数」为整轮经过总次数');
+  ok(textFull.includes(`上次经过：第 ${times[times.length - 2]} 步`),
+    '恢复后「上次经过」步数与轨迹模型记录一致');
   ok(!mk({ showTrail: false }).describe(last, repCoord).includes('轨迹：'),
     '关闭「轨迹」后提示中不再出现轨迹信息');
-  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('历史累计经过次数'),
+  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('当前路径经过次数'),
     '关闭「轨迹」后不再展示轨迹回溯内容');
+
+  // 多蛇场景：两条口径并存（单蛇精简不生效）
+  const multiCfg = wrapRun({
+    multiSnake: {
+      ...defaultConfig().multiSnake,
+      enabled: true,
+      spawn: { ...defaultConfig().multiSnake.spawn, mode: 'initial', maxAgents: 3, length: 3 },
+    },
+  });
+  const multi = new Simulation(multiCfg).run();
+  ok(multi.frames[multi.frames.length - 1].agents.length >= 2,
+    '多蛇场景末帧仍有多条移动体（提示精简断言才有意义）');
+  const multiLast = multi.frames.length - 1;
+  const multiTrail = buildTrail(multi.grid, multi.frames);
+  const multiRep = [...multiTrail.info.values()].find((c) => c.ticks.length >= 2);
+  ok(!!multiRep, '多蛇场景中存在被反复经过的格子');
+  const multiText = attachResult(headlessRenderer({ cellSize: 20, gap: 2, trailFade: false, showTrail: true }).r, multi)
+    .describe(multiLast, { col: multiRep.col, row: multiRep.row });
+  ok(multiText.includes(`历史累计经过次数：共 ${multiRep.ticks.length} 次`),
+    '多蛇场景下「历史累计经过次数」照常展示（与「当前路径经过次数」两条口径并存）');
 
   // 移动体 / 环境 / 各项内容开关 / 总开关
   const seg = result.frames[last].agents[0].segments[0];
@@ -3270,6 +3300,266 @@ section('悬浮提示：内容与已开启的显示状态严格同步');
     && !mk({ hoverTipMarkers: false, showStartEnd: true }).describe(last, start).includes('起点标记'),
     '关闭「标记信息」后即使显示开关开启也不在提示中给出标记行');
   eq(mk({ hoverTip: false }).describe(last, repCoord), '', '关闭悬浮提示总开关后不再产生任何提示文本');
+}
+
+/* ---------- 本轮新增：轨迹方向箭头 ---------- */
+
+/** 本轮新增输出的公共渲染基线：只保留待测元素，避免其它绘制干扰调用计数 */
+const QUIET_STYLE = {
+  cellSize: 20, gap: 2, trailFade: false, showGrid: false, showBody: false, showEffects: false,
+  highlightRules: false, showStartEnd: false, showObstacles: false, showMarkers: false, showArrows: false,
+};
+
+section('功能拓展：轨迹方向箭头（开关 / 间隔 / 尺寸 / 颜色）');
+{
+  const d = defaultConfig();
+  eq(d.style.showTrailArrows, false, '轨迹方向箭头默认关闭（与旧版本视觉一致）');
+  eq(d.style.trailArrowSpacing, 3, '方向箭头默认间隔 3 格');
+  eq(d.style.trailArrowScale, 1, '方向箭头默认尺寸倍数 1');
+  eq(d.style.trailArrowColor, '#ffd43b', '方向箭头有默认颜色');
+  // 新增 style 字段必须在「渲染层默认值」与「配置层默认值」两处同时落地
+  const NEW_STYLE_KEYS = [
+    'hoverTipSlimSingleSnake', 'showTrailArrows', 'trailArrowSpacing', 'trailArrowScale', 'trailArrowColor',
+    'showStepDiff', 'stepDiffAlpha', 'stepDiffColor', 'trailHotOnly', 'trailHotMin',
+  ];
+  let unsynced = [];
+  for (const k of NEW_STYLE_KEYS) {
+    if (!(k in STYLE_DEFAULTS) || !(k in d.style)) unsynced.push(k);
+    else if (STYLE_DEFAULTS[k] !== d.style[k]) unsynced.push(`${k}（取值不一致）`);
+  }
+  eq(unsynced.join(' / '), '', '新增样式字段在 STYLE_DEFAULTS 与 defaultConfig().style 中同步落地');
+
+  const norm = (patch) => normalizeConfig({ ...d, style: { ...d.style, ...patch } }).style;
+  eq(norm({ trailArrowSpacing: 0 }).trailArrowSpacing, 1, '箭头间隔收敛到下限 1');
+  eq(norm({ trailArrowSpacing: 99 }).trailArrowSpacing, 12, '箭头间隔收敛到上限 12');
+  eq(norm({ trailArrowScale: 9 }).trailArrowScale, 2.2, '箭头尺寸收敛到上限 2.2');
+  eq(norm({ trailArrowScale: 0.1 }).trailArrowScale, 0.4, '箭头尺寸收敛到下限 0.4');
+  eq(norm({ trailArrowColor: 'red' }).trailArrowColor, '#ffd43b', '非法箭头颜色回退为默认色');
+
+  const result = new Simulation(wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 60 } })).run();
+  const draw = (style) => {
+    const { r, calls, sets } = headlessRenderer({ ...QUIET_STYLE, showTrail: true, ...style });
+    attachResult(r, result);
+    r.draw(result.frames.length - 1, 0);
+    return { r, calls, sets };
+  };
+  // 方向箭头是本轮唯一使用 ctx.rotate 的绘制（体节方向箭头已由 showArrows 关闭）
+  const arrowCount = (calls) => calls.filter((c) => c.name === 'rotate').length;
+
+  const off = draw({ showTrailArrows: false });
+  const on = draw({ showTrailArrows: true });
+  eq(arrowCount(off.calls), 0, '关闭时不绘制任何方向箭头');
+  ok(arrowCount(on.calls) > 0, '开启后沿轨迹绘制方向箭头', `箭头 ${arrowCount(on.calls)} 个`);
+  ok(on.calls.some((c) => c.name === 'clip'), '方向箭头绘制前裁剪到网格区域（不侵入留白）');
+
+  const dense = draw({ showTrailArrows: true, trailArrowSpacing: 1 });
+  const sparse = draw({ showTrailArrows: true, trailArrowSpacing: 8 });
+  ok(arrowCount(dense.calls) > arrowCount(on.calls), '箭头间隔越小箭头越密');
+  ok(arrowCount(sparse.calls) < arrowCount(on.calls), '箭头间隔越大箭头越疏',
+    `${arrowCount(dense.calls)} / ${arrowCount(on.calls)} / ${arrowCount(sparse.calls)}`);
+
+  const colored = draw({ showTrailArrows: true, trailArrowColor: '#123456' });
+  ok(colored.sets.some((s) => s.name === 'fillStyle' && s.value === '#123456'),
+    '箭头颜色取自 trailArrowColor');
+
+  // 依附性：关闭「轨迹」后方向箭头一并隐藏
+  const noTrail = draw({ showTrail: false, showTrailArrows: true });
+  eq(arrowCount(noTrail.calls), 0, '关闭「轨迹」后方向箭头一并隐藏（依附于轨迹）');
+
+  // 单元级：单个箭头的几何与亮度约束
+  const { r: ru, calls: cu, sets: su } = headlessRenderer({ ...QUIET_STYLE });
+  ru.drawTrailArrow(ru.ctx, 100, 100, 0, 10, 1);
+  const first = cu.find((c) => c.name === 'translate');
+  const rot = cu.find((c) => c.name === 'rotate');
+  ok(!!first && first.args[0] === 100 && first.args[1] === 100, '箭头以给定坐标为尖端');
+  ok(!!rot && rot.args[0] === 0, '箭头按给定角度旋转');
+  const tip = cu.find((c) => c.name === 'moveTo');
+  ok(!!tip && Math.hypot(tip.args[0], tip.args[1]) > 0, '箭头顶点相对尖端有偏移（不是零面积）');
+  su.length = 0;
+  ru.drawTrailArrow(ru.ctx, 0, 0, 0, 10, 0);
+  ok(su.some((s) => s.name === 'globalAlpha' && s.value === 0), '亮度为 0 时箭头完全透明');
+  su.length = 0;
+  ru.drawTrailArrow(ru.ctx, 0, 0, 0, 10, 1);
+  ok(su.some((s) => s.name === 'globalAlpha' && s.value > 0.9), '亮度为 1 时箭头近乎不透明');
+}
+
+/* ---------- 本轮新增：本步变化高亮 ---------- */
+
+section('功能拓展：本步变化高亮（环境状态逐帧差异）');
+{
+  const d = defaultConfig();
+  eq(d.style.showStepDiff, false, '本步变化高亮默认关闭');
+  eq(d.style.stepDiffAlpha, 0.22, '变化高亮默认不透明度 0.22');
+  eq(d.style.stepDiffColor, '#7cf5d0', '变化高亮有默认颜色');
+  const norm = (patch) => normalizeConfig({ ...d, style: { ...d.style, ...patch } }).style;
+  eq(norm({ stepDiffAlpha: 9 }).stepDiffAlpha, 0.5, '变化高亮不透明度收敛到上限');
+  eq(norm({ stepDiffAlpha: 0 }).stepDiffAlpha, 0.05, '变化高亮不透明度收敛到下限');
+  eq(norm({ stepDiffColor: 'nope' }).stepDiffColor, '#7cf5d0', '非法颜色回退为默认色');
+
+  // 用元胞自动机场景制造真实的逐帧环境差异（两条互斥规则让状态每步翻转）
+  const cfg = wrapRun({
+    caMode: {
+      ...defaultConfig().caMode,
+      enabled: true,
+      initial: { mode: 'random', state: 'marker', density: 0.35, pattern: '' },
+      stopOnStable: false,
+      rules: normalizeCaRules([
+        { id: 'diff_marker2empty', from: ['marker'], counts: [], to: 'empty' },
+        { id: 'diff_empty2marker', from: ['empty'], counts: [], to: 'marker' },
+      ]),
+    },
+    endConditions: { ...defaultConfig().endConditions, maxSteps: 24 },
+  });
+  const result = new Simulation(cfg).run();
+  const last = result.frames.length - 1;
+
+  // 单元级：变化集合 = 与上一帧 cells 不同的下标
+  const { r: ru } = headlessRenderer({ ...QUIET_STYLE, showTrail: false });
+  attachResult(ru, result);
+  const i0 = last;
+  const expect = [];
+  const a = result.frames[i0].cells;
+  const b = result.frames[i0 - 1].cells;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) expect.push(i);
+  ru.drawStepDiff(i0, result.frames[i0]);
+  const cached = ru._stepDiffCache;
+  ok(!!cached && cached.i0 === i0, '变化格集合按帧下标缓存');
+  eq(cached.cells.join(','), expect.join(','), '变化高亮的格集合与「逐格比较上一帧」完全一致');
+  ok(ru.drawStepDiff(0, result.frames[0]) === undefined, '第 0 帧没有上一帧可比（安全返回）');
+  eq(ru._stepDiffCache.i0, i0, '第 0 帧不覆盖已有缓存');
+
+  // 端到端：开启后多出「变化格」的填充，关闭时完全不画
+  const run = (style) => {
+    const { r, calls } = headlessRenderer({ ...QUIET_STYLE, showTrail: false, ...style });
+    attachResult(r, result);
+    r.draw(i0, 0);
+    return calls;
+  };
+  const stepOn = expect.length ? run({ showStepDiff: true }) : [];
+  ok(expect.length > 0, '该场景相邻两帧存在环境状态差异（断言才有意义）', `差异 ${expect.length} 格`);
+  eq(stepOn.filter((c) => c.name === 'fill').length - run({ showStepDiff: false }).filter((c) => c.name === 'fill').length,
+    expect.length, '每个变化格额外绘制一次填充（数量与差异格数一致）');
+}
+
+/* ---------- 本轮新增：热点轨迹过滤 ---------- */
+
+section('功能拓展：热点轨迹过滤（只画反复踩踏的轨迹段）');
+{
+  const d = defaultConfig();
+  eq(d.style.trailHotOnly, false, '热点轨迹过滤默认关闭（行为与旧版本一致）');
+  eq(d.style.trailHotMin, 3, '热点判定次数默认 3');
+  const norm = (patch) => normalizeConfig({ ...d, style: { ...d.style, ...patch } }).style;
+  eq(norm({ trailHotMin: 1 }).trailHotMin, 2, '热点判定次数收敛到下限 2');
+  eq(norm({ trailHotMin: 99 }).trailHotMin, 20, '热点判定次数收敛到上限 20');
+
+  // 随机转向的游走场景：不同格子的经过次数分布明显不均（热点 / 冷门并存）
+  const hotCfg = defaultConfig();
+  hotCfg.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+  hotCfg.start = { col: 5, row: 5, direction: 'left' };
+  hotCfg.body.initialLength = 3;
+  hotCfg.moveRules = { left: 1, straight: 2, right: 1 };
+  hotCfg.endConditions = {
+    ...hotCfg.endConditions, maxSteps: 300, wall: false, noMove: false,
+    selfCollision: false, outOfBounds: false, obstacle: false, ruleEnd: false,
+  };
+  hotCfg.safety = {
+    avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false,
+    avoidWall: false, warnSelfCollision: false,
+  };
+  const result = new Simulation(normalizeConfig(hotCfg)).run();
+  const prep = (style) => {
+    const { r } = headlessRenderer({ ...QUIET_STYLE, showTrail: true, ...style });
+    attachResult(r, result);
+    r.pixDirty = true;
+    r.ensureTrailPix();
+    r.trailLo = r.trail.path.length;
+    return r;
+  };
+
+  const plain = prep({ trailHotOnly: false });
+  eq(plain.ensureTrailMask(), null, '关闭热点过滤时不构建掩码（零额外开销）');
+  const plainRuns = plain.trailRunsUpTo(plain.trailLo, plain.trail.maxTick);
+  const covered = new Uint8Array(plain.trail.path.length);
+  for (const r0 of plainRuns) for (let k = r0.from; k <= r0.to; k++) covered[k] = 1;
+  let missing = 0;
+  for (let i = 0; i < covered.length; i++) if (!covered[i]) missing++;
+  eq(missing, 0, '关闭热点过滤时全量轨迹点都被绘制段覆盖');
+
+  // 阈值取「最大经过次数的一半」，保证既有热点也有冷门点（断言才具区分度）
+  let maxVisits = 1;
+  for (const cell of plain.trail.info.values()) if (cell.visits > maxVisits) maxVisits = cell.visits;
+  const thrMin = Math.max(2, Math.ceil(maxVisits / 2));
+
+  const hot = prep({ trailHotOnly: true, trailHotMin: thrMin });
+  const mask = hot.ensureTrailMask();
+  eq(mask.length, hot.trail.path.length, '掩码长度与轨迹点数一致');
+  let maskMiss = 0;
+  let hotPoints = 0;
+  for (let i = 0; i < mask.length; i++) {
+    const cell = hot.trail.info.get(hot.trail.path[i].index);
+    const want = cell && cell.visits >= thrMin ? 1 : 0;
+    if (mask[i] !== want) maskMiss++;
+    if (want) hotPoints++;
+  }
+  eq(maskMiss, 0, '热点掩码与「该格整轮经过次数 ≥ 阈值」严格一致');
+  ok(hotPoints > 0 && hotPoints < mask.length, '热点过滤既有保留也有剔除（阈值处在有效区间）',
+    `阈值 ${thrMin} · 保留 ${hotPoints} / ${mask.length}`);
+
+  const hotRuns = hot.trailRunsUpTo(hot.trailLo, hot.trail.maxTick);
+  let leaks = 0;
+  for (const r0 of hotRuns) for (let k = r0.from; k <= r0.to; k++) if (!mask[k]) leaks++;
+  eq(leaks, 0, '过滤后的绘制段内不含任何被过滤点（不会跨过过滤区间连线）');
+  // 精确口径：每个连续段内的热点点 = 该段长度之和（掩码切成互不重叠的极大连续段）
+  let expectedKept = 0;
+  for (const run of plain.trailRuns) {
+    const to = Math.min(run.to, plain.trailLo - 1);
+    if (to < run.from) continue;
+    for (let k = run.from; k <= to; k++) if (mask[k]) expectedKept++;
+  }
+  let kept = 0;
+  for (const r0 of hotRuns) kept += r0.to - r0.from + 1;
+  eq(kept, expectedKept, '保留点数量 = 各连续段中热点点的总数（不丢不重）');
+  ok(hotRuns.length >= 1, '热点过滤后仍存在可绘制的连续段');
+
+  // 阈值越高保留越少；阈值高于任何格的经过次数时完全不画
+  const fewer = prep({ trailHotOnly: true, trailHotMin: Math.min(20, thrMin + 3) });
+  let fewerKept = 0;
+  for (const r0 of fewer.trailRunsUpTo(fewer.trailLo, fewer.trail.maxTick)) fewerKept += r0.to - r0.from + 1;
+  ok(fewerKept <= kept, '阈值提高后保留的轨迹点不增加', `${kept} → ${fewerKept}`);
+
+  // 掩码随阈值 / 轨迹变化重建
+  eq(hot.ensureTrailMask(), mask, '同一阈值下掩码复用（不逐帧重建）');
+  hot.trailMaskMin = -1;
+  ok(hot.ensureTrailMask() !== mask, '阈值变化后掩码重建');
+  hot.pixDirty = true;
+  hot.ensureTrailPix();
+  eq(hot.trailMask, null, '轨迹更新后掩码失效，下一帧按新轨迹重建');
+}
+
+/* ---------- 本轮修复：轨迹色带缓存键 ---------- */
+
+section('BUG 修复：切换轨迹颜色分级后色带必须立即刷新（fadeStyleTable 缓存键）');
+{
+  const result = new Simulation(wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 60 } })).run();
+  const { r } = headlessRenderer({ ...QUIET_STYLE, showTrail: true, trailColorMode: 'visit' });
+  attachResult(r, result);
+  r.pixDirty = true;
+  r.ensureTrailPix();
+  const th = r.theme();
+  const visitTable = r.fadeStyleTable(th, 6);
+  eq(visitTable.cols > 1, true, '热度分级样式表按「亮度档 × 颜色档」扩展');
+  ok(r.fadeStyleTable(th, 6) === visitTable, '同一模式下重复取用命中缓存');
+
+  // 切换到「按经过次序」：两者档数相同（都是 FADE_BUCKETS），
+  // 若缓存键不含 ramp，这里会错误地沿用旧色带。
+  r.style.trailColorMode = 'order';
+  r.pixDirty = true;
+  r.ensureTrailPix();
+  const orderTable = r.fadeStyleTable(th, 6);
+  eq(orderTable.cols, visitTable.cols, '两种分级的档数相同（这正是缓存键必须额外比较 ramp 的原因）');
+  ok(orderTable !== visitTable && orderTable.colors.join() !== visitTable.colors.join(),
+    '切换颜色分级后立即换用新色带（不沿用旧色带）');
+  ok(r.fadeStyleTable(th, 6).colors.join() === orderTable.colors.join(), '切换后重复取用命中新缓存');
 }
 
 /* ---------- 本轮新增：重访格高亮与悬停行列准线 ---------- */
@@ -5142,6 +5432,63 @@ section('功能拓展：命名记录与规则集 / 模板 / 参数预设面板�
   ok(/\.\.\.caRulesetSection\(ca\),/.test(app) && /\.\.\.caEnvTemplateSection\(\),/.test(app)
     && /\.\.\.caParamPresetSection\(\),/.test(app),
     '三处新面板分别接入「演化规则 / 初始环境 / 交互与模板」子页');
+}
+
+/* ---------- 功能拓展：新增配置项全部纳入统一配置面板（源码级回归） ---------- */
+
+section('功能拓展：三项新功能与单蛇提示精简接入配置面板（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+  const canvas = readFileSync(new URL('../src/ui/canvas.js', import.meta.url), 'utf8');
+  const cfgSrc = readFileSync(new URL('../src/core/config.js', import.meta.url), 'utf8');
+  const style = defaultConfig().style;
+
+  /* 1) 轨迹方向箭头：开关 + 间隔 / 尺寸 / 颜色，全部落在「高级视觉特效」分组 */
+  ok(/switchField\('轨迹方向箭头',[\s\S]{0,120}showTrailArrows/.test(app),
+    '「轨迹方向箭头」以开关行呈现');
+  ok(/rangeBind\(s, 'trailArrowSpacing'[\s\S]{0,400}rangeBind\(s, 'trailArrowScale'/.test(app)
+    && /colorBind\(s, 'trailArrowColor'/.test(app),
+    '箭头的间隔 / 尺寸 / 颜色均可调');
+  ok(/showTrailArrows/.test(diffSrc) && /trailArrowColor: '箭头颜色'/.test(diffSrc),
+    '新增箭头字段在差异比对中有中文标签');
+
+  /* 2）本步变化高亮：开关 + 不透明度 / 颜色 */
+  ok(/switchField\('本步变化高亮',[\s\S]{0,120}showStepDiff/.test(app),
+    '「本步变化高亮」以开关行呈现');
+  ok(/rangeBind\(s, 'stepDiffAlpha'/.test(app) && /colorBind\(s, 'stepDiffColor'/.test(app),
+    '变化高亮的不透明度 / 颜色均可调');
+  ok(/showStepDiff: '本步变化高亮'/.test(diffSrc),
+    '变化高亮字段在差异比对中有中文标签');
+
+  /* 3) 热点轨迹过滤：开关 + 阈值 */
+  ok(/switchField\('热点轨迹过滤',[\s\S]{0,120}trailHotOnly/.test(app),
+    '「热点轨迹过滤」以开关行呈现');
+  ok(/rangeBind\(s, 'trailHotMin'/.test(app), '热点判定次数可调');
+  ok(/trailHotOnly: '热点轨迹过滤'/.test(diffSrc) && /trailHotMin: '热点判定次数'/.test(diffSrc),
+    '热点过滤字段在差异比对中有中文标签');
+
+  /* 4) 单蛇提示精简：开关 + 提示文案同步说明 */
+  ok(/switchField\('单蛇提示精简',[\s\S]{0,120}hoverTipSlimSingleSnake/.test(app),
+    '「单蛇提示精简」以开关行呈现');
+  ok(/单蛇场景下历史累计经过次数自动省略/.test(app),
+    '「提示内容」的说明文案同步交代单蛇精简行为');
+  ok(/hoverTipSlimSingleSnake: '单蛇提示精简'/.test(diffSrc),
+    '单蛇精简字段在差异比对中有中文标签');
+
+  /* 5) 配置层与渲染层双向落地：规范化 + 在画布管线中真实生效 */
+  ok(/hoverTipSlimSingleSnake: bool\(/.test(cfgSrc) && /trailHotMin: clamp\(/.test(cfgSrc),
+    '新增样式字段在 normalizeStyle 中收敛');
+  ok(/if \(s\.showTrail && s\.showTrailArrows\) this\.drawTrailArrows\(tickF\);/.test(canvas),
+    '方向箭头接入绘制管线（依附于轨迹）');
+  ok(/if \(s\.showStepDiff\) this\.drawStepDiff\(i0, frame\);/.test(canvas),
+    '变化高亮接入绘制管线');
+  ok(/const slim = s\.hoverTipSlimSingleSnake !== false && frame\.agents\.length <= 1;/.test(canvas),
+    '悬浮提示按「画面中移动体数量」判定并精简');
+  // 字段默认值一致性（渲染层 / 配置层）
+  eq(STYLE_DEFAULTS.hoverTipSlimSingleSnake, style.hoverTipSlimSingleSnake, '单蛇精简：两层默认值一致');
+  eq(STYLE_DEFAULTS.trailHotMin, style.trailHotMin, '热点阈值：两层默认值一致');
+  eq(STYLE_DEFAULTS.stepDiffAlpha, style.stepDiffAlpha, '变化高亮不透明度：两层默认值一致');
 }
 
 /* ---------- 结果 ---------- */
