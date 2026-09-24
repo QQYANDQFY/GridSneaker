@@ -37,6 +37,15 @@ import { computeScore, formatScore, gradeFor } from '../src/core/score.js';
 import { diffConfigs, summarizeConfigChanges, describeConfigValue } from '../src/core/config-diff.js';
 import { crowdingOf, difficultyOf, adaptiveSpeedScale } from '../src/core/difficulty.js';
 import { Renderer, STYLE_DEFAULTS } from '../src/ui/canvas.js';
+import {
+  t, translateText, localeList, matchLocale, detectLocale, setLocale, currentLocale,
+  initLocale, onLocaleChange, localizeStatic, localizeElement, SOURCE_LOCALE,
+  SKELETON_PATTERNS,
+} from '../src/i18n/index.js';
+import { zhCN } from '../src/i18n/locales/zh-CN.js';
+import { zhTW } from '../src/i18n/locales/zh-TW.js';
+import { en } from '../src/i18n/locales/en.js';
+import { ja } from '../src/i18n/locales/ja.js';
 
 let pass = 0;
 let fail = 0;
@@ -4543,7 +4552,7 @@ section('逐蛇安全避撞 UI 与「场景与运行」选项卡扩充（源码�
   ok(/Math\.min\(MAX_FRAME_CAP, state\.frameCap \+ continueStep\(\)\)/.test(app),
     '继续运行按配置跨度提升上限，且仍受最大安全步数上限约束');
   ok(!/state\.frameCap \+ DEFAULT_FRAME_CAP/.test(app), '不再写死默认跨度（改上限后按钮语义随之变化）');
-  ok(/els\.continueBtn\.textContent = `继续运行 \+\$\{continueStep\(\)\}`/.test(app),
+  ok(/els\.continueBtn\.textContent = tr\(`继续运行 \+\$\{continueStep\(\)\}`\)/.test(app),
     '面板内改动单次运行步数上限后，控制条按钮文案同步刷新');
   ok(/每次 \+\$\{continueStep\(\)\} 步/.test(app), '运行控制提示语给出的推进步数与按钮文案一致');
   ok(/const v = state\.cfg \? Number\(state\.cfg\.frameCap\) : NaN;/.test(app)
@@ -4986,7 +4995,7 @@ section('本轮优化：交互文本、格子编辑、避撞处理与布局（�
 
   /* 1) 搜索栏「清除」按钮：术语浮层给出完整说明，并保留原生 title 兜底 */
   ok(/bindTermTip\(clearBtn/.test(app), '「清除」按钮接入统一术语浮层（悬停展示按钮作用）');
-  ok(/clearBtn\.title = '清除当前搜索框内的全部输入内容/.test(app),
+  ok(/clearBtn\.title = tr\('清除当前搜索框内的全部输入内容/.test(app),
     '「清除」按钮保留原生 title 作为无 JS / 触控端兜底');
   ok(/name: '清除搜索'/.test(app) && /不会改动任何已保存的设置项/.test(app),
     '浮层文案说明清除范围（仅影响搜索结果，不改动设置项）');
@@ -5489,6 +5498,215 @@ section('功能拓展：三项新功能与单蛇提示精简接入配置面板�
   eq(STYLE_DEFAULTS.hoverTipSlimSingleSnake, style.hoverTipSlimSingleSnake, '单蛇精简：两层默认值一致');
   eq(STYLE_DEFAULTS.trailHotMin, style.trailHotMin, '热点阈值：两层默认值一致');
   eq(STYLE_DEFAULTS.stepDiffAlpha, style.stepDiffAlpha, '变化高亮不透明度：两层默认值一致');
+}
+
+/* ---------- 国际化（i18n）：语言包完整性 / 语言匹配 / 运行时翻译 ---------- */
+
+section('国际化：语言包键集完整性与占位符一致性');
+{
+  const packs = { 'zh-TW': zhTW, en, ja };
+  const keys = Object.keys(zhCN);
+  /**
+   * 取字符串里的 {n} 占位符编号（排序后比对）：
+   * 只比编号集合与出现次数、不比先后顺序——译者在目标语言里可以自由调换语序，
+   * 但编号错位（如把 {1} 写成 {0}）或漏掉占位符会让界面串入别的参数。
+   */
+  const slots = (s) => (String(s).match(/\{\d+\}/g) || []).sort().join(',');
+
+  ok(keys.length > 1000, `源语言包收录全部界面文案（${keys.length} 条）`);
+  ok(keys.every((k) => zhCN[k] === k),
+    '源语言包的键与值相同（键即中文原文，等价于 gettext 的 msgid → msgstr）');
+  ok(keys.every((k) => k.trim().length > 0), '源语言包不含空键');
+
+  for (const [code, dict] of Object.entries(packs)) {
+    const dictKeys = Object.keys(dict);
+    eq(dictKeys.length, keys.length, `${code}：条目数与源语言包一致`);
+    const missing = keys.filter((k) => !(k in dict));
+    const extra = dictKeys.filter((k) => !(k in zhCN));
+    const empty = dictKeys.filter((k) => !String(dict[k] || '').trim());
+    const badSlots = dictKeys.filter((k) => slots(k) !== slots(dict[k]));
+    ok(missing.length === 0, `${code}：没有漏译条目`, missing.slice(0, 3).join(' | '));
+    ok(extra.length === 0, `${code}：没有源码里已不存在的多余条目`, extra.slice(0, 3).join(' | '));
+    ok(empty.length === 0, `${code}：没有空译文（会让界面出现空白文案）`, empty.slice(0, 3).join(' | '));
+    ok(badSlots.length === 0, `${code}：占位符编号与源语言一一对应（错位会串入别的参数）`,
+      badSlots.slice(0, 3).join(' | '));
+  }
+}
+
+section('国际化：语言注册表、语言标签归一与自动匹配');
+{
+  eq(SOURCE_LOCALE, 'zh-CN', '源语言为简体中文（界面文案的书写语言）');
+
+  const list = localeList();
+  eq(list.map((x) => x.code).join(','), 'zh-CN,zh-TW,en,ja', '可选语言列表与语言包一一对应');
+  ok(list.every((x) => /^[a-z]{2}(-[A-Z]{2})?$/.test(x.code)), '语言代码均为标准 BCP 47 标签');
+  eq(list.map((x) => x.name).join(','), '简体中文,繁體中文,English,日本語',
+    '语言名称用各语言自身的写法（选择器里直接显示，不参与翻译）');
+
+  eq(matchLocale('zh-CN'), 'zh-CN', '简体中文标签直接命中');
+  eq(matchLocale('zh-Hans'), 'zh-CN', 'zh-Hans 归一到简体');
+  eq(matchLocale('zh-SG'), 'zh-CN', '新加坡中文（简体）归一到简体');
+  eq(matchLocale('zh'), 'zh-CN', '未指明脚本与地区的中文按简体处理');
+  eq(matchLocale('zh-Hant'), 'zh-TW', 'zh-Hant 归一到繁体');
+  eq(matchLocale('zh-Hant-HK'), 'zh-TW', 'zh-Hant-HK 归一到繁体中文');
+  eq(matchLocale('zh_HK'), 'zh-TW', '下划线写法与港澳台区域同样识别为繁体');
+  eq(matchLocale('zh-MO'), 'zh-TW', '澳门地区中文归一到繁体');
+  eq(matchLocale('en-GB'), 'en', '英文区域变体归一到 en');
+  eq(matchLocale('ja-JP'), 'ja', '日文区域变体归一到 ja');
+  eq(matchLocale('fr-FR'), null, '未收录语言返回 null（由调用方决定回退策略）');
+  eq(matchLocale('ko-KR'), null, '韩语尚未收录，返回 null');
+  eq(matchLocale('ar-EG'), null, '阿拉伯语尚未收录（RTL 布局延后到后续版本）');
+  eq(matchLocale(''), null, '空标签返回 null');
+  eq(matchLocale(null), null, '空值标签安全返回 null，不抛异常');
+}
+
+section('国际化：运行时翻译（快路径 / 句式匹配 / 递归 / 多行 / 占位符）');
+{
+  const seen = [];
+  const off = onLocaleChange((code) => seen.push(code));
+  eq(currentLocale(), 'zh-CN', '未做任何设置时即源语言（此时原文即译文）');
+
+  ok(setLocale('en', { persist: false }), 'setLocale 切换到英语返回 true');
+  eq(currentLocale(), 'en', '当前语言已更新为英语');
+  eq(t('尚未运行模拟'), en['尚未运行模拟'], 't() 命中条目时返回该语言译文');
+  eq(translateText('尚未运行模拟'), en['尚未运行模拟'], 'translateText 与 t 等价（供 DOM 渲染边界调用）');
+  eq(setLocale('en', { persist: false }), false, '重复切到同一语言返回 false（不触发无谓的整页重渲染）');
+  eq(setLocale('ko'), false, '未收录的语言被忽略');
+  eq(currentLocale(), 'en', '忽略无效语言后当前语言保持不变');
+  eq(seen.join(','), 'en', '语言变化只在真正切换时通知订阅者一次');
+
+  /* 快路径：不含中日韩文字的内容原样放行，避免把数字、代码、用户输入误翻 */
+  eq(t('GridSneaker'), 'GridSneaker', '纯 ASCII 文本原样放行（品牌名等无需翻译）');
+  eq(t('12345'), '12345', '纯数字原样放行');
+  eq(t('用户自定义名称'), '用户自定义名称', '查不到条目的文本原样返回，用户输入不会被误翻');
+  eq(t(''), '', '空字符串安全返回');
+  eq(t(null), null, '空值安全返回（可直接用于可选属性）');
+
+  /* 句式匹配 + 片段递归：源码里用模板字面量拼出来的整句查不到整串，靠语言包里的 {n} 条目兜住 */
+  eq(t('日志：在前方产生 3 个障碍物'), 'Log: Spawn 3 ×Obstacle at Front',
+    '运行时拼接的整句按句式匹配命中，并递归翻译捕获到的片段');
+  eq(t('第 12 / 200 步'), 'Step 12 / 200', '数字占位符按句式回填，语序由译文决定');
+  ok(!/[\u4e00-\u9fff]/.test(t('轨迹：次序 #4 · 首次第 1 步 · 末次第 9 步 · 共 4 次')),
+    '多片段长句（画布悬浮提示）在英文下无残留汉字');
+
+  /* 多行文本（描述型悬浮提示）整串查不到，逐行翻译后按原换行拼回 */
+  eq(t('尚未运行模拟\n第 12 / 200 步'), `${en['尚未运行模拟']}\nStep 12 / 200`,
+    '多行文本逐行翻译后按原换行拼回');
+
+  /* 骨架句式：源码里 `${label}（${name}）` 这类拼接串整体没有实义文字，
+     靠语言包中纯标点的骨架条目（{0}（{1}）等）把已译好的片段重新连起来 */
+  ok([...SKELETON_PATTERNS].every((k) => k in en), '骨架句式（纯标点 + 占位符）同样登记在语言包里');
+  eq(t('空格（empty）'), 'Empty cell (empty)',
+    '「显示名（内部键名）」拼接串按骨架句式翻译，内部键名保持原样');
+  eq(t('移动方向：10 → 20'), 'Movement direction: 10 → 20',
+    '配置差异行的「标签：原值 → 新值」拼接串按骨架句式翻译');
+
+  /* 占位符按名替换，替换值同样会被翻译 */
+  setLocale('ja', { persist: false });
+  const tpl = '当前显示 {0} / {1} 项（得分与评级由上方「界面配置」的开关控制）';
+  eq(t(tpl), ja[tpl], '不传参数时占位符原样保留（供上层自行替换）');
+  eq(t(tpl, { 0: 5, 1: 9 }), ja[tpl].replace('{0}', '5').replace('{1}', '9'),
+    '具名占位符按名回填，未提供的占位符保持原样');
+
+  setLocale(SOURCE_LOCALE, { persist: false });
+  eq(t('尚未运行模拟'), '尚未运行模拟', '源语言下直接返回原文（不做无谓查表）');
+  eq(seen.join(','), 'en,ja,zh-CN', '每次真实切换都通知订阅者');
+
+  off();
+  ok(setLocale('en', { persist: false }) === true && seen.length === 3, '退订后不再收到语言变化通知');
+  setLocale(SOURCE_LOCALE, { persist: false });
+}
+
+section('国际化：系统语言自动匹配与手动选择持久化');
+{
+  /* Node 下自行提供最小实现，验证「记住手动选择」这条链路 */
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+  };
+
+  setLocale('ja');
+  eq(store.get('gridsneaker:locale'), 'ja', '手动选择被写入本地存储');
+  setLocale(SOURCE_LOCALE, { persist: false });
+  eq(detectLocale(), 'ja', 'detectLocale 优先沿用上次的手动选择');
+  eq(initLocale(), 'ja', 'initLocale 按存储恢复语言');
+  eq(currentLocale(), 'ja', '初始化后当前语言即为恢复的语言');
+
+  setLocale('en', { persist: false });
+  eq(detectLocale(), 'ja', 'persist:false 的切换不写入存储（自动匹配不该覆盖用户的选择）');
+
+  delete globalThis.localStorage;
+  eq(detectLocale(), detectLocale(), '本地存储不可用时安全回退（file:// 与隐私模式）');
+  setLocale(SOURCE_LOCALE, { persist: false });
+}
+
+section('国际化：静态 HTML 本地化与重复应用幂等');
+{
+  /** 最小 DOM 元素替身：只需 dataset / getAttribute / setAttribute / textContent */
+  const el = {
+    dataset: {},
+    attrs: { 'aria-label': '配置面板' },
+    textContent: '尚未运行模拟',
+    hasAttribute(name) { return name === 'data-i18n'; },
+    getAttribute(name) {
+      if (name === 'data-i18n-attr') return 'aria-label';
+      return name in this.attrs ? this.attrs[name] : null;
+    },
+    setAttribute(name, v) { this.attrs[name] = v; },
+  };
+
+  setLocale('en', { persist: false });
+  localizeElement(el);
+  eq(el.textContent, en['尚未运行模拟'], 'data-i18n 标注的文本按原文查表替换');
+  eq(el.getAttribute('aria-label'), en['配置面板'], 'data-i18n-attr 指定的属性同样被翻译');
+
+  el.textContent = '被别处改写的文本';
+  localizeElement(el);
+  eq(el.textContent, en['尚未运行模拟'], '原文记录在 dataset 上，重复应用不会二次翻译');
+
+  setLocale('ja', { persist: false });
+  localizeElement(el);
+  eq(el.textContent, ja['尚未运行模拟'], '切换语言后重新应用即得到新语言译文（无需还原原文）');
+  eq(el.getAttribute('aria-label'), ja['配置面板'], '属性同样随语言切换更新');
+
+  ok(localizeStatic() === undefined && localizeStatic(null) === undefined,
+    'localizeStatic 在无 DOM 环境（Node / 测试）下安全返回，不抛异常');
+  setLocale(SOURCE_LOCALE, { persist: false });
+}
+
+section('国际化：开关与渲染边界接入（源码级回归）');
+{
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const forms = readFileSync(new URL('../src/ui/forms.js', import.meta.url), 'utf8');
+  const engine = readFileSync(new URL('../src/i18n/index.js', import.meta.url), 'utf8');
+  const readLocale = (f) => readFileSync(new URL(`../src/i18n/locales/${f}`, import.meta.url), 'utf8');
+
+  ok(/<select id="lang-select"/.test(html), '顶栏提供界面语言选择器');
+  ok(/data-i18n>/.test(html) && /data-i18n-attr="aria-label"[\s\S]{0,80}配置面板/.test(html),
+    '静态 HTML 用 data-i18n / data-i18n-attr 标注需要翻译的文本与属性');
+
+  ok(/initLocale\(\);[\s\S]{0,80}localizeStatic\(\);/.test(app),
+    '启动时先按系统语言初始化，再本地化静态文案');
+  ok(/host\.onchange = \(\) => setLocale\(host\.value\)/.test(app),
+    '语言选择器用 onchange 赋值绑定（重建时不累积监听器）');
+  ok(/onLocaleChange\(\(\) => \{[\s\S]{0,200}rebuildAll\(\);/.test(app),
+    '切换语言后整体重渲染，所有面板与画布文案随之换语');
+  ok(/document\.title = tr\(/.test(app), '浏览器标签页标题随语言切换（静态 <title> 不会被带进成品）');
+
+  ok(/el\.textContent = t\(|el\.textContent = translateText\(|translateText/.test(forms),
+    'forms.js 在渲染边界统一翻译（900 余处调用点无需逐个改动）');
+  ok(/export function setLocale/.test(engine) && /RTL_LOCALES/.test(engine)
+    && /root\.setAttribute\('dir'/.test(engine),
+    '语言引擎预留书写方向开关（RTL 语言接入时无需改动调用点）');
+
+  for (const [file, name] of [['zh-CN.js', 'zhCN'], ['zh-TW.js', 'zhTW'], ['en.js', 'en'], ['ja.js', 'ja']]) {
+    const src = readLocale(file);
+    ok(new RegExp(`export const ${name} = \\{`).test(src),
+      `${file} 用具名导出 ${name}（单文件打包器只识别具名导出）`);
+    ok(!/export default/.test(src), `${file} 不使用 export default（打包后会残留语法错误）`);
+  }
 }
 
 /* ---------- 版本号一致性：package.json 为唯一来源（源码级回归） ---------- */

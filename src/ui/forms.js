@@ -2,6 +2,11 @@
  * 轻量 DOM 构建与表单控件辅助
  */
 
+import { translateText } from '../i18n/index.js';
+
+/** 需要翻译的属性：会直接展示给用户的文本型属性 */
+const TEXT_ATTRS = new Set(['title', 'placeholder', 'aria-label']);
+
 export function h(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -11,16 +16,21 @@ export function h(tag, attrs = {}, ...children) {
     else if (k === 'html') e.innerHTML = v;
     else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
     else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
-    else e.setAttribute(k, v === true ? '' : String(v));
+    else e.setAttribute(k, v === true ? '' : TEXT_ATTRS.has(k) ? translateText(String(v)) : String(v));
   }
   append(e, children);
   return e;
 }
 
+/**
+ * 文本子节点在此统一过一遍 i18n：界面文案以中文原文为键查语言包，
+ * 于是各面板上千处 h(...) 调用点无需逐个包裹 t()。
+ * 查不到条目（数字、用户命名、内部键）时原样输出，不会被误翻。
+ */
 function append(parent, children) {
   for (const c of children.flat(4)) {
     if (c === null || c === undefined || c === false || c === '') continue;
-    parent.appendChild(typeof c === 'object' && c.nodeType ? c : document.createTextNode(String(c)));
+    parent.appendChild(typeof c === 'object' && c.nodeType ? c : document.createTextNode(translateText(String(c))));
   }
 }
 

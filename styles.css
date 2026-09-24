@@ -55,6 +55,19 @@ html, body {
   color: var(--muted);
 }
 .topbar-hint { color: var(--muted); font-size: 12px; }
+/* 界面语言选择器：贴顶栏右侧显示，需要时折行到第二行也不影响其它元素 */
+.lang-select {
+  margin-left: auto;
+  align-self: center;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.lang-select:focus-visible { outline: 1px solid var(--accent); }
 
 #layout {
   display: grid;

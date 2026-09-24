@@ -16,12 +16,14 @@
   </div>
 
   <header id="topbar">
-    <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.10.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <h1>GridSneaker<span class="sub" data-i18n>网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
+    <div class="topbar-hint">v<span id="app-version">2.11.0</span><span data-i18n> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</span></div>
+    <!-- 界面语言切换：选项由 app.js 按已收录语言填充，选择结果记入本地存储 -->
+    <select id="lang-select" class="lang-select" data-i18n-attr="title" title="界面语言"></select>
   </header>
 
   <main id="layout">
-    <aside id="config-panel" class="panel scroll" aria-label="配置面板"></aside>
+    <aside id="config-panel" class="panel scroll" data-i18n-attr="aria-label" aria-label="配置面板"></aside>
 
     <section id="stage">
       <div id="canvas-wrap">
@@ -31,7 +33,7 @@
       <div id="stage-stats" class="stage-stats"></div>
     </section>
 
-    <aside id="side-panel" class="panel scroll" aria-label="统计与日志"></aside>
+    <aside id="side-panel" class="panel scroll" data-i18n-attr="aria-label" aria-label="统计与日志"></aside>
   </main>
 
   <!-- 坐标格悬浮提示：固定在视口层，避免被画布容器裁剪或被下方 UI 覆盖 -->

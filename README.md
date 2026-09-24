@@ -111,6 +111,17 @@
 - **配置导入导出**：JSON 复制与下载、分享链接（`#c=…`）、粘贴 JSON 导入、前端配置诊断。
 - **结果导出**：轨迹 CSV / JSON、日志 CSV / JSON、当前帧 PNG / SVG、纯轨迹 SVG、轨迹明细 CSV。
 
+### 界面语言（国际化）
+
+- **四种界面语言**：简体中文（源语言，默认）· 繁體中文 · English · 日本語，
+  顶栏右侧的语言选择器可随时切换，**无需刷新页面**。
+- **自动匹配系统语言**：首次打开时按 `navigator.languages` 依次匹配（如 `zh-Hant-HK` → 繁體中文、
+  `en-GB` → English），都匹配不到时回退英文；手动选择的结果写入 `localStorage`
+  （键 `gridsneaker:locale`），下次打开优先沿用。
+- **全量覆盖**：界面文案、设置标签与说明、统计与日志、弹窗、悬浮提示、导入导出说明、
+  警告与错误提示全部随语言切换，运行期拼接的句子（如「结束原因：达到步数上限（300）」、
+  「概率：左转 33.3% · 直行 33.3% · 右转 33.3%」）同样按目标语言重新组织语序与标点。
+
 ## 快速开始
 
 ### 方式一：直接打开单文件（推荐给最终用户）
@@ -198,6 +209,63 @@ npm start          # 等价于 python -m http.server 8080
 皮肤以 dataURL 形式保存在配置中：随「导出 JSON」一并保存，也会写入浏览器本地存储；
 但**不会写入分享链接**（图片体积远超链接长度上限），分享链接载入后皮肤为未设置状态。
 
+## 界面语言（国际化）
+
+| 语言 | 代码 | 语言包 | 说明 |
+| --- | --- | --- | --- |
+| 简体中文 | `zh-CN` | `src/i18n/locales/zh-CN.js` | 源语言，界面文案即以此书写 |
+| 繁體中文 | `zh-TW` | `src/i18n/locales/zh-TW.js` | 港澳台用语（匯入 / 覆蓋 / 設定 / 相容…） |
+| English | `en` | `src/i18n/locales/en.js` | 非中文用户的回退语言 |
+| 日本語 | `ja` | `src/i18n/locales/ja.js` | 术语按日文技术文档习惯（セル・オートマトン 等） |
+
+### 切换与持久化
+
+- 顶栏语言选择器：切换立即生效，并同步更新 `<html lang>` 属性；
+- 系统语言自动匹配：按 `navigator.languages` 顺序匹配，`zh` 家族再按脚本 / 地区细分
+  （`zh-Hant`、`zh-TW`、`zh-HK`、`zh-MO` → 繁體中文，其余 → 简体中文），
+  都匹配不到时回退 English；
+- 手动选择优先于系统语言，并持久化在 `localStorage` 的 `gridsneaker:locale`。
+
+### 工作机制
+
+界面文案直接以**中文原文写在源码里**（等价于 gettext 的 msgid），语言包以中文原文为键、译文为值，
+翻译发生在**渲染边界**（`src/ui/forms.js` 的文本写入与 `title` / `placeholder` / `aria-label` 属性），
+因此上千处调用点无需改动：
+
+- 模板字面量按**位置编号**归一成占位符：`` `第 ${tick} 步` `` → 键 `第 {0} 步`，
+  译文可自由调整语序（英文写成 `Step {0}`）；
+- 运行期拼接的整句先精确查表，未命中则按语言包中带占位符的条目做**句式匹配**，
+  捕获到的片段递归翻译，因此「日志：在前方产生 3 个障碍物」这类嵌套句子也能完整译出；
+- 不含中文的字符串直接放行，用户数据（自定义命名等）不会被误翻。
+
+### 新增一种语言
+
+1. 以 `src/i18n/locales/en.js` 为模板新建 `src/i18n/locales/xx.js`，
+   **必须保持具名导出**（如 `export const ko`），`export default` 不被单文件打包器识别；
+2. 在 `src/i18n/index.js` 的 `MESSAGES` 与 `LOCALE_NAMES` 中登记；
+3. 运行 `npm run i18n:extract` 重建 zh-CN 规范键集，再用 `npm run i18n:check`
+   列出该语言包的**缺译 / 多译 / 空值**；
+4. 若该语言从左到右以外的方向书写（阿拉伯语、希伯来语等），把代码加入 `RTL_LOCALES`，
+   页面会自动设置 `dir="rtl"`——但 **RTL 版式（镜像布局）本轮未做适配**，属于后续工作。
+
+语言包通过 `import` 内联进打包产物，所以**单文件版本无需联网，也不受 `file://` 下 `fetch` 被拦截的限制**。
+
+### 译文复核建议
+
+译文由 AI 产出，作者已核对术语一致性、占位符与标点；以下为**措辞判断空间较大**的条目，
+建议由母语者复核后再定稿（括号内为当前译文）：
+
+- **English**：`移动体`（Agent）、`元胞自动机`（Cellular automaton）、`标记物`（Marker）、
+  `穿越到另一侧`（Wrap to the other side）、`反弹`（Bounce）、`覆盖率`（Coverage）、
+  `得分`（Score）、`步数上限`（Step limit）、`长度策略`（Length strategy）、`陷阱`（Trap）、
+  `热点轨迹过滤`（Hotspot trail filter）、`本步变化高亮`（Highlight changes this step）。
+- **日本語**：`移动体`（移動体）、`穿越到另一侧`（反対側へ貫通）、`反弹`（跳ね返り）、
+  `随机转向`（ランダム旋回）、`元胞自动机`（セル・オートマトン）、`标记物`（マーカー）、
+  `覆盖率`（カバー率）、`长度策略`（長さ戦略）、`陷阱`（トラップ）、
+  `热点轨迹过滤`（ホットスポット軌跡フィルタ）、`本步变化高亮`（今ステップの変化ハイライト）。
+- **繁體中文**：`导入 / 导出`（匯入 / 匯出）、`覆盖`（覆蓋）、`设定`（設定）、`兼容`（相容）
+  等港澳台用语。
+
 ## 目录结构
 
 ```
@@ -227,6 +295,9 @@ npm start          # 等价于 python -m http.server 8080
 │   │   ├── exporters.js       # CSV / JSON / SVG 导出
 │   │   ├── presets.js         # 预设模板
 │   │   └── rng.js             # 种子化随机数
+│   ├── i18n/                  # 国际化运行时与语言包
+│   │   ├── index.js           # t() / 语言注册表 / 系统语言匹配 / 持久化 / 静态骨架本地化
+│   │   └── locales/           # zh-CN（规范键集）· zh-TW · en · ja
 │   └── ui/
 │       ├── app.js             # 应用装配：状态、控制条、面板、快捷键
 │       ├── canvas.js          # Canvas 渲染器（轨迹 / 蛇身 / 皮肤 / 特效）
@@ -234,6 +305,7 @@ npm start          # 等价于 python -m http.server 8080
 ├── tests/core.test.mjs        # 无依赖测试（node tests/core.test.mjs）
 ├── tools/
 │   ├── build-single-file.mjs  # 单文件打包（内联并压缩 JS / CSS）
+│   ├── i18n-extract.mjs       # 抽取源码界面文案为 zh-CN 规范键集，并检查各语言包缺译
 │   └── bench-trail.mjs        # 轨迹渲染性能基准（无依赖）
 ```
 
@@ -251,7 +323,9 @@ node tools/build-single-file.mjs --no-minify   # 生成未压缩的 GridSneaker.
 ## 测试
 
 ```bash
-npm test              # 等价于 node tests/core.test.mjs
+npm test              # 先校验语言包完整性（i18n 键集），再跑 node tests/core.test.mjs
+npm run test:core     # 只跑源码级与行为级回归
+npm run i18n:check    # 只校验语言包：规范键集是否覆盖源码、各语言是否缺译 / 多译 / 空值
 ```
 
 测试为自研的无依赖框架（`ok` / `eq` / `near` / `section`），覆盖网格与边界行为、模拟主循环、
@@ -262,7 +336,12 @@ npm test              # 等价于 node tests/core.test.mjs
 环境写入置脏 / 播放合并重绘 / 搜索防抖 / 长跑运行提示 / 元胞状态格子放置 / 避撞处理方式 /
 CA 子选项卡分类及其搜索联动 / 延迟放置（仅本步生效、不回溯历史帧）/ 第 0 步缺环境警告 /
 规则集导入导出 / 环境模板 / 参数预设 / 版本号一致性（开发入口与单文件成品同步 `package.json`）」
-等源码级与行为级回归断言，当前 **1704 项断言全部通过**。
+等源码级与行为级回归断言。
+
+国际化专项断言覆盖：语言匹配（`zh-Hant-HK` → 繁體中文 等区域细分）、持久化与手动选择优先、
+`<html lang>` 同步、静态骨架文案本地化、占位符按位置回填与语序调整、句式匹配与递归翻译、
+多行文本逐行翻译、骨架句式（纯标点拼接）、以及**四种语言包键集与源码文案的双向一致性**。
+当前 **1795 项断言全部通过**（语言包 4 × 1667 条）。
 
 性能基准（无依赖，可复现）：
 
@@ -276,7 +355,7 @@ node tools/bench-trail.mjs   # 轨迹渲染帧率与边界解算速率（同进�
 
 - **GitHub Pages**：把仓库推送到 GitHub，在 `Settings → Pages` 中选择分支（如 `main`）与根目录 `/` 保存，
   稍后访问 `https://<用户名>.github.io/<仓库名>/` 即可（`index.html` 会被自动识别为入口）。
-- **GitHub Releases**：每次发版只需改 `package.json` 的 `version` 并推送同名 tag（如 `v2.10.0`），
+- **GitHub Releases**：每次发版只需改 `package.json` 的 `version` 并推送同名 tag（如 `v2.11.0`），
   `.github/workflows/release.yml` 会自动校验版本号一致、跑测试、构建单文件并把 `GridSneaker.html`
   作为 Release 附件发布（因此**每个 Release 的成品都是可直接双击运行的 HTML**）。
   最新版永久下载地址：`https://github.com/<用户名>/<仓库名>/releases/latest/download/GridSneaker.html`。

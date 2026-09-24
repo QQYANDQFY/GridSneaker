@@ -1,13 +1,16 @@
 {
   "name": "gridsneaker",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "private": true,
   "license": "MIT",
   "type": "module",
   "description": "GridSneaker：可高度自定义的网格移动动画模拟平台（移动体 + 环境规则 + 元胞自动机）",
   "scripts": {
     "start": "python -m http.server 8080",
-    "test": "node tests/core.test.mjs",
+    "test": "node tools/i18n-extract.mjs --check && node tests/core.test.mjs",
+    "test:core": "node tests/core.test.mjs",
+    "i18n:extract": "node tools/i18n-extract.mjs",
+    "i18n:check": "node tools/i18n-extract.mjs --check",
     "build": "node tools/build-single-file.mjs"
   },
   "keywords": [

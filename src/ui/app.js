@@ -41,6 +41,11 @@ import {
   checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind,
   colorBind, toast, formatNumber, confirmDialog, alertDialog, dialogOpen, switchField,
 } from './forms.js';
+// 翻译函数在本文件里取别名 tr：本文件多处把 t 用作局部变量（选项卡对象、类型对象等），
+// 沿用 t 会被局部作用域遮蔽，别名可避免误读。forms.js 已在渲染边界自动翻译，无需逐个包裹。
+import {
+  t as tr, initLocale, currentLocale, localeList, setLocale, onLocaleChange, localizeStatic,
+} from '../i18n/index.js';
 
 /* ------------------------------------------------------------------ */
 /* 常量                                                                */
@@ -243,6 +248,10 @@ function syncSelfCollisionExclusive(source) {
 /* ------------------------------------------------------------------ */
 
 function init() {
+  // 语言要在任何界面文案渲染之前定下来：先按用户选择/系统语言初始化，再本地化静态 HTML
+  initLocale();
+  localizeStatic();
+  applyDocumentTitle();
   state.cfg = initialConfig();
   // 启动即把当前配置记为「模板基准」：之后用户的自定义改动都由它与当前配置比对得出
   state.cfgBaseline = snapshotConfig(state.cfg);
@@ -261,6 +270,7 @@ function init() {
   // 皮肤图片是异步解码的，解码完成后重绘一次，让上传的皮肤立即出现在画布上
   renderer.onSkinLoad = () => draw();
   buildControls();
+  buildLangSelect();
   applyScoreVisibility();
   bindCanvasEvents();
   bindKeyboard();
@@ -273,6 +283,53 @@ function init() {
   // 启动成功后再撤掉兜底提示（init 全同步，不会出现闪烁）
   const legacyHint = document.getElementById('legacy-hint');
   if (legacyHint) legacyHint.className = 'hidden';
+}
+
+/* ------------------------------------------------------------------ */
+/* 界面语言                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 顶部工具栏的语言选择器。
+ * 各语言用自身写法显示（简体中文 / 繁體中文 / English / 日本語），无需被翻译；
+ * 首次进入时按浏览器语言自动匹配（见 i18n/index.js 的 detectLocale），
+ * 用户在下拉框里的选择会被记住，下次打开优先沿用。
+ */
+function buildLangSelect() {
+  const host = document.getElementById('lang-select');
+  if (!host) return;
+  clear(host);
+  for (const { code, name } of localeList()) {
+    const opt = h('option', { value: code }, name);
+    if (code === currentLocale()) opt.selected = true;
+    host.appendChild(opt);
+  }
+  host.setAttribute('aria-label', tr('界面语言'));
+  // 用 onchange 而非 addEventListener：本函数在每次切换语言后都会重跑，绑定式赋值不会累积监听器
+  host.onchange = () => setLocale(host.value);
+}
+
+/**
+ * 切换语言后整体换语。
+ * 配置面板、统计面板、控制条的数量级与读数文案都在渲染时定稿（部分是拼接出来的整句），
+ * 因此这里重新走一遍渲染流程，而不是就地去改文本节点；画布随 recompute 触发的重绘同步刷新。
+ */
+onLocaleChange(() => {
+  localizeStatic();
+  applyDocumentTitle();
+  buildControls();
+  buildLangSelect();
+  applyScoreVisibility();
+  rebuildAll();
+});
+
+/**
+ * 同步浏览器标签页标题。
+ * index.html 里的 <title> 是中文原文，构建产物也会原样沿用（属性不会被带过去），
+ * 因此这里按当前语言重新写入一次，语言切换后再写一次。
+ */
+function applyDocumentTitle() {
+  document.title = tr('GridSneaker · 网格移动动画模拟平台');
 }
 
 /** 键盘快捷键：空格播放/暂停，← → 单步（Shift 加速跳 10 帧），Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
@@ -727,7 +784,10 @@ function recordScore(result) {
   const entry = {
     total: Math.round(Number(sc.total)),
     grade: sc.gradeLabel || '-',
-    map: `${result.grid.type === 'hex' ? '六边形' : '方格'} ${result.grid.width}×${result.grid.height}`,
+    // 两种网格各用一个完整模板：整串才能被语言包的「方格 {0}×{1}」句式命中
+    map: result.grid.type === 'hex'
+      ? `六边形 ${result.grid.width}×${result.grid.height}`
+      : `方格 ${result.grid.width}×${result.grid.height}`,
     steps: Math.round(Number(result.summary.steps) || 0),
     length: Math.round(Number(result.summary.maxLength) || 0),
     seed: Number(result.seed) || 0,
@@ -755,7 +815,8 @@ function scoreboardGroup() {
     list.forEach((r, i) => {
       host.appendChild(h('div', { class: 'save-row' },
         h('span', { class: 'rank-no' }, `${i + 1}`),
-        h('span', { class: 'save-name', title: `种子 ${r.seed} · 步数 ${r.steps}` }, `${formatScore(r.total)} · ${r.grade}`),
+        h('span', { class: 'save-name', title: `种子 ${r.seed} · 步数 ${r.steps}` },
+          `${formatScore(r.total)} · ${tr(r.grade)}`),
         h('span', { class: 'mini-label' }, `${r.map} · ${r.steps} 步 · 最长 ${r.length}`)));
     });
   };
@@ -996,7 +1057,7 @@ function syncStatVisibilityCount() {
   if (!el) return;
   const total = STAT_KEYS.filter(([k]) => !SCORE_STAT_KEYS.has(k)).length;
   const visible = activeStatKeys().filter(([k]) => !SCORE_STAT_KEYS.has(k)).length;
-  el.textContent = `当前显示 ${visible} / ${total} 项（得分与评级由上方「界面配置」的开关控制）`;
+  el.textContent = tr(`当前显示 ${visible} / ${total} 项（得分与评级由上方「界面配置」的开关控制）`);
 }
 
 /* ---------------- 配置基准 / 改动检测 / 撤销栈 ---------------- */
@@ -1161,7 +1222,7 @@ function scheduleRun(delay = 160) {
 function setRunBusy(busy, text) {
   const el = els.runLoading;
   if (!el) return;
-  el.textContent = busy ? text || '正在运行模拟…' : '';
+  el.textContent = busy ? tr(text || '正在运行模拟…') : '';
   el.classList.toggle('hidden', !busy);
 }
 
@@ -1496,12 +1557,12 @@ function buildControls() {
     updateControls();
     toast(v ? '已开启自适应速度：拥挤时自动放慢播放' : '已关闭自适应速度', 'info');
   }, '自适应速度');
-  els.adaptiveChk.title = '拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面';
+  els.adaptiveChk.title = tr('拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面');
 
   // 速度档位：一键切换到常用播放速度
   const speedBtns = [0.5, 2, 8, 30, 120].map((v) => {
     const b = button(String(v), () => setSpeed(v), 'ghost small');
-    b.title = `设为 ${v} 步/秒`;
+    b.title = tr(`设为 ${v} 步/秒`);
     return b;
   });
 
@@ -1529,7 +1590,7 @@ function buildControls() {
 }
 
 function updateSpeedLabel() {
-  els.speedLabel.textContent = `步/秒`;
+  els.speedLabel.textContent = tr(`步/秒`);
 }
 
 /**
@@ -1605,19 +1666,24 @@ function updateControls() {
   const frames = state.result ? state.result.frames.length : 1;
   const last = frames - 1;
   state.frameIndex = Math.max(0, Math.min(last, state.frameIndex));
-  els.playBtn.textContent = state.playing ? '⏸ 暂停' : '▶ 播放';
+  els.playBtn.textContent = tr(state.playing ? '⏸ 暂停' : '▶ 播放');
   els.timeline.max = last;
   els.timeline.value = state.frameIndex;
   // 步数上限很大时帧按步长抽样，滑条走的是「帧下标」，标签显示真实步数
   const frame = state.result ? state.result.frames[state.frameIndex] : null;
   const lastTick = state.result ? state.result.frames[last].tick : 0;
   const strideNote = state.result && state.result.frameStride > 1 ? ` · 抽样 1/${state.result.frameStride}` : '';
-  els.frameLabel.textContent = `第 ${frame ? frame.tick : 0} / ${lastTick} 步${strideNote}`;
+  els.frameLabel.textContent = tr(`第 ${frame ? frame.tick : 0} / ${lastTick} 步${strideNote}`);
   els.endBtn.disabled = !state.result;
   const reason = state.result?.endReason;
-  els.endLabel.textContent = reason
-    ? `结束原因：${reason.label}${reason.tick !== undefined ? `（第 ${reason.tick} 步）` : ''}`
-    : '结束原因：未结束';
+  // 结束原因分两种写法（带步数 / 不带步数），各自是完整模板：
+  // 原先写成 `${label}${tick ? `（第 ${tick} 步）` : ''}`，相邻占位符会让句式匹配
+  // 把整串塞进后一个占位符，结果只有外层「结束原因」被译出、内层仍是中文。
+  els.endLabel.textContent = !reason
+    ? tr('结束原因：未结束')
+    : reason.tick === undefined
+      ? tr(`结束原因：${tr(reason.label)}`)
+      : tr(`结束原因：${tr(reason.label)}（第 ${reason.tick} 步）`);
   els.endLabel.className = reason ? 'end-label ended' : 'end-label';
   els.endJumpBtn.disabled = !state.result;
   els.continueBtn.hidden = reason?.code !== 'frameLimit';
@@ -1628,14 +1694,14 @@ function updateControls() {
 function updateScoreLabel() {
   if (els.scoreLabel) {
     const sc = state.score;
-    els.scoreLabel.textContent = sc
+    els.scoreLabel.textContent = tr(sc
       ? `得分 ${formatScore(sc.total)}（${sc.gradeLabel}） · 最高分 ${formatScore(state.highScore)}`
-      : '得分：尚未运行';
+      : '得分：尚未运行');
     els.scoreLabel.classList.toggle('record', !!sc && state.highScore > 0 && sc.total >= state.highScore);
   }
   if (els.diffLabel) {
     const d = currentDifficulty();
-    els.diffLabel.textContent = `难度 ${d.label} · 拥挤度 ${Math.round(d.crowding * 100)}%${state.adaptive ? ' · 自适应调速中' : ''}`;
+    els.diffLabel.textContent = tr(`难度 ${d.label} · 拥挤度 ${Math.round(d.crowding * 100)}%${state.adaptive ? ' · 自适应调速中' : ''}`);
   }
 }
 
@@ -1650,7 +1716,12 @@ function showScoreDetail() {
     title: `得分明细 · ${sc.gradeLabel}`,
     message: `总分 ${formatScore(sc.total)} · 相对分 ${sc.ratio.toFixed(2)}（总分 ÷ 网格格数 ${state.result ? state.result.grid.size : '-'}）`,
     sections: [
-      { title: '分项构成', items: sc.parts.map((p) => `${p.label}：${formatScore(p.value)}（${p.detail}）`) },
+      // 分项明细是运行期拼装串：各段先各自翻译，再套进含实义中文的完整模板，
+      // 整串才有对应的语言包条目（否则该行会恒为源码语言）。
+      {
+        title: '分项构成',
+        items: sc.parts.map((p) => tr(`「${tr(p.label)}」得分 ${formatScore(p.value)}（${tr(p.detail)}）`)),
+      },
       ...(state.highScore > 0 ? [{ title: '地图记录', items: [`当前地图最高分：${formatScore(state.highScore)}`] }] : []),
     ],
   });
@@ -2050,7 +2121,7 @@ function syncEditorCount() {
   if (!editorCountEl) return;
   const ce = state.cfg.cellEditor;
   const ticks = new Set(ce.timedPatches.map((p) => p.tick)).size;
-  editorCountEl.textContent = `已绘制 ${ce.painted.length} 格 · 延迟放置 ${ce.timedPatches.length} 格（${ticks} 个步） · 可撤销 ${editHistory.undo.length} 步`;
+  editorCountEl.textContent = tr(`已绘制 ${ce.painted.length} 格 · 延迟放置 ${ce.timedPatches.length} 格（${ticks} 个步） · 可撤销 ${editHistory.undo.length} 步`);
 }
 
 function bindCanvasEvents() {
@@ -2072,7 +2143,7 @@ function bindCanvasEvents() {
       hideTooltip();
       return;
     }
-    els.tooltip.textContent = renderer.describe(state.frameIndex, c);
+    els.tooltip.textContent = tr(renderer.describe(state.frameIndex, c));
     els.tooltip.classList.add('show');
     placeTooltip(e.clientX, e.clientY);
   });
@@ -2128,7 +2199,7 @@ function bindCanvasEvents() {
     renderer.hover = c;
     draw();
     if (!c || renderer.style.hoverTip === false) { hideTooltip(); return; }
-    els.tooltip.textContent = renderer.describe(state.frameIndex, c);
+    els.tooltip.textContent = tr(renderer.describe(state.frameIndex, c));
     els.tooltip.classList.add('show');
     placeTooltip(t.clientX, t.clientY);
   }, { passive: true });
@@ -2268,7 +2339,7 @@ const STAT_TERMS = {
 
 /** 术语浮层文案（术语名加粗、说明换行），供统计格悬浮提示使用 */
 function termTipHtml(term) {
-  return `<b class="tip-term">${term.name}</b><span class="tip-desc">${term.desc}</span>`;
+  return `<b class="tip-term">${tr(term.name)}</b><span class="tip-desc">${tr(term.desc)}</span>`;
 }
 
 /** 运行耗时的展示格式：不足 1 秒按毫秒，超过按秒保留两位小数 */
@@ -2412,7 +2483,7 @@ function fillStageStats() {
   const data = statValues();
   if (!data || !els.statSpans) return;
   for (const [key, span] of Object.entries(els.statSpans)) {
-    span.textContent = String(data.values[key] ?? '-');
+    span.textContent = tr(String(data.values[key] ?? '-'));
   }
   drawSparkline(els.spark, data.history);
   renderTurnBars(els.turnBars, data.turns);
@@ -2542,7 +2613,7 @@ function renderTurnBars(host, stats) {
   items.forEach((it, i) => {
     const pct = (it[1] / total) * 100;
     rows[i].fill.style.width = `${pct}%`;
-    rows[i].val.textContent = `${it[1]} · ${pct.toFixed(1)}%`;
+    rows[i].val.textContent = tr(`${it[1]} · ${pct.toFixed(1)}%`);
   });
 }
 
@@ -2566,13 +2637,13 @@ function renderLog() {
     list = all.filter((l) => l.ruleId === state.logFilter);
   }
   const dropped = r.stats.logsDropped || 0;
-  els.logCount.textContent = `${list.length} 条 / 共 ${all.length} 条${dropped ? `（另有 ${dropped} 条超出日志缓存上限未记录）` : ''}`;
+  els.logCount.textContent = tr(`${list.length} 条 / 共 ${all.length} 条${dropped ? `（另有 ${dropped} 条超出日志缓存上限未记录）` : ''}`);
   const shown = list.slice(0, state.logLimit);
   els.logItems = shown.map((l) => {
     const item = h('div', { class: 'log-item', onclick: () => { pause(); gotoFrame(frameIndexForTick(l.tick)); } },
       h('span', { class: 'log-tick' }, `#${l.tick}`),
       h('span', { class: 'log-rule' }, l.ruleName),
-      h('span', { class: 'log-sub' }, `${l.subject}${l.coord ? ` (${l.coord.col},${l.coord.row})` : ''}`),
+      h('span', { class: 'log-sub' }, `${tr(l.subject)}${l.coord ? ` (${l.coord.col},${l.coord.row})` : ''}`),
       h('span', { class: 'log-text' }, l.text || `${l.condition} → ${l.actions}`));
     if (l.skipped) item.classList.add('skipped');
     host.appendChild(item);
@@ -2622,7 +2693,7 @@ function renderSidePanel() {
   const presetDesc = h('div', { class: 'hint' }, currentPreset.description);
   presetSel.addEventListener('change', () => {
     const p = PRESETS.find((x) => x.id === presetSel.value);
-    if (p) presetDesc.textContent = p.description;
+    if (p) presetDesc.textContent = tr(p.description);
   });
   side.appendChild(group('预设模板', [
     field('模板', presetSel),
@@ -2730,7 +2801,7 @@ function statsModeGroup() {
   els.statModeBtns = {};
   for (const m of STAT_MODES) {
     const b = button(m.label, () => setStatMode(m.value), 'mode-btn');
-    b.title = m.hint;
+    b.title = tr(m.hint);
     els.statModeBtns[m.value] = b;
     seg.appendChild(b);
   }
@@ -2856,15 +2927,15 @@ function syncStatModeHint() {
   if (!hint) return;
   const r = state.result;
   if (!r || !r.frames.length) {
-    hint.textContent = '尚未运行模拟';
+    hint.textContent = tr('尚未运行模拟');
     return;
   }
   if (state.statMode === 'realtime') {
     const i = statFrameIndex();
     const tick = r.frames[i] ? r.frames[i].tick : 0;
-    hint.textContent = `实时：已统计 ${i + 1} 帧（第 ${tick} 步 / 共 ${r.summary.steps} 步）`;
+    hint.textContent = tr(`实时：已统计 ${i + 1} 帧（第 ${tick} 步 / 共 ${r.summary.steps} 步）`);
   } else {
-    hint.textContent = `总计：整轮 ${r.summary.steps} 步 · ${r.frames.length} 帧的全量汇总`;
+    hint.textContent = tr(`总计：整轮 ${r.summary.steps} 步 · ${r.frames.length} 帧的全量汇总`);
   }
 }
 
@@ -3046,7 +3117,7 @@ function commitTrailQuery() {
 function setTrailQueryError(text) {
   const el = els.trailQueryError;
   if (!el) return;
-  el.textContent = text || '';
+  el.textContent = text ? tr(text) : '';
   el.classList.toggle('hidden', !text);
 }
 
@@ -3174,16 +3245,16 @@ function updateTrailQuerySource(total) {
   }
   if (state.statMode === 'realtime') {
     const i = statFrameIndex();
-    el.textContent = `数据源：实时轨迹（截至第 ${r.frames[i] ? r.frames[i].tick : 0} 步），共 ${total} 个坐标`;
+    el.textContent = tr(`数据源：实时轨迹（截至第 ${r.frames[i] ? r.frames[i].tick : 0} 步），共 ${total} 个坐标`);
   } else {
-    el.textContent = `数据源：全量轨迹（整轮 ${r.summary.steps} 步），共 ${total} 个坐标`;
+    el.textContent = tr(`数据源：全量轨迹（整轮 ${r.summary.steps} 步），共 ${total} 个坐标`);
   }
 }
 
 function setTrailQueryBusy(busy, text) {
   const el = els.trailQueryLoading;
   if (!el) return;
-  el.textContent = busy ? text || '正在筛选…' : '';
+  el.textContent = busy ? tr(text || '正在筛选…') : '';
   el.classList.toggle('hidden', !busy);
 }
 
@@ -3199,7 +3270,7 @@ function applyTrailQuery(rerender = true) {
   const seq = ++trailQuerySeq;
   if (!state.result || !renderer) {
     setTrailQueryBusy(false);
-    stat.textContent = '尚未运行模拟';
+    stat.textContent = tr('尚未运行模拟');
     state.trailCells = [];
     state.trailFilter = null;
     if (rerender) clear(list);
@@ -3221,7 +3292,7 @@ function applyTrailQuery(rerender = true) {
       state.trailCells = [];
       state.trailFilter = null;
       renderer.setFilter(null);
-      stat.textContent = `未设置筛选条件（共 ${res.total} 个轨迹坐标）`;
+      stat.textContent = tr(`未设置筛选条件（共 ${res.total} 个轨迹坐标）`);
       if (rerender) clear(list);
       drawFrameOnly();
       return;
@@ -3229,7 +3300,7 @@ function applyTrailQuery(rerender = true) {
     state.trailCells = res.cells;
     state.trailFilter = res.cells.map((c) => c.index);
     renderer.setFilter(state.trailFilter);
-    stat.textContent = `匹配 ${res.matched} / ${res.total} 个坐标 · ${trailQueryLabel(state.trailQuery)}`;
+    stat.textContent = tr(`匹配 ${res.matched} / ${res.total} 个坐标 · ${trailQueryLabel(state.trailQuery)}`);
     if (!rerender) {
       drawFrameOnly();
       return;
@@ -3379,11 +3450,11 @@ function updateCompareStat(override) {
   const list = els.compareList;
   if (!stat) return;
   if (list) clear(list);
-  if (override) { stat.textContent = override; return; }
+  if (override) { stat.textContent = tr(override); return; }
   const snap = state.trailSnapshot;
   const diff = state.compareDiff;
-  if (!snap) { stat.textContent = '尚未保存基准快照'; return; }
-  stat.textContent = `基准：${snap.label}`;
+  if (!snap) { stat.textContent = tr('尚未保存基准快照'); return; }
+  stat.textContent = tr(`基准：${snap.label}`);
   if (!diff) return;
   if (list) {
     for (const line of compareToText(diff).split('\n').slice(1)) {
@@ -3529,7 +3600,7 @@ function syncControlBar() {
   if (els.speedNum) els.speedNum.value = String(state.cfg.speed);
   if (els.followInput) els.followInput.checked = !!state.cfg.style.followAgent;
   // 「继续运行 +N」的跨度跟随「单次运行步数上限」，面板内改动后按钮文案同步刷新
-  if (els.continueBtn) els.continueBtn.textContent = `继续运行 +${continueStep()}`;
+  if (els.continueBtn) els.continueBtn.textContent = tr(`继续运行 +${continueStep()}`);
   updateSpeedLabel();
 }
 
@@ -3581,7 +3652,7 @@ function renderConfigPanel() {
   };
   for (const t of CONFIG_TABS) {
     const b = button(t.label, () => activateCfgTab(t.key), 'tab-btn');
-    b.title = t.hint;
+    b.title = tr(t.hint);
     b.setAttribute('role', 'tab');
     b.dataset.tabKey = t.key;
     buttons.set(t.key, b);
@@ -3681,16 +3752,16 @@ function configSearchBar() {
     input.value = '';
     applyConfigSearch('');
   }, 'ghost small');
-  clearBtn.title = '清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态';
+  clearBtn.title = tr('清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态');
   bindTermTip(clearBtn, {
     name: '清除搜索',
-    desc: '清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态；'
-      + '仅影响搜索过滤结果，不会改动任何已保存的设置项。',
+    desc: tr('清除当前搜索框内的全部输入内容，并还原搜索前的分组折叠状态；')
+      + tr('仅影响搜索过滤结果，不会改动任何已保存的设置项。'),
   });
   const expandBtn = button('展开全部', () => setAllGroupsOpen(els.config, true), 'ghost small');
-  expandBtn.title = '展开当前选项卡下的全部折叠分组';
+  expandBtn.title = tr('展开当前选项卡下的全部折叠分组');
   const collapseBtn = button('收起全部', () => setAllGroupsOpen(els.config, false), 'ghost small');
-  collapseBtn.title = '收起当前选项卡下的全部折叠分组';
+  collapseBtn.title = tr('收起当前选项卡下的全部折叠分组');
   // Esc 清空搜索：输入框聚焦时即可一键还原，无需把光标移到「清除」按钮
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
@@ -3767,7 +3838,7 @@ function applyConfigSearch(query) {
     b.classList.toggle('no-hits', hits === 0);
   }
   if (els.cfgSearchHint) {
-    els.cfgSearchHint.textContent = matched ? `${matched} 个分组匹配` : '未找到匹配设置';
+    els.cfgSearchHint.textContent = matched ? tr(`${matched} 个分组匹配`) : tr('未找到匹配设置');
   }
 }
 
@@ -3796,8 +3867,8 @@ function runControlGroup(cfg) {
   const syncCapHint = () => {
     const on = cfg.endConditions.maxSteps !== false;
     capHint.textContent = on
-      ? `当前「结束规则 → 达到步数上限」已启用（${Math.round(cfg.endConditions.maxSteps)} 步），本上限暂不参与判定，仅作为兜底保护。`
-      : `未启用「达到步数上限」：一轮运行在本上限处停止，可用控制条「继续运行」逐级推进（每次 +${continueStep()} 步）。`;
+      ? tr(`当前「结束规则 → 达到步数上限」已启用（${Math.round(cfg.endConditions.maxSteps)} 步），本上限暂不参与判定，仅作为兜底保护。`)
+      : tr(`未启用「达到步数上限」：一轮运行在本上限处停止，可用控制条「继续运行」逐级推进（每次 +${continueStep()} 步）。`);
   };
   syncCapHint();
   return group('运行控制', [
@@ -3824,7 +3895,7 @@ function sceneScaleGroup(cfg) {
     cfg.start.row = Math.min(cfg.start.row, g.height - 1);
   };
   const sizeLabel = h('div', { class: 'hint' });
-  const syncSizeLabel = () => { sizeLabel.textContent = `网格共 ${g.width * g.height} 格`; };
+  const syncSizeLabel = () => { sizeLabel.textContent = tr(`网格共 ${g.width * g.height} 格`); };
   syncSizeLabel();
   return group('场景边界与规模', [
     row(
@@ -3858,7 +3929,7 @@ function gridGroup(cfg) {
   const g = cfg.grid;
   // 格数提示随宽 / 高即时刷新：改宽高不会重建面板，静态文本会停留在旧值
   const gridSizeLabel = h('div', { class: 'hint' });
-  const syncGridSize = () => { gridSizeLabel.textContent = `网格共 ${g.width * g.height} 格`; };
+  const syncGridSize = () => { gridSizeLabel.textContent = tr(`网格共 ${g.width * g.height} 格`); };
   syncGridSize();
   return group('网格与坐标', [
     field('网格类型', selBind(g, 'type', () => {
@@ -3900,7 +3971,7 @@ function bodyGroup(cfg) {
   const sizeInput = numBind(b, 'segmentSize', () => onStyleChange(), { min: 0.1, max: 1.6, step: 0.02 });
   const bodyStateLabel = h('span', { class: 'mini-label' });
   const syncBodyState = () => {
-    bodyStateLabel.textContent = isBodyEnabled(cfg) ? '当前：蛇形实体已启用' : '当前：不生成蛇形实体';
+    bodyStateLabel.textContent = tr(isBodyEnabled(cfg) ? '当前：蛇形实体已启用' : '当前：不生成蛇形实体');
   };
   syncBodyState();
   return group('移动体与身体', [
@@ -3971,8 +4042,8 @@ const SKIN_MAX_BYTES = 2 * 1024 * 1024;
  */
 function skinSection(cfg) {
   const hint = h('div', { class: 'hint' },
-    `支持 JPG / PNG / WebP，建议使用正方形图片；边长 ${SKIN_MIN_PIXELS}~${SKIN_MAX_PIXELS} 像素、单张不超过 2 MB。`
-    + '皮肤会随「导出 JSON」一并保存，但不会写入分享链接（图片体积会超出链接长度上限）。');
+    tr(`支持 JPG / PNG / WebP，建议使用正方形图片；边长 ${SKIN_MIN_PIXELS}~${SKIN_MAX_PIXELS} 像素、单张不超过 2 MB。`),
+    tr('皮肤会随「导出 JSON」一并保存，但不会写入分享链接（图片体积会超出链接长度上限）。'));
   return group('自定义皮肤（上传图片）', [
     skinField(cfg, 'head', '蛇头皮肤'),
     skinField(cfg, 'body', '蛇身皮肤'),
@@ -4089,11 +4160,13 @@ function parseColorList(text) {
  */
 function weightSummary(m) {
   const sum = MOVE_KEYS.reduce((a, k) => a + (Number(m[k]) || 0), 0);
-  if (sum <= 0) return '权重全为 0，运行时按均匀分布处理';
+  if (sum <= 0) return tr('权重全为 0，运行时按均匀分布处理');
+  // 逐项先翻译方向名再拼接：整串「左转 33.3% · 直行 33.3% · 右转 33.3%」不是任何条目，
+  // 只有拆开翻译才能让每个方向名都命中语言包。
   const parts = MOVE_KEYS
     .filter((k) => (Number(m[k]) || 0) > 0)
-    .map((k) => `${MOVE_LABELS[k]} ${(m[k] / sum * 100).toFixed(1)}%`);
-  return `概率：${parts.join(' · ')}`;
+    .map((k) => `${tr(MOVE_LABELS[k])} ${(m[k] / sum * 100).toFixed(1)}%`);
+  return tr(`概率：${parts.join(' · ')}`);
 }
 
 /* ---------------- 移动规则：基础权重 · 条件概率 · 安全避撞 ---------------- */
@@ -4101,7 +4174,7 @@ function weightSummary(m) {
 function moveRulesGroup(cfg) {
   const m = cfg.moveRules;
   const weightHint = h('div', { class: 'hint' }, weightSummary(m));
-  const upd = () => { onSimChange(); weightHint.textContent = weightSummary(m); };
+  const upd = () => { onSimChange(); weightHint.textContent = tr(weightSummary(m)); };
 
   const list = h('div', { class: 'rule-list' });
   cfg.advancedRules.forEach((r, index) => {
@@ -4109,7 +4182,7 @@ function moveRulesGroup(cfg) {
     if (!r.moves || typeof r.moves !== 'object') r.moves = {};
     for (const k of MOVE_KEYS) if (!Number.isFinite(Number(r.moves[k]))) r.moves[k] = 0;
     const hint = h('div', { class: 'hint' }, weightSummary(r.moves));
-    const updWeights = () => { onSimChange(); hint.textContent = weightSummary(r.moves); };
+    const updWeights = () => { onSimChange(); hint.textContent = tr(weightSummary(r.moves)); };
     const body = [
       row(
         textBind(r, 'name', () => {}),
@@ -4181,12 +4254,12 @@ function safetySection(cfg) {
       s.avoidWall && '不可穿越边界',
     ].filter(Boolean);
     note.textContent = on.length
-      ? `已启用（${on.join(' / ')}）：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。`
-      : '未启用：方向选择完全按基础 / 条件概率权重进行。';
+      ? tr(`已启用（${on.map((x) => tr(x)).join(' / ')}）：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。`)
+      : tr('未启用：方向选择完全按基础 / 条件概率权重进行。');
     if (on.length) {
       note.textContent += s.onAvoid === 'stop'
-        ? ' 避撞触发后：立即停止运动。'
-        : ' 避撞触发后：自动切换其他可行方向继续运动。';
+        ? tr(' 避撞触发后：立即停止运动。')
+        : tr(' 避撞触发后：自动切换其他可行方向继续运动。');
     }
   };
   syncNote();
@@ -4385,7 +4458,7 @@ function collisionGroup(cfg) {
   const maxConsecutiveInput = numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 });
   const syncMaxConsecutive = (on) => {
     maxConsecutiveInput.disabled = !on;
-    maxConsecutiveInput.title = on ? '' : '需先勾选「结束规则 → 撞到自身」，该项才会生效';
+    maxConsecutiveInput.title = on ? '' : tr('需先勾选「结束规则 → 撞到自身」，该项才会生效');
   };
   bindEndConditionSync('selfCollision', syncMaxConsecutive);
   syncMaxConsecutive(!!cfg.endConditions.selfCollision);
@@ -4828,12 +4901,13 @@ function caEditorEnvWarning() {
   const firstTick = steps.size ? Math.min(...steps) : 0;
   return {
     title: '第 0 步还没有初始环境',
-    text: '画布格子编辑器已启用，但模拟起点（第 0 步）既没有手工绘制的格子，元胞自动机的初始状态也等价于「全空」。'
-      + '这样运行后画面上不会出现任何环境单元，很难观测到模拟的直观变化。'
+    // 各句独立翻译后再拼接：整串是运行期拼出来的，语言包里没有对应条目
+    text: tr('画布格子编辑器已启用，但模拟起点（第 0 步）既没有手工绘制的格子，元胞自动机的初始状态也等价于「全空」。')
+      + tr('这样运行后画面上不会出现任何环境单元，很难观测到模拟的直观变化。')
       + (steps.size
-        ? `当前只有 ${ce.timedPatches.length} 格「延迟放置」补丁（最早在第 ${firstTick} 步生效），第 0 步仍是全空。`
-        : '请先在第 0 步补充环境：直接在画布上绘制，或把「初始环境 → 初始状态」改为「随机散布 / 图案文本」。')
-      + ' 也可以改用「当前步放置」，把环境安排在后续某一步出现。',
+        ? tr(`当前只有 ${ce.timedPatches.length} 格「延迟放置」补丁（最早在第 ${firstTick} 步生效），第 0 步仍是全空。`)
+        : tr('请先在第 0 步补充环境：直接在画布上绘制，或把「初始环境 → 初始状态」改为「随机散布 / 图案文本」。'))
+      + tr(' 也可以改用「当前步放置」，把环境安排在后续某一步出现。'),
   };
 }
 
@@ -4869,7 +4943,7 @@ function caGroup(cfg) {
   };
   for (const t of CA_SUB_TABS) {
     const b = button(t.label, () => activate(t.key), 'tab-btn');
-    b.title = t.hint;
+    b.title = tr(t.hint);
     b.setAttribute('role', 'tab');
     b.dataset.subTabKey = t.key;
     buttons.set(t.key, b);
@@ -4934,9 +5008,9 @@ function caGroup(cfg) {
       chkBind(ca, 'stopOnStable', () => { onSimChange(); rebuildAll(); }, 'CA 进入稳定态时结束运行'),
       field('连续稳定步数', numBind(ca, 'stableSteps', () => onSimChange(), { min: 1, max: 1000 })),
     ), '连续若干次演化中所有单元都没有变化时结束运行（纯 CA 场景常用）；勾选后会同步打开「结束规则 → 元胞自动机稳定」'),
-    h('div', { class: 'hint' }, '性能提示：元胞自动机每步都要遍历全网格，是长跑时的主要开销。'
-      + '缩小「邻域半径」与网格尺寸的收益最直接；「与环境同步方式」设为「每 N 步演化」可线性降低演化开销；'
-      + '「稳定即收尾」能让已经不再变化的场景提前结束，避免无意义的空转。'),
+    h('div', { class: 'hint' }, tr('性能提示：元胞自动机每步都要遍历全网格，是长跑时的主要开销。')
+      + tr('缩小「邻域半径」与网格尺寸的收益最直接；「与环境同步方式」设为「每 N 步演化」可线性降低演化开销；')
+      + tr('「稳定即收尾」能让已经不再变化的场景提前结束，避免无意义的空转。')),
   );
 
   // 交互与模板
@@ -5057,13 +5131,13 @@ function caRulesetSection(ca) {
     ca.rules = append ? [...ca.rules, ...res.rules] : res.rules;
     area.value = '';
     if (res.warnings.length) toast(res.warnings[0], 'warn');
-    else toast(`已${append ? '追加' : '覆盖'}导入 ${res.rules.length} 条规则`, 'success');
+    else toast(tr(append ? `已追加导入 ${res.rules.length} 条规则` : `已覆盖导入 ${res.rules.length} 条规则`), 'success');
     rebuildAll();
   };
   return [
     h('div', { class: 'sub-title' }, '规则集导入 / 导出'),
-    h('div', { class: 'hint' }, '导出内容只包含状态转移规则表（附带状态名清单，便于对方核对），'
-      + '不包含移动体、环境规则与外观配置，因此可跨场景、跨用户直接传递。'),
+    h('div', { class: 'hint' }, tr('导出内容只包含状态转移规则表（附带状态名清单，便于对方核对），')
+      + tr('不包含移动体、环境规则与外观配置，因此可跨场景、跨用户直接传递。')),
     row(
       button('复制规则集', () => copyText(exportCaRuleset(ca), `规则集已复制（${ca.rules.length} 条规则）`)),
       button('下载规则集', () => downloadText(`${safeName(state.cfg.meta.name)}-ca-rules.json`, exportCaRuleset(ca), 'application/json')),
@@ -5765,12 +5839,12 @@ function cellEditorGroup(cfg) {
   const syncPlaceHint = () => {
     const tick = currentEditorTick();
     if (ce.placeMode !== 'step') {
-      placeHint.textContent = '本次点击将写入「初始环境（第 0 步）」：手绘格子在整个模拟开始前写入世界，是环境演化的起点。';
+      placeHint.textContent = tr('本次点击将写入「初始环境（第 0 步）」：手绘格子在整个模拟开始前写入世界，是环境演化的起点。');
     } else if (!cellEditorActive() || tick <= 0) {
-      placeHint.textContent = `当前停留在第 ${tick} 步（模拟起点），「当前步放置」与「初始环境」等价，本次点击仍写入第 0 步；`
-        + '向后推进到任意步后，点击即写入该步。';
+      placeHint.textContent = tr(`当前停留在第 ${tick} 步（模拟起点），「当前步放置」与「初始环境」等价，本次点击仍写入第 0 步；`)
+        + tr('向后推进到任意步后，点击即写入该步。');
     } else {
-      placeHint.textContent = `本次点击将写入第 ${tick} 步：只影响该步及其之后的帧，此前已完成的帧保持原样（不回溯）。`;
+      placeHint.textContent = tr(`本次点击将写入第 ${tick} 步：只影响该步及其之后的帧，此前已完成的帧保持原样（不回溯）。`);
     }
   };
   syncPlaceHint();
@@ -5967,7 +6041,7 @@ function transformGroup(cfg) {
   const syncEstimate = () => {
     const segs = nodeCount();
     const expected = t.globalProbability * t.segmentProbability * segs;
-    estimate.textContent = `按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`;
+    estimate.textContent = tr(`按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`);
   };
   syncEstimate();
   // 互斥联动：本组的「启用」/「自撞即判定死亡」一旦让「自撞即判定死亡」生效，
@@ -6096,7 +6170,7 @@ function endGroup(cfg) {
           onSimChange();
         }, opts);
         input.disabled = typeof ec.maxSteps !== 'number';
-        input.title = '取消勾选后不再限制步数；此处数值会被保留';
+        input.title = tr('取消勾选后不再限制步数；此处数值会被保留');
         syncDisabled.push((on) => { input.disabled = !on; });
         paramFields.push(field(label, input));
         continue;

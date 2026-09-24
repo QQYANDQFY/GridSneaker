@@ -299,7 +299,8 @@ export class Simulation {
     while (true) {
       if (tick >= maxFrames) {
         endReason = maxStepsEnabled
-          ? { code: 'maxSteps', label: `${END_LABELS.maxSteps}（${maxFrames}）`, tick }
+          // 步数上限写进模板：整串才能被语言包的「达到步数上限（{0}）」句式命中
+          ? { code: 'maxSteps', label: `达到步数上限（${maxFrames}）`, tick }
           : { code: 'frameLimit', label: `${END_LABELS.frameLimit}（${maxFrames} 步）`, tick, frameCap: maxFrames };
         break;
       }
@@ -1984,14 +1985,16 @@ export class Simulation {
       if (!ec[code]) continue;
       if (!triggered[code]) continue;
       if (!triggered[code]()) continue;
-      if (code === 'maxSteps') return { code, label: `${END_LABELS.maxSteps}（${ec.maxSteps}）`, tick: ctx.tick, coord: coord() };
-      if (code === 'lengthReached') return { code, label: `${END_LABELS.lengthReached}（${ec.lengthTarget}）`, tick: ctx.tick, coord: coord() };
-      if (code === 'coverage') return { code, label: `${END_LABELS.coverage}（${ec.coveragePercent}%）`, tick: ctx.tick, coord: coord() };
-      if (code === 'selfCollisionTotal') return { code, label: `${END_LABELS.selfCollisionTotal}（${ec.selfCollisionTotalN}）`, tick: ctx.tick, coord: coord() };
-      if (code === 'selfCollisionConsecutive') return { code, label: `${END_LABELS.selfCollisionConsecutive}（${ec.selfCollisionConsecutiveN}）`, tick: ctx.tick, coord: coord() };
-      if (code === 'caStable') return { code, label: `${END_LABELS.caStable}（连续 ${Math.max(1, cfg.caMode.stableSteps)} 次无变化）`, tick: ctx.tick, coord: coord() };
+      // 每种结束原因都写成含中文的完整模板：运行期字符串与 `${END_LABELS.x}（…）` 完全一致，
+      // 但只有字面量才能被抽取脚本登记成语言包条目（否则整串无键可命中、恒为源码语言）。
+      if (code === 'maxSteps') return { code, label: `达到步数上限（${ec.maxSteps}）`, tick: ctx.tick, coord: coord() };
+      if (code === 'lengthReached') return { code, label: `达到指定长度（${ec.lengthTarget}）`, tick: ctx.tick, coord: coord() };
+      if (code === 'coverage') return { code, label: `覆盖率达到阈值（${ec.coveragePercent}%）`, tick: ctx.tick, coord: coord() };
+      if (code === 'selfCollisionTotal') return { code, label: `累计撞自身 N 次（${ec.selfCollisionTotalN}）`, tick: ctx.tick, coord: coord() };
+      if (code === 'selfCollisionConsecutive') return { code, label: `连续撞自身 N 次（${ec.selfCollisionConsecutiveN}）`, tick: ctx.tick, coord: coord() };
+      if (code === 'caStable') return { code, label: `元胞自动机稳定（连续 ${Math.max(1, cfg.caMode.stableSteps)} 次无变化）`, tick: ctx.tick, coord: coord() };
       if (code === 'noMove') return { code, label: END_LABELS.noMove, tick: ctx.tick, coord: coord() };
-      if (code === 'maxTime') return { code, label: `${END_LABELS.maxTime}（${ec.maxTimeMs}ms）`, tick: ctx.tick, coord: coord() };
+      if (code === 'maxTime') return { code, label: `达到时间上限（${ec.maxTimeMs}ms）`, tick: ctx.tick, coord: coord() };
       return { code, label: END_LABELS[code] || code, tick: ctx.tick, coord: coord() };
     }
     return null;
