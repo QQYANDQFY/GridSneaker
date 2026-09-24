@@ -7,7 +7,7 @@ import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
   normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
-  isBodyEnabled, JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
+  buildShareUrl, isBodyEnabled, JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
 } from '../src/core/config.js';
 import {
   buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -178,6 +178,10 @@ section('模拟运行与复现性');
 /* ---------- 固定长度 ---------- */
 section('长度策略');
 {
+  eq(defaultConfig().body.lengthPolicy.growth.probability, 1, '默认配置：「吃到 / 达成条件后增长」概率为 1（必定增长）');
+  eq(normalizeConfig({}).body.lengthPolicy.growth.probability, 1, '规范化后默认增长概率仍为 1（面板默认显示一致）');
+  eq(normalizeConfig({ body: { lengthPolicy: { growth: {} } } }).body.lengthPolicy.growth.probability, 1, '仅部分填写增长策略时，概率回落到默认值 1');
+
   const cfg = defaultConfig();
   cfg.grid.width = 20; cfg.grid.height = 20;
   cfg.start = { col: 10, row: 10, direction: 'up' };
@@ -552,7 +556,7 @@ section('配置诊断：异常检测与修复建议');
 
   /* 3. 初始身体被地图边界截断（起点贴着上边界却朝下走） */
   const rawTrunc = {
-    grid: { type: 'square', width: 10, height: 10, boundary: 'wrap' },
+    grid: { type: 'square', width: 10, height: 10, boundary: 'stop' },
     start: { col: 0, row: 0, direction: 'down' },
     body: { initialLength: 5, lengthPolicy: { mode: 'fixed' } },
   };
@@ -567,6 +571,13 @@ section('配置诊断：异常检测与修复建议');
   ok(!byCode(truncFixed, 'bodyTruncatedByBoundary'), '起点移到地图中心后身体不再被截断');
   const truncShort = diagnoseConfig(applySuggestion(rawTrunc, dTrunc, (d) => d.suggestions.find((s) => s.patch.body)));
   ok(!byCode(truncShort, 'bodyTruncatedByBoundary'), '把初始长度改为可容纳值后不再被截断');
+  // 环绕边界下身体可跨越接缝，同样的起点 / 长度不再构成截断
+  const wrapTrunc = { ...rawTrunc, grid: { ...rawTrunc.grid, boundary: 'wrap' } };
+  ok(!byCode(diagnoseConfig(wrapTrunc), 'bodyTruncatedByBoundary'), '环绕边界（wrap）下初始身体跨缝铺设，不再判定为截断');
+  const wrapFullCfg = normalizeConfig(wrapTrunc);
+  wrapFullCfg.endConditions.maxSteps = 3;
+  const wrapFull = new Simulation(wrapFullCfg).run();
+  eq(wrapFull.frames[0].agents[0].segments.length, 5, '环绕边界下实际生成的初始身体长度为完整的 5 节');
 
   /* 4. 增长上限 / 目标长度超过地图总格数 */
   const rawGrow = { grid: { type: 'square', width: 4, height: 4 }, body: { lengthPolicy: { mode: 'variable', growth: { enabled: true, maxLength: 50 } } } };
@@ -611,7 +622,7 @@ section('配置诊断：异常检测与修复建议');
 
   /* 7. 运行期诊断：实际跑起来才暴露的截断 */
   const rt = defaultConfig();
-  rt.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+  rt.grid = { type: 'square', width: 10, height: 10, boundary: 'stop' };
   rt.start = { col: 0, row: 0, direction: 'down' };
   rt.body.initialLength = 5;
   rt.body.lengthPolicy.mode = 'fixed';
@@ -623,6 +634,11 @@ section('配置诊断：异常检测与修复建议');
   ok(dRun?.suggestions.length >= 2, '运行期诊断同样附带可执行方案', `实际 ${dRun?.suggestions.length} 条`);
   const rtFixed = mergePatch(rt, dRun.suggestions.find((s) => s.patch.start).patch);
   eq(new Simulation(rtFixed).run().frames[0].agents[0].segments.length, 5, '按运行期建议修复后身体完整');
+  // 同一配置换成环绕边界：身体跨缝铺设，运行期不再产生截断诊断
+  const rtWrap = mergePatch(rt, { grid: { boundary: 'wrap' } });
+  const rWrap = new Simulation(rtWrap).run();
+  eq(rWrap.frames[0].agents[0].segments.length, 5, '环绕边界下运行期初始身体完整（5 节）');
+  ok(!byCode(rWrap.diagnostics, 'bodyTruncated'), '环绕边界下运行期不再报身体截断');
 
   /* 8. 校验入口携带结构化诊断 */
   const v = validateConfig(rawTrunc);
@@ -1235,10 +1251,43 @@ section('新增预设模板');
   const multi = new Simulation(buildPresetConfig('multi-snake')).run();
   ok(multi.stats.spawns > 0, '多蛇预设持续生成新蛇', `实际 ${multi.stats.spawns}`);
   ok(multi.summary.peakAgents >= 2, '多蛇预设场上出现多条移动体', `峰值 ${multi.summary.peakAgents}`);
-
   const avoid = new Simulation(buildPresetConfig('avoid-lab')).run();
   eq(avoid.frames[0].agents[0].segments.length, 22, '安全避撞预设的初始身体完整为 22 节');
   ok(avoid.stats.steps > 0, '安全避撞预设可运行');
+
+  /* 生命游戏：无干涉版 / 交互版 */
+  const lifePlain = PRESETS.find((p) => p.id === 'life');
+  eq(lifePlain?.name, '生命游戏（无干涉版）', '原生命游戏模板已重命名为「生命游戏（无干涉版）」');
+  const lifeInter = PRESETS.find((p) => p.id === 'life-interactive');
+  eq(lifeInter?.name, '生命游戏（交互版）', '新增「生命游戏（交互版）」模板');
+
+  const plainCfg = buildPresetConfig('life');
+  ok(validateConfig(plainCfg).ok, '无干涉版通过结构校验');
+  const plainRun = new Simulation(plainCfg).run();
+  eq(plainRun.stats.markerInteractions, 0, '无干涉版不产生任何标记物交互（蛇与活细胞互不干涉）');
+
+  const interCfg = buildPresetConfig('life-interactive');
+  ok(validateConfig(interCfg).ok, '交互版通过结构校验', validateConfig(interCfg).errors.join('；'));
+  const interDiags = diagnoseConfig(interCfg);
+  ok(!interDiags.some((d) => d.level === 'error'), '交互版无严重诊断',
+    interDiags.filter((d) => d.level === 'error').map((d) => d.code).join(','));
+  ok(!interDiags.some((d) => d.code === 'markerEffectIgnored'), '交互版默认已启用「蛇长度可变」，不触发交互失效警告');
+  eq(interCfg.body.lengthPolicy.mode, 'variable', '交互版默认「蛇长度可变」');
+  ok(interCfg.caMode.markerInteraction.states.includes('alive'), '交互版把「活细胞」登记为交互标记物');
+  const interRun = new Simulation(interCfg).run();
+  ok(interRun.stats.markerInteractions > 0, '交互版蛇吞噬活细胞并累计交互次数', `实际 ${interRun.stats.markerInteractions}`);
+  const interGrow = interRun.frames[interRun.frames.length - 1].agents[0].length;
+  ok(interGrow > interCfg.body.initialLength, '交互版吞噬后长度增加', `初始 ${interCfg.body.initialLength} → 结束 ${interGrow}`);
+  ok(interRun.frames.some((f) => f.events && f.events.some((e) => e.type === 'markerInteraction' && e.delta === 1)),
+    '交互事件记录为「吞噬 +1」');
+
+  // 状态校验：把「蛇长度可变」关回固定长度，诊断应立即给出醒目提示与一键修复
+  const fixedCfg = buildPresetConfig('life-interactive');
+  fixedCfg.body.lengthPolicy.mode = 'fixed';
+  const fixedDiag = diagnoseConfig(fixedCfg).find((d) => d.code === 'markerEffectIgnored');
+  ok(!!fixedDiag, '未启用「蛇长度可变」时检出交互失效警告');
+  eq(fixedDiag?.level, 'warning', '交互失效警告为警告级别');
+  ok(fixedDiag?.suggestions.some((s) => s.patch.body?.lengthPolicy?.mode === 'variable'), '给出「改为可变长度」的一键修复方案');
 }
 
 /* ---------- 新增：轨迹模型与坐标筛选查询 ---------- */
@@ -1454,6 +1503,78 @@ section('边界穿越的环绕最短位移（动画不闪现）');
   eq(hex.wrapDelta({ col: 5, row: 0 }, { col: 0, row: 0 }).dc, 1, '六边形向右穿越解算为 +1 步');
   eq(hex.wrapDelta({ col: 0, row: 0 }, { col: 0, row: 3 }).dr, -1, '六边形向上穿越解算为 -1 步');
   eq(hex.wrapDelta({ col: 2, row: 1 }, { col: 2, row: 2 }).dr, 1, '六边形普通一步位移保持不变');
+}
+
+section('边界穿越：初始身体环绕铺设与全程体节连续（上 / 下 / 左 / 右）');
+{
+  const W = 8;
+  const H = 6;
+  const dirVec = { up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
+  // 四种起始方向都让「身体延伸方向」指向最近的边界，强制初始身体跨越地图接缝铺设
+  const cases = [
+    { name: '向右（身体向左跨缝）', dir: 'right', start: { col: 1, row: 3 } },
+    { name: '向左（身体向右跨缝）', dir: 'left', start: { col: W - 2, row: 3 } },
+    { name: '向下（身体向上跨缝）', dir: 'down', start: { col: 4, row: 1 } },
+    { name: '向上（身体向下跨缝）', dir: 'up', start: { col: 4, row: H - 2 } },
+  ];
+  const minDelta = (d, size) => Math.min(Math.abs(d), size - Math.abs(d));
+  const adjacent = (a, b) => {
+    const dc = minDelta(a[0] - b[0], W);
+    const dr = minDelta(a[1] - b[1], H);
+    return (dc === 1 && dr === 0) || (dc === 0 && dr === 1);
+  };
+
+  for (const c of cases) {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: W, height: H, boundary: 'wrap' };
+    cfg.start = { ...c.start, direction: c.dir };
+    cfg.body.initialLength = 4;
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.endConditions.maxSteps = 40;
+    const res = new Simulation(cfg).run();
+    ok(res.frames.length > 20, `${c.name}：产生足够帧数用于连续性校验`);
+
+    const first = res.frames[0].agents[0].segments;
+    eq(first.length, 4, `${c.name}：初始身体跨缝铺设后长度仍为 4（不被边界截断）`);
+    ok(first.every((s) => s[0] >= 0 && s[0] < W && s[1] >= 0 && s[1] < H),
+      `${c.name}：初始体节坐标全部规范化到网格内`);
+    let broken = 0;
+    for (let i = 1; i < first.length; i++) if (!adjacent(first[i - 1], first[i])) broken++;
+    eq(broken, 0, `${c.name}：初始体节按环绕最短位移相邻（跨缝处不断开）`);
+
+    const [dx, dy] = dirVec[c.dir];
+    let wraps = 0;
+    let stepBad = 0;
+    let lenBad = 0;
+    let chainBad = 0;
+    for (let i = 0; i < res.frames.length; i++) {
+      const segs = res.frames[i].agents[0].segments;
+      if (segs.length !== 4) lenBad++;
+      for (let k = 1; k < segs.length; k++) {
+        if (!adjacent(segs[k - 1], segs[k])) { chainBad++; break; }
+      }
+      if (i === 0) continue;
+      const p = res.frames[i - 1].agents[0].segments[0];
+      const q = segs[0];
+      const expCol = (p[0] + dx + W) % W;
+      const expRow = (p[1] + dy + H) % H;
+      if (q[0] !== expCol || q[1] !== expRow) stepBad++;
+      if (p[0] + dx < 0 || p[0] + dx >= W || p[1] + dy < 0 || p[1] + dy >= H) wraps++;
+    }
+    ok(wraps > 0, `${c.name}：运行过程中确实执行了边界穿越`, `穿越次数 ${wraps}`);
+    eq(stepBad, 0, `${c.name}：每一步蛇头都落在环绕后的格点上（不出现越界坐标）`);
+    eq(lenBad, 0, `${c.name}：全程每帧长度恒为 4（穿越不造成体节丢失 / 增生）`);
+    eq(chainBad, 0, `${c.name}：全程每帧体节链保持连续，穿越后无分离异常`);
+  }
+
+  // 环绕边界下初始长度超过总格数时按格数封顶，避免体节必然重叠
+  const capped = defaultConfig();
+  capped.grid = { type: 'square', width: 4, height: 3, boundary: 'wrap' };
+  capped.start = { col: 0, row: 0, direction: 'right' };
+  capped.body.initialLength = 40;
+  capped.endConditions.maxSteps = 1;
+  const cappedRes = new Simulation(capped).run();
+  eq(cappedRes.frames[0].agents[0].segments.length, 12, '环绕边界下初始长度按地图总格数封顶（不再无限重叠）');
 }
 
 section('边界穿越的体节插值（不横扫画面）');
@@ -1835,6 +1956,41 @@ section('纯轨迹 SVG 导出');
 
   const expSvg = trailToSVG(result, { ...cfg.style, fadeMode: 'exponential' });
   ok(expSvg.includes('指数'), '可导出指数衰减模式');
+}
+
+/* ---------- 迭代优化：运行计时 / 分享链接兼容 ---------- */
+section('运行计时与分享链接的本地兼容');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { ...cfg.grid, width: 10, height: 10 };
+  cfg.endConditions.maxSteps = 30;
+  const r = new Simulation(cfg).run();
+  ok(Number.isFinite(r.elapsedMs), '运行结果包含耗时字段（毫秒）');
+  ok(r.elapsedMs >= 0, `耗时为非负数（${r.elapsedMs.toFixed(2)} ms）`);
+
+  // file:// 本地单文件打开时 location.origin 为字面量 "null"，
+  // 分享链接必须退回到去掉片段后的完整地址，不能生成 "null/…" 这种不可用链接
+  const saved = globalThis.location;
+  try {
+    globalThis.location = {
+      origin: 'null',
+      pathname: '/D:/Trae/qqyoutput/0922/GridSneaker.html',
+      href: 'file:///D:/Trae/qqyoutput/0922/GridSneaker.html#c=stale',
+    };
+    const localUrl = buildShareUrl(cfg);
+    ok(localUrl.startsWith('file:///') && localUrl.includes('#c='), '本地打开时分享链接保留完整文件地址与配置片段');
+    ok(!localUrl.includes('null'), '本地打开时分享链接不含 "null" 前缀');
+    ok(localUrl.indexOf('#') === localUrl.lastIndexOf('#'), '分享链接只保留一个片段分隔符');
+
+    globalThis.location = { origin: 'https://example.com', pathname: '/snake/', href: 'https://example.com/snake/' };
+    const webUrl = buildShareUrl(cfg);
+    eq(webUrl.slice(0, 'https://example.com/snake/#c='.length), 'https://example.com/snake/#c=', 'http(s) 打开时分享链接格式不变');
+    const token = webUrl.split('#c=')[1];
+    ok(!!decodeConfigFromToken(token), '分享链接中的配置片段可正常解码');
+  } finally {
+    if (saved === undefined) delete globalThis.location;
+    else globalThis.location = saved;
+  }
 }
 
 /* ---------- 结果 ---------- */

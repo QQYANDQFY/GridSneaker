@@ -9,6 +9,43 @@ const BUILTIN_STATES = {
   trail: { color: '#2f5f9e', blocking: false, symbol: 'T', render: 'fill' },
 };
 
+/**
+ * 环境 / 元胞状态的规范中文显示名。
+ * 注意：内部状态键名（empty / alive / obstacle …）是数据索引、规则条件与
+ * 数组比较的依据，**不能改名**；这里只提供界面展示与控制台输出用的中文名，
+ * 由 stateLabel() 统一取值，确保全界面术语一致。
+ */
+export const STATE_LABELS = {
+  empty: '空格',
+  obstacle: '障碍物',
+  marker: '标记物',
+  trail: '轨迹',
+  boundary: '边界',
+  wall: '边界',
+  alive: '存活',
+  dead: '死亡',
+  tree: '树木',
+  fire: '火焰',
+  ash: '灰烬',
+  water: '水域',
+  grass: '草地',
+  car: '车辆',
+  spike: '尖刺',
+};
+
+/** 取状态 / 对象的中文显示名；未登记的名字原样返回 */
+export function stateLabel(name) {
+  if (name === null || name === undefined) return '';
+  const key = String(name);
+  return STATE_LABELS[key] || key;
+}
+
+/** 「中文名（内部键名）」形式，用于需要同时标明内部键名的配置项 */
+export function stateLabelWithKey(name) {
+  const label = stateLabel(name);
+  return label === String(name) ? label : `${label}（${name}）`;
+}
+
 /** 把用户的 states 定义（字符串或对象）规范化为对象数组，empty 恒定在索引 0 */
 export function normalizeStates(states) {
   const raw = Array.isArray(states) && states.length ? states : ['empty', 'obstacle', 'marker'];

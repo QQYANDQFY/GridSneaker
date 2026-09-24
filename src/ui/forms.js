@@ -37,6 +37,43 @@ export function clear(node) {
  */
 const groupOpenState = new Map();
 
+/**
+ * 多层级选项卡配色梯度。
+ * 按嵌套深度沿色环推进色相（212° 蓝 → 紫 → 品红 → 红 → 橙 → 绿…），
+ * 同时逐级抬高饱和度与亮度：父级沉稳压暗，子级越深越鲜明，
+ * 于是每一层都能被一眼区分，又统一在同一套低饱和深色面板风格里。
+ * 结果以 --grp-h / --grp-s / --grp-l 三个自定义属性写入元素，具体用色由 styles.css 决定。
+ */
+const GROUP_HUE_BASE = 212;
+const GROUP_HUE_STEP = 47;
+function groupPaletteOf(depth) {
+  const d = Math.max(0, Math.round(depth) || 0);
+  return {
+    h: (GROUP_HUE_BASE + d * GROUP_HUE_STEP) % 360,
+    s: Math.min(24 + d * 6, 60),
+    l: Math.min(9 + d * 1.5, 18),
+  };
+}
+
+/** 给分组及其内部所有嵌套分组的元素标注层级（0 为顶层）并写入配色变量 */
+function markGroupDepth(root, base) {
+  const apply = (el, depth) => {
+    const p = groupPaletteOf(depth);
+    el.dataset.depth = String(depth);
+    el.style.setProperty('--grp-h', String(p.h));
+    el.style.setProperty('--grp-s', `${p.s}%`);
+    el.style.setProperty('--grp-l', `${p.l}%`);
+  };
+  apply(root, base);
+  for (const el of root.querySelectorAll('.group')) {
+    let depth = base + 1;
+    for (let p = el.parentElement; p && p !== root; p = p.parentElement) {
+      if (p.classList && p.classList.contains('group')) depth++;
+    }
+    apply(el, depth);
+  }
+}
+
 export function group(title, children, opts = {}) {
   const key = opts.key === undefined ? String(title) : String(opts.key);
   const remembered = groupOpenState.get(key);
@@ -47,6 +84,7 @@ export function group(title, children, opts = {}) {
   append(body, [children]);
   details.appendChild(body);
   details.addEventListener('toggle', () => groupOpenState.set(key, details.open));
+  markGroupDepth(details, Number.isFinite(opts.depth) ? opts.depth : 0);
   return details;
 }
 

@@ -3,7 +3,8 @@
  * 只负责绘制：消费 Simulation.run() 输出的 frames，不参与任何模拟逻辑
  * 支持方格 / 六边形、轨迹渐变、方向箭头、障碍物与标记物、规则高亮、起点终点、坐标轴、暗黑模式
  */
-import { dirNames } from '../core/grid.js';
+import { dirLabel } from '../core/grid.js';
+import { stateLabel } from '../core/world.js';
 import { buildTrail } from '../core/trail.js';
 
 export const STYLE_DEFAULTS = {
@@ -87,6 +88,9 @@ export class Renderer {
     this.trailPix = null;
     this.trailRuns = [];
     this.pixDirty = true;
+    /** 网格线离屏层：网格 / 尺寸 / 样式变化时重建 */
+    this.gridLayer = null;
+    this.gridDirty = true;
     /** 坐标筛选高亮：null 表示未启用；否则为格下标集合（独立离屏层，避免每帧重绘） */
     this.filterSet = null;
     this.filterLayer = null;
@@ -100,8 +104,6 @@ export class Renderer {
     this.endCoord = null;
     this.size = { width: 0, height: 0, margin: 16 };
     this._scratchA = { x: 0, y: 0 };
-    this._scratchB = { x: 0, y: 0 };
-    this._scratchC = { x: 0, y: 0 };
   }
 
   setResult(result) {
@@ -213,6 +215,7 @@ export class Renderer {
     this.pixDirty = true;
     this.filterDirty = true;
     this.compareDirty = true;
+    this.gridDirty = true;
   }
 
   theme() {
@@ -260,7 +263,7 @@ export class Renderer {
     ctx.fillStyle = th.bg;
     ctx.fillRect(0, 0, this.size.width, this.size.height);
 
-    if (s.showGrid) this.drawGrid(th);
+    if (s.showGrid) this.drawGrid();
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th, tickF);
     this.drawCompare();
@@ -275,21 +278,52 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawGrid(th) {
+  drawGrid() {
+    this.ensureGridLayer();
+    const layer = this.gridLayer;
+    if (!layer) return;
     const ctx = this.ctx;
+    ctx.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, this.size.width, this.size.height);
+  }
+
+  /**
+   * 网格线离屏层：网格几何与配色只在网格 / 尺寸 / 样式变化时改变，
+   * 缓存后每帧仅一次 drawImage，避免大网格下逐格 beginPath + stroke
+   * （200×200 网格原来每帧约 4 万次描边，是渲染的主要开销之一）。
+   */
+  ensureGridLayer() {
+    if (!this.gridDirty && this.gridLayer) return;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const w = this.size.width;
+    const h = this.size.height;
+    let layer = this.gridLayer;
+    if (!layer) {
+      layer = document.createElement('canvas');
+      this.gridLayer = layer;
+    }
+    const pw = Math.max(1, Math.round(w * dpr));
+    const ph = Math.max(1, Math.round(h * dpr));
+    if (layer.width !== pw || layer.height !== ph) {
+      layer.width = pw;
+      layer.height = ph;
+    }
+    const lctx = layer.getContext('2d');
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lctx.clearRect(0, 0, w, h);
     const { cellSize, gap } = this.style;
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = th.gridLine;
+    lctx.lineWidth = 1;
+    lctx.strokeStyle = this.theme().gridLine;
+    const half = cellSize / 2 - gap / 2;
     for (const c of this.grid.allCoords()) {
       const p = this.center(c);
       if (this.grid.type === 'hex') {
-        pathHex(ctx, p.x, p.y, cellSize / 2 - gap / 2);
+        pathHex(lctx, p.x, p.y, cellSize / 2 - gap / 2);
       } else {
-        const half = cellSize / 2 - gap / 2;
-        roundRect(ctx, p.x - half, p.y - half, half * 2, half * 2, cellSize * 0.16);
+        roundRect(lctx, p.x - half, p.y - half, half * 2, half * 2, cellSize * 0.16);
       }
-      ctx.stroke();
+      lctx.stroke();
     }
+    this.gridDirty = false;
   }
 
   drawCells(frame, th) {
@@ -1145,10 +1179,10 @@ export class Renderer {
     const lines = [`坐标 (${coord.col}, ${coord.row})`];
     const index = this.grid.idx(coord.col, coord.row);
     const st = this.states[frame.cells[index]];
-    lines.push(`环境：${st ? st.name : '空'}`);
+    lines.push(`环境：${st ? stateLabel(st.name) : '空格'}`);
     for (const a of frame.agents) {
       const i = a.segments.findIndex(([c, r]) => c === coord.col && r === coord.row);
-      if (i === 0) lines.push(`${a.label}：蛇头（方向 ${dirNames(this.grid.type)[a.dir]}）`);
+      if (i === 0) lines.push(`${a.label}：蛇头（方向 ${dirLabel(this.grid.type, a.dir)}）`);
       else if (i > 0) lines.push(`${a.label}：第 ${i} 节`);
     }
     const info = this.trailInfo.get(index);

@@ -170,9 +170,20 @@ html, body {
 
 /* ---------------- 分组与字段 ---------------- */
 
+/* 多层级选项卡配色
+   层级越深：色相沿色环推进 → 饱和度升高 → 亮度升高。
+   父级沉稳低调（低饱和深底 + 冷色），子级逐层更鲜明（暖色、更亮的标题与左侧色条），
+   于是同一视觉体系下每一层都能被一眼分辨。
+   层级配色变量 --grp-h / --grp-s / --grp-l 由 forms.js 的 group() 按实际嵌套深度写入。 */
 .group {
-  background: var(--panel);
-  border: 1px solid var(--line);
+  --grp-h: 212;
+  --grp-s: 24%;
+  --grp-l: 9%;
+  --grp-border: hsl(var(--grp-h) calc(var(--grp-s) + 8%) calc(var(--grp-l) + 8%));
+  --grp-bar: hsl(var(--grp-h) calc(var(--grp-s) + 34%) calc(var(--grp-l) + 44%));
+  background: hsl(var(--grp-h) var(--grp-s) var(--grp-l));
+  border: 1px solid var(--grp-border);
+  border-left: 3px solid var(--grp-bar);
   border-radius: 9px;
   margin: 8px 0;
 }
@@ -186,13 +197,14 @@ html, body {
   align-items: center;
   gap: 8px;
   user-select: none;
+  color: hsl(var(--grp-h) calc(var(--grp-s) + 24%) calc(var(--grp-l) + 76%));
 }
-.group > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+.group > summary::before { content: "▸"; color: var(--grp-bar); font-size: 11px; }
 .group[open] > summary::before { content: "▾"; }
 .group > summary .badge {
   font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
+  color: hsl(var(--grp-h) calc(var(--grp-s) + 30%) calc(var(--grp-l) + 56%));
+  border: 1px solid var(--grp-border);
   border-radius: 20px;
   padding: 0 6px;
 }
@@ -533,8 +545,36 @@ html, body {
 }
 .toast.show { opacity: 1; transform: none; }
 .toast.success { border-color: #2f6b41; }
-.toast.warn { border-color: #7a5a23; }
-.toast.error { border-color: #7a2d2d; }
+.toast.warn {
+  border: 2px solid var(--warn);
+  background: #2b2110;
+  color: #ffe3b8;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(255, 192, 120, 0.22);
+}
+.toast.error { border: 2px solid var(--danger); background: #2a1517; color: #ffd3d3; font-weight: 600; }
+
+/* 面板内的醒目警告条（如「蛇长度可变」未启用时的状态校验提示） */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.alert .alert-icon { font-size: 14px; line-height: 1.3; }
+.alert .alert-text { flex: 1; min-width: 0; }
+.alert .alert-text strong { display: block; margin-bottom: 2px; }
+.alert.warn {
+  border: 1px solid var(--warn);
+  border-left: 4px solid var(--warn);
+  background: #2b2110;
+  color: #ffe3b8;
+  box-shadow: 0 0 0 1px rgba(255, 192, 120, 0.12) inset;
+}
 
 /* ---------------- 配置诊断 ---------------- */
 

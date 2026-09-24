@@ -138,7 +138,7 @@ export function sliceTrailUpToTick(trail, tick) {
 
 /** 多条件组合方式 */
 export const TRAIL_QUERY_LOGICS = ['and', 'or'];
-export const TRAIL_QUERY_LOGIC_LABELS = { and: '全部满足', or: '任一满足' };
+export const TRAIL_QUERY_LOGIC_LABELS = { and: '全部满足（且）', or: '任一满足（或）' };
 
 /** 上下限占位符：0 表示不限 */
 export function defaultTrailQuery() {

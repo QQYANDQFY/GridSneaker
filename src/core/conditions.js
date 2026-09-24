@@ -5,6 +5,7 @@
  *   grid, world, agents, agent(主体所属移动体), stats, rng, tick
  * 主体 subject = { coord, agent, kind, segmentIndex }
  */
+import { STATE_LABELS } from './world.js';
 
 export const OBJECT_LABELS = {
   empty: '空格',
@@ -19,6 +20,8 @@ export const OBJECT_LABELS = {
   any: '任意对象',
   obstacle: '障碍物',
   marker: '标记物',
+  // 环境 / 元胞状态（alive、tree、fire、car、spike …）统一取规范中文显示名
+  ...STATE_LABELS,
 };
 
 export function labelOfObject(name) {

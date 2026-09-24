@@ -26,8 +26,11 @@ export const MAX_FRAME_CAP = 200000;
 export const MAX_STORED_FRAMES = MAX_FRAME_CAP;
 /** 单次运行最多缓存的环境规则日志条数，超出后只计数不留存，避免长跑时内存膨胀 */
 export const MAX_LOGS = 50000;
-/** 兼容旧名称 */
-export const HARD_FRAME_CAP = DEFAULT_FRAME_CAP;
+
+/** 单调时钟：优先高精度计时（performance.now），环境不支持时退回 Date.now */
+function clockNow() {
+  return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+}
 
 /** 原地保留每 2 项中的第 1 项（用于帧缓存降采样，始终保留首项） */
 function halveInPlace(list) {
@@ -120,10 +123,17 @@ export class Simulation {
     const grid = this.grid;
     const head = { col: cfg.start.col, row: cfg.start.row };
     const segments = [{ ...head }];
+    // 环绕边界（wrap）下身体要能跨越地图接缝继续铺设，否则起点靠近边界时
+    // 初始身体会被截断（表现为「蛇身缺段 / 长度与设定不符」），因此这里按 wrap 环绕延伸。
+    // 节数上限取整张地图格数：再多必然出现体节重叠。
+    const wrap = cfg.grid.boundary === 'wrap';
+    const requested = Math.max(1, Math.round(cfg.body.initialLength));
+    const limit = wrap ? Math.min(requested, grid.size) : requested;
     let cur = { ...head };
-    for (let i = 1; i < cfg.body.initialLength; i++) {
+    for (let i = 1; i < limit; i++) {
       cur = grid.step(cur, grid.opposite(dir));
-      if (!grid.inBounds(cur)) break;
+      if (wrap) cur = grid.wrap(cur);
+      else if (!grid.inBounds(cur)) break;
       segments.push({ ...cur });
     }
     return new Agent('main', segments, dir, { label: '主移动体', isMain: true, spawnTick: 0 });
@@ -134,6 +144,7 @@ export class Simulation {
     const grid = this.grid;
     const states = this.states;
     const rng = new RNG(cfg.seed);
+    const startedAt = clockNow();
     const world = new World(grid, states);
     const ca = cfg.caMode.enabled ? new CAEngine(grid, cfg.caMode, states) : null;
     if (ca) ca.init(world, rng);
@@ -315,6 +326,8 @@ export class Simulation {
       diagnostics: this.runtimeDiagnostics,
       seed: cfg.seed,
       rngCalls: rng.calls,
+      /** 本轮运行的实际耗时（毫秒），供统计面板展示性能信息 */
+      elapsedMs: Math.max(0, clockNow() - startedAt),
       finalFrameIndex: frames.length - 1,
       summary: {
         steps: stats.steps,
@@ -1037,10 +1050,16 @@ export class Simulation {
     const pos = findSpawnCoord(ctx);
     if (!pos) return null;
     const segments = [{ ...pos }];
+    // 与主移动体一致：环绕边界下新蛇的身体同样按 wrap 环绕铺设，避免贴边生成时身体被截断
+    const wrap = ctx.config.grid.boundary === 'wrap';
+    const requested = Math.max(1, Math.round(sp.length));
+    const limit = wrap ? Math.min(requested, grid.size) : requested;
     let cur = { ...pos };
-    for (let i = 1; i < sp.length; i++) {
+    for (let i = 1; i < limit; i++) {
       cur = grid.step(cur, grid.opposite(dir));
-      if (!grid.inBounds(cur) || occupiedByAgent(ctx, cur)) break;
+      if (wrap) cur = grid.wrap(cur);
+      else if (!grid.inBounds(cur)) break;
+      if (occupiedByAgent(ctx, cur)) break;
       segments.push({ ...cur });
     }
     const n = (ctx.stats.spawns = (ctx.stats.spawns || 0) + 1);

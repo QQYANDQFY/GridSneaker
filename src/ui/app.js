@@ -4,18 +4,19 @@
 import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
-  isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES,
-  FADE_LENGTH_LIMIT,
+  isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
   trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS,
+  TRAIL_QUERY_LOGICS, TRAIL_QUERY_LOGIC_LABELS,
   snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
 } from '../core/trail.js';
-import { PRESETS, buildPresetConfig } from '../core/presets.js';
+import { PRESETS, buildPresetConfig, matchPreset } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
 import { Renderer } from './canvas.js';
-import { dirNames } from '../core/grid.js';
+import { dirNames, DIR_LABEL_CN as DIR_LABELS } from '../core/grid.js';
+import { stateLabel, stateLabelWithKey } from '../core/world.js';
 import { ACTION_LABELS, TURN_LABELS } from '../core/actions.js';
 import { SUBJECT_LABELS, TRIGGER_LABELS } from '../core/rules.js';
 import { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } from '../core/ca.js';
@@ -33,11 +34,6 @@ import {
 /* ------------------------------------------------------------------ */
 /* 常量                                                                */
 /* ------------------------------------------------------------------ */
-
-const DIR_LABELS = {
-  up: '上', right: '右', down: '下', left: '左',
-  east: '东', southEast: '东南', southWest: '西南', west: '西', northWest: '西北', northEast: '东北',
-};
 
 const CLAUSE_TYPES = [
   { value: 'count', label: '数量' },
@@ -770,13 +766,21 @@ function bindCanvasEvents() {
 /* ------------------------------------------------------------------ */
 
 const STAT_KEYS = [
-  ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
+  ['steps', '步数'], ['framePos', '当前帧 / 总帧数'], ['frames', '缓存帧数'], ['elapsed', '运行耗时'],
+  ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
   ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
 ];
+
+/** 运行耗时的展示格式：不足 1 秒按毫秒，超过按秒保留两位小数 */
+function formatDuration(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return '-';
+  return v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(2)} s`;
+}
 
 /** 统计口径：实时 = 截至当前播放位置（会话内动态数据）/ 总计 = 整轮运行全量汇总 */
 const STAT_MODES = [
@@ -830,6 +834,8 @@ function statValues() {
   return {
     values: {
       steps: pick(st.steps ?? 0, s.steps),
+      framePos: `${i + 1} / ${r.frames.length}`,
+      elapsed: formatDuration(r.elapsedMs),
       frames: pick(`${i + 1}${stride}`, `${r.frames.length}${stride}`),
       endReason: pick(f && f.events && f.events.length ? f.events.map(eventLabel).join('、') : '—', s.endReason),
       collisions: pick(st.collisions, s.collisions),
@@ -950,7 +956,6 @@ function drawSparkline(canvas, history) {
 /** 转向分布条：按当前口径的累计转向次数重绘（两种口径共用同样的行结构） */
 function renderTurnBars(host, stats) {
   if (!host) return;
-  clear(host);
   const s = stats || {};
   const items = [
     ['左转', s.turnsLeft || 0, '#ff922b'],
@@ -958,14 +963,27 @@ function renderTurnBars(host, stats) {
     ['右转', s.turnsRight || 0, '#51cf66'],
     ['掉头', s.turnsReverse || 0, '#c084fc'],
   ];
-  const total = Math.max(1, items.reduce((sum, it) => sum + it[1], 0));
-  for (const [label, v, color] of items) {
-    const pct = (v / total) * 100;
-    host.appendChild(h('div', { class: 'bar-row' },
-      h('span', { class: 'bar-label' }, label),
-      h('div', { class: 'bar-track' }, h('div', { class: 'bar-fill', style: { width: `${pct}%`, background: color } })),
-      h('span', { class: 'bar-val' }, `${v} · ${pct.toFixed(1)}%`)));
+  // 行结构固定（4 行），创建一次后只更新宽度与文本：
+  // 实时口径下播放时每帧都会调用本函数，原地更新可避免逐帧销毁/重建 DOM 节点。
+  let rows = host._turnRows;
+  if (!rows) {
+    rows = items.map(([label, , color]) => {
+      const fill = h('div', { class: 'bar-fill', style: { background: color } });
+      const val = h('span', { class: 'bar-val' });
+      host.appendChild(h('div', { class: 'bar-row' },
+        h('span', { class: 'bar-label' }, label),
+        h('div', { class: 'bar-track' }, fill),
+        val));
+      return { fill, val };
+    });
+    host._turnRows = rows;
   }
+  const total = Math.max(1, items.reduce((sum, it) => sum + it[1], 0));
+  items.forEach((it, i) => {
+    const pct = (it[1] / total) * 100;
+    rows[i].fill.style.width = `${pct}%`;
+    rows[i].val.textContent = `${it[1]} · ${pct.toFixed(1)}%`;
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1034,7 +1052,7 @@ function renderSidePanel() {
 
   side.appendChild(diagnosticsGroup());
 
-  const currentPreset = PRESETS.find((p) => p.name === state.cfg.meta.name) || PRESETS[0];
+  const currentPreset = matchPreset(state.cfg) || PRESETS[0];
   const presetSel = select(currentPreset.id, PRESETS.map((p) => ({ value: p.id, label: p.name })), () => {});
   const presetDesc = h('div', { class: 'hint' }, currentPreset.description);
   presetSel.addEventListener('change', () => {
@@ -1050,6 +1068,9 @@ function renderSidePanel() {
       state.dirty = true;
       rebuildAll();
       toast('已载入模板', 'success');
+      // 状态校验：交互类模板若未启用「蛇长度可变」，立刻醒目提示
+      const warn = markerLengthWarning();
+      if (warn) toast(warn, 'warn');
     }, 'primary'), button('空白配置', () => {
       state.cfg = normalizeConfig(defaultConfig());
       state.frameIndex = 0;
@@ -1124,9 +1145,8 @@ function renderSidePanel() {
     ...state.cfg.environmentRules.map((r) => ({ value: r.id, label: r.name })),
   ], (v) => { state.logFilter = v; renderLog(); });
 
+  // 统计模块（内含「坐标筛选查询」子选项卡：与统计口径共享同一轨迹数据源）
   side.appendChild(statsModeGroup());
-
-  side.appendChild(trailQueryGroup());
 
   side.appendChild(trailCompareGroup());
 
@@ -1162,6 +1182,14 @@ function statsModeGroup() {
     h('div', { class: 'hint' }, '实时统计按当前播放位置统计（含轨迹数据，随播放 / 跳帧变化）；总计统计展示整轮运行的全量汇总。两种口径共用同一套指标与展示格式。'),
     seg,
     els.statModeHint,
+    row(button('复制统计摘要', () => {
+      const text = statsSummaryText();
+      if (!text) { toast('尚未运行模拟', 'warn'); return; }
+      copyText(text, '统计摘要已复制');
+    }, 'ghost small')),
+    // 坐标筛选查询并入统计模块：与统计口径共用同一轨迹数据源，
+    // 切换口径或改变播放位置时查询结果会实时同步到统计面板与画面高亮。
+    trailQueryGroup(),
   ], { key: 'stat-mode', open: true });
 }
 
@@ -1194,6 +1222,21 @@ function syncStatModeUI() {
     }
   }
   syncStatModeHint();
+}
+
+/**
+ * 统计摘要文本：当前口径的全部指标 + 坐标筛选结论，供一键复制留档。
+ * 未运行模拟时返回空串（调用方据此提示）。
+ */
+function statsSummaryText() {
+  const data = statValues();
+  if (!data) return '';
+  const lines = [`# GridSneaker 统计摘要 · ${state.cfg.meta.name || '未命名'} · ${statModeInfo().label}`];
+  for (const [key, label] of STAT_KEYS) lines.push(`${label}：${data.values[key] ?? '-'}`);
+  if (state.trailCells && state.trailCells.length) {
+    lines.push(`坐标筛选：匹配 ${state.trailCells.length} 个坐标 · ${trailQueryLabel(state.trailQuery)}`);
+  }
+  return lines.join('\n');
 }
 
 function syncStatModeHint() {
@@ -1231,6 +1274,38 @@ let trailQuerySeq = 0;
 /** 实时口径轨迹缓存（按当前播放步数截取） */
 let liveTrailCache = { tick: -1, at: 0, trail: null };
 let liveRefreshAt = 0;
+/** 筛选结果 / 范围缓存：同一份轨迹 + 同一组条件直接复用，避免播放中重复全量扫描 */
+let trailQueryCache = { key: '', res: null };
+let trailBoundsCache = { key: '', bounds: null };
+
+/**
+ * 轨迹指纹：轨迹内容（点数 / 最大步数 / 末点步数）变化即失效。
+ * 用于给筛选结果与范围统计做记忆化，避免同一份数据在「执行筛选 → 同步滑块 → 渲染列表」流程里被反复全量扫描。
+ */
+function trailFingerprint(trail) {
+  if (!trail || !trail.order) return 'none';
+  const n = trail.path ? trail.path.length : 0;
+  const last = n ? trail.path[n - 1].tick : 0;
+  return `${trail.order.length}/${trail.maxTick}/${last}`;
+}
+
+/** 带记忆化的坐标筛选查询 */
+function cachedTrailQuery(trail, query) {
+  const key = `${trailFingerprint(trail)}|${JSON.stringify(query)}`;
+  if (trailQueryCache.key !== key) {
+    trailQueryCache = { key, res: queryTrail(trail, query) };
+  }
+  return trailQueryCache.res;
+}
+
+/** 带记忆化的轨迹序数范围统计 */
+function cachedTrailBounds(trail) {
+  const key = trailFingerprint(trail);
+  if (trailBoundsCache.key !== key) {
+    trailBoundsCache = { key, bounds: trailQueryBounds(trail) };
+  }
+  return trailBoundsCache.bounds;
+}
 
 function nowMs() {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
@@ -1270,10 +1345,9 @@ function trailQueryGroup() {
   els.trailQueryError = h('div', { class: 'query-error hidden' }, '');
   els.trailQueryLoading = h('div', { class: 'query-loading hidden' }, '');
   els.trailQueryList = h('div', { class: 'query-list' });
-  const logicSel = select(q.logic, [
-    { value: 'and', label: '全部满足（且）' },
-    { value: 'or', label: '任一满足（或）' },
-  ], (v) => { q.logic = v; commitTrailQuery(); });
+  const logicSel = select(q.logic,
+    TRAIL_QUERY_LOGICS.map((v) => ({ value: v, label: TRAIL_QUERY_LOGIC_LABELS[v] })),
+    (v) => { q.logic = v; commitTrailQuery(); });
   const invertChk = checkbox(q.invert, (v) => { q.invert = v; commitTrailQuery(); });
   els.trailLogicSel = logicSel;
   els.trailInvertChk = invertChk;
@@ -1286,7 +1360,7 @@ function trailQueryGroup() {
   };
 
   const body = [
-    h('div', { class: 'hint' }, '按轨迹点的序数范围筛选坐标：上限填 0 表示不限；输入框与滑块双向同步，调整后即时更新结果与画面高亮。'),
+    h('div', { class: 'hint' }, '坐标维度分析：按轨迹点的序数范围筛选坐标，结果与上方统计口径实时同步（上限填 0 表示不限；输入框与滑块双向同步，调整后即时更新结果、画面高亮与统计面板）。'),
   ];
   for (const f of TRAIL_RANGE_FIELDS) body.push(trailRangeField(f));
   body.push(
@@ -1307,7 +1381,7 @@ function trailQueryGroup() {
     els.trailQueryLoading,
     els.trailQueryList,
   );
-  return group('坐标筛选查询', body, { key: 'trail-query', open: false });
+  return group('坐标筛选查询', body, { key: 'trail-query', open: false, badge: '坐标维度分析' });
 }
 
 /**
@@ -1380,7 +1454,7 @@ function syncTrailQueryControls() {
  * 只扩大不缩小到当前取值以下，避免静默改动用户已配置的阈值。
  */
 function syncTrailQueryLimits() {
-  const bounds = trailQueryBounds(trailForMode());
+  const bounds = cachedTrailBounds(trailForMode());
   for (const f of TRAIL_RANGE_FIELDS) {
     const b = bounds[f.bound] || { max: 1 };
     for (const key of [f.minKey, f.maxKey]) {
@@ -1527,7 +1601,7 @@ function applyTrailQuery(rerender = true) {
 
   const run = () => {
     if (seq !== trailQuerySeq) return; // 参数已再次变化，丢弃本次结果
-    const res = queryTrail(trail, state.trailQuery);
+    const res = cachedTrailQuery(trail, state.trailQuery);
     const active = trailQueryActive(state.trailQuery);
     setTrailQueryBusy(false);
     updateTrailQuerySource(res.total);
@@ -2191,7 +2265,12 @@ function lengthSection(cfg) {
     ),
   ];
   return group('长度策略', [
-    field('模式', selBind(lp, 'mode', () => onSimChange(), [
+    field('模式', selBind(lp, 'mode', () => {
+      onSimChange();
+      // 切回「固定」而交互仍在生效时，立即醒目提示「蛇长度可变」未启用
+      const warn = markerLengthWarning();
+      if (warn) toast(warn, 'warn');
+    }, [
       { value: 'fixed', label: '固定长度（头进尾出）' },
       { value: 'variable', label: '可变长度（增长 / 缩短）' },
       { value: 'custom', label: '自定义（由环境规则决定）' },
@@ -2530,7 +2609,8 @@ function objectOptions() {
 }
 
 function stateOptions() {
-  return state.cfg.caMode.states.map((s) => ({ value: s.name, label: s.name }));
+  // 下拉项显示「中文名（内部键名）」：界面术语中文化的同时保留内部键名，便于与配置 / 分享链接对照
+  return state.cfg.caMode.states.map((s) => ({ value: s.name, label: stateLabelWithKey(s.name) }));
 }
 
 /* ---------------- 元胞自动机 ---------------- */
@@ -2579,7 +2659,8 @@ function caGroup(cfg) {
       '把指定的元胞状态定义为「交互标记物」：蛇头进入该格时按反馈规则表产生长度 / 颜色变化，可设置消耗该标记物'),
     field('状态转移规则表', caRulesEditor(ca)),
     field('快捷模板', row(
-      button('生命游戏', () => applyCaTemplate(cfg, 'life'), 'ghost small'),
+      button('生命游戏（无干涉）', () => applyCaTemplate(cfg, 'life'), 'ghost small'),
+      button('生命游戏（交互）', () => applyCaTemplate(cfg, 'lifeInteractive'), 'ghost small'),
       button('六边形 CA', () => applyCaTemplate(cfg, 'hexCa'), 'ghost small'),
       button('森林火灾', () => applyCaTemplate(cfg, 'forest'), 'ghost small'),
       button('交通流', () => applyCaTemplate(cfg, 'traffic'), 'ghost small'),
@@ -2593,9 +2674,11 @@ function stateListEditor(states) {
   states.forEach((s, i) => {
     const isCore = s.name === 'empty' || s.name === 'obstacle' || s.name === 'marker';
     list.appendChild(h('div', { class: 'state-row' },
+      h('span', { class: 'mini-label', title: `内部键名：${s.name}` }, stateLabel(s.name)),
       h('input', {
         class: 'input tiny',
         value: s.name,
+        title: '内部键名（规则条件、分享链接中引用此名称，修改后原规则可能失效）',
         disabled: s.name === 'empty' || undefined,
         onchange: (e) => { s.name = e.target.value.trim() || s.name; rebuildAll(); },
       }),
@@ -2618,6 +2701,20 @@ function stateListEditor(states) {
 }
 
 /**
+ * 「蛇长度可变」状态校验。
+ * 标记物 / 生命游戏交互已启用、但「长度策略」仍是「固定」时，
+ * 反馈规则里的长度增减不会生效——返回醒目提示文案，无需提示时返回 null。
+ */
+function markerLengthWarning() {
+  const cfg = state.cfg;
+  const mi = cfg.caMode.markerInteraction;
+  if (!mi.enabled || cfg.body.lengthPolicy.mode !== 'fixed') return null;
+  const changesLength = mi.effects.some((e) => e.enabled && (e.mode === 'set' || Math.abs(Number(e.value) || 0) > 0));
+  if (!changesLength) return null;
+  return '⚠ 未启用「蛇长度可变」：当前「长度策略」为「固定」，长度恒等于初始长度，交互吞噬 / 触碰带来的长度变化不会生效。请把「长度策略」改为「可变」。';
+}
+
+/**
  * 标记物交互编辑器：将指定元胞状态定义为交互标记物，并配置「触碰反馈规则表」。
  * 每条反馈可独立设置作用状态、变化方式（增减 / 百分比 / 直接设定）、概率、是否消耗标记物与变色。
  */
@@ -2625,8 +2722,20 @@ function markerInteractionEditor(ca) {
   const mi = ca.markerInteraction;
   const wrap = h('div', { class: 'rule-list' });
   wrap.appendChild(field('启用标记物交互', chkBind(mi, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用')));
-  if (mi.enabled && state.cfg.body.lengthPolicy.mode === 'fixed') {
-    wrap.appendChild(h('div', { class: 'hint' }, '注意：当前「长度策略」为「固定」，长度恒等于初始长度，反馈规则里的长度增减不会生效；请把「长度策略」改为「可变」（变色与消耗仍然生效）。'));
+  if (markerLengthWarning()) {
+    wrap.appendChild(h('div', { class: 'alert warn' },
+      h('span', { class: 'alert-icon' }, '⚠'),
+      h('div', { class: 'alert-text' },
+        h('strong', {}, '未启用「蛇长度可变」'),
+        h('div', {}, '当前「长度策略」为「固定」，长度恒等于初始长度，反馈规则里的长度增减不会生效（变色与消耗仍然生效）。'),
+      ),
+      button('改为可变长度', () => {
+        state.cfg.body.lengthPolicy.mode = 'variable';
+        onSimChange();
+        rebuildAll();
+        toast('已把「长度策略」改为「可变」，长度变化即刻生效', 'success');
+      }, 'primary small'),
+    ));
   }
   wrap.appendChild(field('交互标记物状态', h('div', { class: 'chips' },
     ...ca.states.map((s) => {
@@ -2634,6 +2743,7 @@ function markerInteractionEditor(ca) {
       return h('button', {
         type: 'button',
         class: `chip${on ? ' on' : ''}`,
+        title: `内部键名：${s.name}`,
         onclick: () => {
           const i = mi.states.indexOf(s.name);
           if (i >= 0) mi.states.splice(i, 1);
@@ -2641,7 +2751,7 @@ function markerInteractionEditor(ca) {
           onSimChange();
           rebuildAll();
         },
-      }, s.name);
+      }, stateLabelWithKey(s.name));
     })), '可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则'));
 
   const list = h('div', { class: 'rule-list' });
@@ -2726,6 +2836,7 @@ function caRulesEditor(ca) {
         return h('button', {
           type: 'button',
           class: `chip${on ? ' on' : ''}`,
+          title: `内部键名：${s.name}`,
           onclick: () => {
             const cur = rule.from === '*' ? [] : [...rule.from];
             const k = cur.indexOf(s.name);
@@ -2734,7 +2845,7 @@ function caRulesEditor(ca) {
             rule.from = cur.length ? cur : '*';
             rebuildAll();
           },
-        }, s.name);
+        }, stateLabelWithKey(s.name));
       }))));
 
     if (rule.kind === 'traffic') {
@@ -2798,11 +2909,21 @@ function caRulesEditor(ca) {
   return list;
 }
 
+/** CA 快捷模板 → 预设 id 的映射：应用后同步场景名，使「预设模板」下拉正确回显 */
+const CA_TEMPLATE_PRESET_IDS = {
+  life: 'life',
+  lifeInteractive: 'life-interactive',
+  hexCa: 'hex-ca',
+  forest: 'forest-fire',
+  traffic: 'traffic',
+};
+
 function applyCaTemplate(cfg, kind) {
   const ca = cfg.caMode;
   ca.enabled = true;
   ca.radius = 1;
-  if (kind === 'life') {
+  if (kind === 'life' || kind === 'lifeInteractive') {
+    const interactive = kind === 'lifeInteractive';
     Object.assign(ca, {
       states: [{ name: 'empty', color: null, symbol: '.', blocking: false }, { name: 'alive', color: '#ffd43b', symbol: 'O', blocking: false }],
       neighborhood: 'moore',
@@ -2813,7 +2934,21 @@ function applyCaTemplate(cfg, kind) {
         { id: 'birth', name: '出生', enabled: true, kind: 'count', from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive', probability: 1, direction: 'east' },
         { id: 'death', name: '死亡', enabled: true, kind: 'count', from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty', probability: 1, direction: 'east' },
       ],
+      markerInteraction: interactive
+        ? {
+          enabled: true,
+          states: ['alive'],
+          effects: [{
+            id: 'fx_swallow', name: '吞噬活细胞', enabled: true, state: 'alive',
+            mode: 'delta', value: 1, probability: 1, consume: true, consumeTo: 'empty', color: '#51cf66',
+          }],
+        }
+        : { enabled: false, states: ['alive'], effects: [] },
     });
+    if (interactive) {
+      // 交互版：吞噬活细胞才会增长，必须先启用「蛇长度可变」
+      cfg.body.lengthPolicy.mode = 'variable';
+    }
   } else if (kind === 'hexCa') {
     cfg.grid.type = 'hex';
     cfg.body.shape = 'hexagon';
@@ -2863,8 +2998,15 @@ function applyCaTemplate(cfg, kind) {
     });
     cfg.collision.obstacle = 'pass';
   }
+  // 与「预设模板」下拉保持一致：快捷模板对应的预设存在时同步场景名，
+  // 避免应用后面板仍显示上一个预设（如「随机游走」）造成误解。
+  const preset = PRESETS.find((p) => p.id === CA_TEMPLATE_PRESET_IDS[kind]);
+  if (preset) cfg.meta.name = preset.name;
   rebuildAll();
-  toast('已应用元胞自动机模板', 'success');
+  toast(kind === 'lifeInteractive' ? '已应用「生命游戏（交互版）」模板：吞噬活细胞即增长' : '已应用元胞自动机模板', 'success');
+  // 状态校验：交互版依赖「蛇长度可变」，未启用时立刻醒目提示
+  const warn = markerLengthWarning();
+  if (warn) toast(warn, 'warn');
 }
 
 /* ---------------- 结束条件 ---------------- */

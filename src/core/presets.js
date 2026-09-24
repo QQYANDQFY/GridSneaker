@@ -181,8 +181,8 @@ export const PRESETS = [
   },
   {
     id: 'life',
-    name: '生命游戏（Conway\'s Life）',
-    description: 'B3/S23 同步更新，Moore 邻域，滑翔机图案；移动体按规则在其上穿行。',
+    name: '生命游戏（无干涉版）',
+    description: 'B3/S23 同步更新，Moore 邻域，滑翔机图案；移动体按规则在其上穿行，与活细胞互不干涉。',
     build: () => base({
       meta: { name: '生命游戏', description: 'Conway B3/S23' },
       grid: { type: 'square', width: 40, height: 30, boundary: 'wrap' },
@@ -214,6 +214,69 @@ export const PRESETS = [
       },
       endConditions: { maxSteps: 300, wall: false },
       style: { cellSize: 16, showTrail: false, showBody: true },
+    }),
+  },
+  {
+    id: 'life-interactive',
+    name: '生命游戏（交互版）',
+    description: 'B3/S23 同步演化；移动体撞上「活细胞」时将其吞噬、长度 +1，被吞的方块随即熄灭——蛇与生命游戏真正耦合。需把「长度策略」保持为「可变」才会增长。',
+    build: () => base({
+      meta: { name: '生命游戏（交互版）', description: '生命游戏 + 吞噬活细胞增长' },
+      grid: { type: 'square', width: 40, height: 30, boundary: 'wrap' },
+      start: { col: 20, row: 15, direction: 'right' },
+      body: {
+        initialLength: 3,
+        colorMode: 'gradient',
+        // 「蛇长度可变」：交互吞噬产生的长度变化只有在该模式下才会生效
+        lengthPolicy: { mode: 'variable', growth: { enabled: false } },
+      },
+      moveRules: { left: 0.25, straight: 0.5, right: 0.25 },
+      caMode: {
+        enabled: true,
+        states: [
+          { name: 'empty', color: null, symbol: '.', blocking: false },
+          { name: 'alive', color: '#ffd43b', symbol: 'O', blocking: false, render: 'fill' },
+        ],
+        neighborhood: 'moore',
+        radius: 1,
+        boundary: 'wrap',
+        update: 'synchronous',
+        initial: {
+          mode: 'pattern',
+          pattern: [
+            '............',
+            '..O.........',
+            '...OO.......',
+            '..OO........',
+            '............',
+          ].join('\n'),
+        },
+        rules: [
+          { id: 'birth', name: '出生', from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive', probability: 1 },
+          { id: 'death', name: '死亡', from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty', probability: 1 },
+        ],
+        syncWithAgent: 'afterMove',
+        markerInteraction: {
+          enabled: true,
+          states: ['alive'],
+          effects: [
+            {
+              id: 'fx_swallow',
+              name: '吞噬活细胞',
+              enabled: true,
+              state: 'alive',
+              mode: 'delta',
+              value: 1,
+              probability: 1,
+              consume: true,
+              consumeTo: 'empty',
+              color: '#51cf66',
+            },
+          ],
+        },
+      },
+      endConditions: { maxSteps: 400, wall: false },
+      style: { cellSize: 16, showTrail: false, showBody: true, showMarkers: true, showEffects: true },
     }),
   },
   {
@@ -524,4 +587,23 @@ export function getPreset(id) {
 export function buildPresetConfig(id) {
   const p = getPreset(id);
   return p ? p.build() : defaultConfig();
+}
+
+/**
+ * 按配置的 meta.name 反查对应的预设模板（模板名与配置名都参与匹配）。
+ * 面板用它把「当前配置」对应的模板回显到下拉框里；找不到时返回 null。
+ */
+let presetNameIndex = null;
+export function matchPreset(cfg) {
+  const name = cfg && cfg.meta ? cfg.meta.name : '';
+  if (!name) return null;
+  if (!presetNameIndex) {
+    presetNameIndex = new Map();
+    for (const p of PRESETS) {
+      presetNameIndex.set(p.name, p);
+      const metaName = p.build().meta.name;
+      if (!presetNameIndex.has(metaName)) presetNameIndex.set(metaName, p);
+    }
+  }
+  return presetNameIndex.get(name) || null;
 }

@@ -2,7 +2,7 @@
  * 配置模型：默认值、规范化、版本迁移、校验、URL 分享
  */
 import { normalizeStates } from './world.js';
-import { Grid, parseDir } from './grid.js';
+import { Grid, parseDir, DIR_LABEL_CN } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
 export const CONFIG_VERSION = '1.2';
@@ -200,7 +200,7 @@ export function defaultConfig() {
       },
       lengthPolicy: {
         mode: 'fixed',
-        growth: { enabled: false, trigger: 'step', amount: 1, probability: 0.1, maxLength: 50, interval: 1 },
+        growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, interval: 1 },
         shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, minLength: 1, interval: 1 },
       },
     },
@@ -987,18 +987,17 @@ export function fittedBodyLength(grid, start, dir, length) {
   let cur = { ...start };
   let n = 1;
   const back = grid.opposite(dir);
-  for (let i = 1; i < length; i++) {
+  const wrap = grid.boundary === 'wrap';
+  // 环绕边界下身体可以跨越接缝继续铺设，可用节数上限即整张地图（再多必然重叠）
+  const cap = wrap ? Math.min(length, grid.size) : length;
+  for (let i = 1; i < cap; i++) {
     cur = grid.step(cur, back);
-    if (!grid.inBounds(cur)) break;
+    if (wrap) cur = grid.wrap(cur);
+    else if (!grid.inBounds(cur)) break;
     n++;
   }
   return n;
 }
-
-const DIR_CN = {
-  up: '上', right: '右', down: '下', left: '左',
-  east: '东', southEast: '东南', southWest: '西南', west: '西', northWest: '西北', northEast: '东北',
-};
 
 function dirsOf(grid, direction) {
   if (direction === 'random') return Array.from({ length: grid.dirCount }, (_, i) => i);
@@ -1007,7 +1006,7 @@ function dirsOf(grid, direction) {
 
 function dirsLabel(grid, dirs) {
   if (dirs.length > 1) return '任意方向的最坏情况';
-  return DIR_CN[grid.dirNames[dirs[0]]] || grid.dirNames[dirs[0]];
+  return DIR_LABEL_CN[grid.dirNames[dirs[0]]] || grid.dirNames[dirs[0]];
 }
 
 /**
@@ -1310,8 +1309,13 @@ export function decodeConfigFromToken(token) {
 }
 
 export function buildShareUrl(cfg) {
-  const base = `${location.origin}${location.pathname}`;
-  return `${base}#c=${encodeConfigToToken(cfg)}`;
+  // 本地单文件（file://）打开时 location.origin 为字面量 "null"，
+  // 直接拼接会得到 "null/路径#c=…" 这种不可用的链接；
+  // 此时退回去掉片段后的完整地址，链接仍可在本机重新打开。
+  const origin = location.origin && location.origin !== 'null'
+    ? `${location.origin}${location.pathname}`
+    : String(location.href || '').split('#')[0];
+  return `${origin}#c=${encodeConfigToToken(cfg)}`;
 }
 
 export function readConfigFromLocation() {

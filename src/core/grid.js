@@ -42,6 +42,20 @@ export function dirNames(type) {
   return type === 'hex' ? HEX_DIR_NAMES : SQ_DIR_NAMES;
 }
 
+/** 方向键名 → 规范中文显示名（供界面展示 / 提示文本使用，内部键名保持不变） */
+export const DIR_LABEL_CN = {
+  up: '上', right: '右', down: '下', left: '左',
+  east: '东', southEast: '东南', southWest: '西南', west: '西', northWest: '西北', northEast: '东北',
+};
+
+/** 方向的中文显示名：dirLabel('square', 0) → '上' */
+export function dirLabel(type, index) {
+  const names = dirNames(type);
+  if (typeof index !== 'number') return DIR_LABEL_CN[index] || String(index);
+  const i = ((Math.round(index) % names.length) + names.length) % names.length;
+  return DIR_LABEL_CN[names[i]] || names[i];
+}
+
 /** 解析方向：支持名称（含中文别名）、索引 */
 export function parseDir(value, type) {
   const names = dirNames(type);
