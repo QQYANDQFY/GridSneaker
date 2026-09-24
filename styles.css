@@ -626,6 +626,64 @@ details.group.target {
 /* 搜索命中标注：无命中的分类淡出，有命中的分类加亮 */
 .cfg-tab-nav .btn.tab-btn.no-hits { opacity: 0.42; }
 .cfg-tab-nav .btn.tab-btn.has-hits:not(.on) { color: #d7ecff; }
+
+/* ---------------- 分组内的子选项卡（如「元胞自动机模式」） ---------------- */
+/*
+ * 单个分组内部仍然偏多的配置项（规则表、初始环境、交互与模板互相穿插），
+ * 用子选项卡再收敛一层。视觉上比四大类主选项卡更轻——更小的字号与内边距、
+ * 不使用阴影，避免与主选项卡争夺注意力；配色复用同一套 --tab-* 变量，保持整体一致。
+ */
+.cfg-sub-tabs { margin: 2px 0 4px; }
+.cfg-sub-tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+.cfg-sub-tab-nav .btn.tab-btn {
+  flex: 0 1 auto;
+  padding: 4px 9px;
+  font-size: 11px;
+  border-radius: 6px;
+  white-space: nowrap;
+  /* 未激活态压暗降饱和，与激活态形成明显色差（与主选项卡同一套变量） */
+  background: var(--tab-off-bg);
+  color: var(--tab-off-text);
+  border-color: var(--tab-off-border);
+}
+.cfg-sub-tab-nav .btn.tab-btn:hover {
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+}
+.cfg-sub-tab-nav .btn.tab-btn.on {
+  background: var(--tab-on-bg);
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+  font-weight: 600;
+}
+/* 子面板内的字段与折叠分组保持原样，仅去掉切换子页时的首行多余间距 */
+.cfg-sub-tabs .cfg-sub-tab-panel { padding-top: 2px; }
+
+/* 搜索时展开全部子页（与主选项卡一致），并标注子页名称，命中项不会藏在别的子页里 */
+.cfg-sub-tabs.searching .cfg-sub-tab-panel { display: block !important; }
+.cfg-sub-tabs.searching .cfg-sub-tab-panel + .cfg-sub-tab-panel {
+  border-top: 1px dashed var(--line);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.cfg-sub-tabs.searching .cfg-sub-tab-panel::before {
+  content: attr(data-sub-tab-label);
+  display: block;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 2px 0 4px;
+}
+/* 搜索期间子页全部铺开，切换按钮已无意义，隐藏以免让人误以为「点了没反应」 */
+.cfg-sub-tabs.searching .cfg-sub-tab-nav { display: none; }
+
 .stat-label { display: block; color: var(--muted); font-size: 10.5px; }
 /*
  * 术语说明的可发现性提示：带术语说明的统计格 / 统计项复选框，
@@ -986,6 +1044,7 @@ details.group.target {
   .check-wrap { padding: 3px 0; }
   .field { margin: 9px 0; }
   .cfg-tab-nav .btn.tab-btn { font-size: 12px; padding: 8px 10px; }
+  .cfg-sub-tab-nav .btn.tab-btn { font-size: 12px; padding: 6px 10px; }
   .save-row { padding: 6px 8px; }
 }
 

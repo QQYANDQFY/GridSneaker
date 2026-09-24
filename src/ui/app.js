@@ -10,6 +10,8 @@ import {
   MOVE_KEYS, MOVE_LABELS, MARKER_CONDITION_TYPES, MARKER_CONDITION_LABELS,
   CELL_TOOLS, CELL_TOOL_LABELS, isTrapState, MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES,
   SAFETY_ON_AVOID_MODES, SAFETY_ON_AVOID_LABELS,
+  CELL_PLACE_MODES, CELL_PLACE_MODE_LABELS, MAX_TIMED_PATCHES,
+  exportCaRuleset, parseCaRuleset, buildEnvironmentTemplate, parseEnvironmentTemplate,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -160,6 +162,14 @@ const state = {
   cfgSearch: '',
   /** 配置面板当前选项卡（四大类之一）：面板重建后保持用户所选类别 */
   cfgTab: 'core',
+  /** 「元胞自动机模式」分组内的子选项卡：面板重建后保持用户所选子页 */
+  caSubTab: 'core',
+  /**
+   * 延迟放置后需要停在的步数。
+   * 放置补丁会触发整轮重算（重算必然回到起点），这里记下目标步数，
+   * 重算完成后由 recompute 把播放位置跳回该步，保持「就在当前步放置」的操作手感。
+   */
+  pendingTick: null,
 };
 
 const els = {};
@@ -1259,6 +1269,14 @@ function recompute(opts = {}) {
   state.result = result;
   state.dirty = false;
   state.frameIndex = Math.min(state.frameIndex, result.frames.length - 1);
+  /**
+   * 延迟放置后回到放置所在的那一步：重算必然从第 0 步重新推进，
+   * 若把播放位置留在原地，用户会看不到刚放置的内容落在哪一步。
+   */
+  if (Number.isFinite(state.pendingTick)) {
+    state.frameIndex = frameIndexForTick(state.pendingTick);
+    state.pendingTick = null;
+  }
   // 得分系统：结算本轮得分并刷新该地图的最高分记录
   state.score = result.summary.score || null;
   state.highScore = loadHighScore(result.grid);
@@ -1720,6 +1738,67 @@ function paintedMap() {
   return map;
 }
 
+/** 画布当前停留的步数（帧快照的 tick）；尚未运行时为 0 */
+function currentEditorTick() {
+  if (!state.result) return 0;
+  const frame = state.result.frames[state.frameIndex];
+  return frame ? frame.tick : 0;
+}
+
+/**
+ * 解析本次编辑的「放置目标」：
+ *  - initial：写入 cellEditor.painted，作为第 0 步的初始环境（主循环前写入）；
+ *  - step：写入 cellEditor.timedPatches 中属于当前步的补丁，只在该步「推进之前」写入世界。
+ * 第 0 步（模拟尚未开始）时「当前步放置」与「初始环境」语义完全等价，
+ * 因此统一落到 painted，避免留下一批恒为 0 的补丁记录。
+ */
+function editorPlaceTarget() {
+  const ce = state.cfg.cellEditor;
+  if (ce.placeMode !== 'step' || !cellEditorActive()) return { mode: 'initial', tick: 0 };
+  const tick = currentEditorTick();
+  if (tick <= 0) return { mode: 'initial', tick: 0 };
+  return { mode: 'step', tick };
+}
+
+/**
+ * 当前放置目标对应的格子集合与写回函数。
+ * 两种目标的编辑动作（增 / 删 / 撤销 / 清空）完全共用一套逻辑，只是落点不同。
+ * forceMode 用于「清空手绘」这类需要显式指向初始环境、不受当前放置方式影响的入口。
+ */
+function editorTarget(forceMode) {
+  const ce = state.cfg.cellEditor;
+  const t = forceMode === 'initial' ? { mode: 'initial', tick: 0 } : editorPlaceTarget();
+  const map = new Map();
+  if (t.mode === 'initial') {
+    for (const p of ce.painted) map.set(`${p.col},${p.row}`, { col: p.col, row: p.row, state: p.state });
+    return {
+      mode: 'initial',
+      tick: 0,
+      label: '初始环境（第 0 步）',
+      emptyText: '当前没有手绘格子',
+      map,
+      commit: (m) => { ce.painted = [...m.values()]; },
+    };
+  }
+  for (const p of ce.timedPatches) {
+    if (p.tick === t.tick) map.set(`${p.col},${p.row}`, { col: p.col, row: p.row, state: p.state });
+  }
+  return {
+    mode: 'step',
+    tick: t.tick,
+    label: `当前步（第 ${t.tick} 步）`,
+    emptyText: `第 ${t.tick} 步没有放置补丁`,
+    map,
+    commit: (m) => {
+      const rest = ce.timedPatches.filter((p) => p.tick !== t.tick);
+      const added = [...m.values()].map((p) => ({ tick: t.tick, col: p.col, row: p.row, state: p.state }));
+      // 按 步数 → 行 → 列 排序：同一份放置结果的文件 / 链接表示恒定，便于比对与复现
+      ce.timedPatches = [...rest, ...added]
+        .sort((a, b) => a.tick - b.tick || a.row - b.row || a.col - b.col);
+    },
+  };
+}
+
 /** 画笔覆盖的格子（以点击格为中心取 n×n；n 为偶数时中心偏向左上） */
 function brushCells(col, row, n) {
   const size = Math.max(1, Math.round(n || 1));
@@ -1785,18 +1864,44 @@ function paintStateForCell() {
   return idx >= 0 ? 'marker' : (cfg.caMode.states[1] ? cfg.caMode.states[1].name : '');
 }
 
+/**
+ * 编辑快照：同时覆盖「初始环境」与「延迟放置补丁」两组数据，
+ * 因此无论当前放置目标是什么，撤销 / 重做都能整笔回退。
+ */
+function editSnapshot() {
+  const ce = state.cfg.cellEditor;
+  return JSON.stringify({ painted: ce.painted, timedPatches: ce.timedPatches });
+}
+
+/** 还原一份编辑快照 */
+function applyEditSnapshot(json) {
+  const snap = JSON.parse(json) || {};
+  state.cfg.cellEditor.painted = snap.painted || [];
+  state.cfg.cellEditor.timedPatches = snap.timedPatches || [];
+}
+
 /** 记录一次编辑前的快照（受 historyLimit 限制；0 表示不记录） */
 function pushEditHistory() {
   const limit = state.cfg.cellEditor.historyLimit;
   if (!limit) return;
-  editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+  editHistory.undo.push(editSnapshot());
   if (editHistory.undo.length > limit) editHistory.undo.shift();
   editHistory.redo.length = 0;
 }
 
-/** 把 Map 写回配置并重算（0 延时可被连续拖拽合并，避免逐格重算） */
-function commitPainted(map) {
-  state.cfg.cellEditor.painted = [...map.values()];
+/**
+ * 记录「放置后需要停留的步数」。
+ * 延迟放置写入的是某个具体步的补丁，重算后必须跳回该步，
+ * 否则用户会被拉回起点，看不到刚放置的内容落在哪一步。
+ */
+function markPlacedTick(target) {
+  if (target && target.mode === 'step') state.pendingTick = target.tick;
+}
+
+/** 把 Map 写回当前放置目标并重算（0 延时可被连续拖拽合并，避免逐格重算） */
+function commitPainted(map, target) {
+  const t = target || editorTarget();
+  t.commit(map);
   syncEditorCount();
   onSimChange(0);
 }
@@ -1804,8 +1909,9 @@ function commitPainted(map) {
 /** 在指定格执行一次「添加 / 删除」（再次单击已放置元素 = 删除） */
 function applyEditAt(col, row, opts = {}) {
   const ce = state.cfg.cellEditor;
+  const target = editorTarget();
   const cells = brushCells(col, row, ce.brushSize);
-  const map = paintedMap();
+  const map = target.map;
   pushEditHistory();
   // 拖拽 / 强制添加时只增不减；否则以「中心格是否已放置」决定本次是添加还是删除
   const removing = !opts.erase && !opts.force && map.has(`${col},${row}`);
@@ -1815,7 +1921,8 @@ function applyEditAt(col, row, opts = {}) {
     const st = paintStateForCell();
     if (st) map.set(k, { col: c.col, row: c.row, state: st });
   }
-  commitPainted(map);
+  commitPainted(map, target);
+  markPlacedTick(target);
 }
 
 /**
@@ -1823,7 +1930,8 @@ function applyEditAt(col, row, opts = {}) {
  * 不单独记录历史：整轮拖拽共用 mousedown 时压入的那一条快照，撤销时一次退掉整笔涂抹。
  */
 function paintByDrag(c) {
-  const map = paintedMap();
+  const target = editorTarget();
+  const map = target.map;
   const k = `${c.col},${c.row}`;
   if (editDrag.mode === 'erase') {
     map.delete(k);
@@ -1832,16 +1940,17 @@ function paintByDrag(c) {
     if (!st) return;
     map.set(k, { col: c.col, row: c.row, state: st });
   }
-  state.cfg.cellEditor.painted = [...map.values()];
+  target.commit(map);
   syncEditorCount();
+  markPlacedTick(target);
   onSimChange(0);
 }
 
 /** 撤销上一次编辑（返回 false 表示没有可撤销的历史） */
 function undoEdit() {
   if (!editHistory.undo.length) return false;
-  editHistory.redo.push(JSON.stringify(state.cfg.cellEditor.painted));
-  state.cfg.cellEditor.painted = JSON.parse(editHistory.undo.pop());
+  editHistory.redo.push(editSnapshot());
+  applyEditSnapshot(editHistory.undo.pop());
   syncEditorCount();
   onSimChange(0);
   return true;
@@ -1850,8 +1959,8 @@ function undoEdit() {
 /** 重做上一次被撤销的编辑（返回 false 表示没有可重做的历史） */
 function redoEdit() {
   if (!editHistory.redo.length) return false;
-  editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
-  state.cfg.cellEditor.painted = JSON.parse(editHistory.redo.pop());
+  editHistory.undo.push(editSnapshot());
+  applyEditSnapshot(editHistory.redo.pop());
   syncEditorCount();
   onSimChange(0);
   return true;
@@ -1861,7 +1970,8 @@ function redoEdit() {
 function scatterPainted() {
   const ce = state.cfg.cellEditor;
   const grid = state.result.grid;
-  const map = paintedMap();
+  const target = editorTarget();
+  const map = target.map;
   pushEditHistory();
   for (let row = 0; row < grid.height; row++) {
     for (let col = 0; col < grid.width; col++) {
@@ -1870,8 +1980,9 @@ function scatterPainted() {
       if (st) map.set(`${col},${row}`, { col, row, state: st });
     }
   }
-  commitPainted(map);
-  toast(`已按 ${(ce.scatterDensity * 100).toFixed(0)}% 密度随机散布`, 'success');
+  commitPainted(map, target);
+  markPlacedTick(target);
+  toast(`已按 ${(ce.scatterDensity * 100).toFixed(0)}% 密度随机散布到${target.label}`, 'success');
 }
 
 /** 清空全部手绘格子（破坏性操作，先经确认；清空后仍可撤销） */
@@ -1887,14 +1998,59 @@ async function clearPainted() {
   });
   if (!okClear) return;
   pushEditHistory();
-  commitPainted(new Map());
+  commitPainted(new Map(), editorTarget('initial'));
   toast('已清空手绘格子', 'success');
 }
 
-/** 刷新编辑面板上的「已绘制格数 · 可撤销步数」读数 */
+/** 清空当前步的延迟放置补丁（不影响其它步，也不影响初始环境） */
+async function clearStepPatch() {
+  const ce = state.cfg.cellEditor;
+  const tick = currentEditorTick();
+  const n = ce.timedPatches.filter((p) => p.tick === tick).length;
+  if (!n) { toast(`第 ${tick} 步没有延迟放置补丁`, 'info'); return; }
+  const okClear = await confirmDialog({
+    title: '清除当前步放置',
+    message: `将删除第 ${tick} 步的 ${n} 个延迟放置补丁（其它步的补丁与初始手绘环境不受影响），此操作可通过「撤销」回退。`,
+    confirmText: '清除',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!okClear) return;
+  const target = editorTarget();
+  pushEditHistory();
+  target.commit(new Map());
+  syncEditorCount();
+  onSimChange(0);
+  toast(`已清除第 ${tick} 步的延迟放置补丁`, 'success');
+}
+
+/** 清空全部延迟放置补丁（保留手绘的初始环境） */
+async function clearAllTimedPatches() {
+  const ce = state.cfg.cellEditor;
+  const n = ce.timedPatches.length;
+  if (!n) { toast('当前没有延迟放置补丁', 'info'); return; }
+  const ticks = new Set(ce.timedPatches.map((p) => p.tick)).size;
+  const okClear = await confirmDialog({
+    title: '清空全部延迟放置补丁',
+    message: `将删除全部 ${n} 个延迟放置补丁（分布在 ${ticks} 个步），手绘的初始环境不受影响，此操作可通过「撤销」回退。`,
+    confirmText: '清空',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!okClear) return;
+  pushEditHistory();
+  ce.timedPatches = [];
+  syncEditorCount();
+  onSimChange(0);
+  toast('已清空全部延迟放置补丁', 'success');
+}
+
+/** 刷新编辑面板上的「已绘制 / 延迟放置 / 可撤销」读数 */
 function syncEditorCount() {
   if (!editorCountEl) return;
-  editorCountEl.textContent = `已绘制 ${state.cfg.cellEditor.painted.length} 格 · 可撤销 ${editHistory.undo.length} 步`;
+  const ce = state.cfg.cellEditor;
+  const ticks = new Set(ce.timedPatches.map((p) => p.tick)).size;
+  editorCountEl.textContent = `已绘制 ${ce.painted.length} 格 · 延迟放置 ${ce.timedPatches.length} 格（${ticks} 个步） · 可撤销 ${editHistory.undo.length} 步`;
 }
 
 function bindCanvasEvents() {
@@ -1939,8 +2095,9 @@ function bindCanvasEvents() {
     if (!cellEditorActive() || e.button !== 0) return;
     const c = renderer.hitTest(e.clientX, e.clientY);
     if (!c) return;
-    // 起手格是否已有元素，决定「再次单击删除」以及本轮拖拽是连画还是连擦
-    const existed = state.cfg.cellEditor.painted.some((p) => p.col === c.col && p.row === c.row);
+    // 起手格是否已有元素，决定「再次单击删除」以及本轮拖拽是连画还是连擦。
+    // 判定基于当前放置目标（初始环境 / 当前步补丁），与编辑动作的落点保持一致。
+    const existed = editorTarget().map.has(`${c.col},${c.row}`);
     applyEditAt(c.col, c.row);
     // 开启「拖拽连画」后继续按住拖动可连画 / 连擦（本轮的增删模式由起手动作决定）
     if (state.cfg.cellEditor.drag) {
@@ -3573,8 +3730,12 @@ function applyConfigSearch(query) {
   const tabs = root.querySelector('.cfg-tabs');
   // 选项卡导航位于搜索框的吸顶容器内，因此从根节点取按钮
   const navBtns = [...root.querySelectorAll('.cfg-tab-nav .tab-btn')];
+  // 分组内的子选项卡（如「元胞自动机模式」）同样需要在搜索时全部展开，
+  // 否则命中项会藏在未激活的子页里看不见
+  const subTabs = [...root.querySelectorAll('.cfg-sub-tabs')];
   if (!q) {
     if (tabs) tabs.classList.remove('searching');
+    for (const s of subTabs) s.classList.remove('searching');
     for (const b of navBtns) b.classList.remove('has-hits', 'no-hits');
     for (const g of groups) {
       g.classList.remove('hidden');
@@ -3587,6 +3748,7 @@ function applyConfigSearch(query) {
   }
   // 搜索期间隐藏选项卡切换（全部分类同时可见），由分组级过滤决定显示内容
   if (tabs) tabs.classList.add('searching');
+  for (const s of subTabs) s.classList.add('searching');
   let matched = 0;
   for (const g of groups) {
     const hit = String(g.textContent || '').toLowerCase().includes(q);
@@ -4629,11 +4791,97 @@ function stateOptions() {
 
 /* ---------------- 元胞自动机 ---------------- */
 
+/**
+ * 「元胞自动机模式」分组内的子选项卡。
+ * 原先十余个配置项平铺在同一个折叠分组里——规则表、初始环境、交互与模板互相穿插，
+ * 想调某一项往往要来回滚动；这里按用户配置时的思考顺序收敛为五页：
+ * 先把规则定义清楚（核心规则 / 演化规则），再定初始环境（初始环境），
+ * 然后是它怎么与移动体协同、跑多久（运行与性能），最后是交互玩法与复用（交互与模板）。
+ * 子选项卡只改变配置项的归属，控件与取值完全保留，功能可访问性不变。
+ */
+const CA_SUB_TABS = [
+  { key: 'core', label: '核心规则', hint: '启用开关、环境状态集合、邻域与半径、边界条件、更新顺序' },
+  { key: 'rules', label: '演化规则', hint: '状态转移规则表，以及规则集的导入 / 导出（可跨场景传递）' },
+  { key: 'initial', label: '初始环境', hint: '第 0 步环境的生成方式，以及环境模板的保存与复用' },
+  { key: 'run', label: '运行与性能', hint: '与移动体的同步方式、演化间隔、稳定即收尾（避免无效长跑）' },
+  { key: 'extend', label: '交互与模板', hint: '标记物交互机制、快捷模板与模拟参数预设' },
+];
+
+/**
+ * 「已启用格子编辑器，但第 0 步没有任何初始环境」的友好警告。
+ * 判定条件：编辑器已启用，且
+ *  - 没有手工绘制的格子（cellEditor.painted 为空）；
+ *  - 元胞自动机的初始状态也等价于「全空」（随机散布密度为 0、图案文本为空白同样按全空处理）。
+ * 此时第 0 步画面上不会出现任何环境单元，用户很难观察到模拟的直观变化，
+ * 因此直接给出可操作的补充指引，并把「延迟放置」作为另一条可选路径点明。
+ */
+function caEditorEnvWarning() {
+  const cfg = state.cfg;
+  const ce = cfg.cellEditor;
+  if (!ce.enabled || ce.painted.length) return null;
+  const init = cfg.caMode.initial;
+  const caFills = cfg.caMode.enabled
+    && ((init.mode === 'random' && init.density > 0)
+      || (init.mode === 'pattern' && String(init.pattern || '').trim()));
+  if (caFills) return null;
+  const steps = new Set(ce.timedPatches.map((p) => p.tick));
+  const firstTick = steps.size ? Math.min(...steps) : 0;
+  return {
+    title: '第 0 步还没有初始环境',
+    text: '画布格子编辑器已启用，但模拟起点（第 0 步）既没有手工绘制的格子，元胞自动机的初始状态也等价于「全空」。'
+      + '这样运行后画面上不会出现任何环境单元，很难观测到模拟的直观变化。'
+      + (steps.size
+        ? `当前只有 ${ce.timedPatches.length} 格「延迟放置」补丁（最早在第 ${firstTick} 步生效），第 0 步仍是全空。`
+        : '请先在第 0 步补充环境：直接在画布上绘制，或把「初始环境 → 初始状态」改为「随机散布 / 图案文本」。')
+      + ' 也可以改用「当前步放置」，把环境安排在后续某一步出现。',
+  };
+}
+
+/** 把上述警告渲染为面板内的醒目提示条（无需提示时返回 null，不占用版面） */
+function caEditorEnvAlert() {
+  const warn = caEditorEnvWarning();
+  if (!warn) return null;
+  return h('div', { class: 'alert warn' },
+    h('span', { class: 'alert-icon' }, '⚠'),
+    h('div', { class: 'alert-text' },
+      h('strong', {}, warn.title),
+      h('div', {}, warn.text)),
+    button('去配置初始环境', () => {
+      state.caSubTab = 'initial';
+      activateCfgTab('extend');
+      rebuildAll();
+    }, 'primary small'));
+}
+
 function caGroup(cfg) {
   const ca = cfg.caMode;
-  const body = [
-    field('启用元胞自动机', chkBind(ca, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用')),
-    h('div', { class: 'hint' }, '环境单元按状态转移规则演化，可与移动体 / 环境规则同时生效（混合模式）。'),
+  // 子选项卡导航与面板：活动子页存放在 state.caSubTab，面板重建后仍停留在原页
+  const nav = h('div', { class: 'cfg-sub-tab-nav', role: 'tablist' });
+  const panels = new Map();
+  const buttons = new Map();
+  const activate = (key) => {
+    state.caSubTab = CA_SUB_TABS.some((t) => t.key === key) ? key : CA_SUB_TABS[0].key;
+    for (const t of CA_SUB_TABS) {
+      buttons.get(t.key).classList.toggle('on', t.key === state.caSubTab);
+      buttons.get(t.key).setAttribute('aria-selected', t.key === state.caSubTab ? 'true' : 'false');
+      panels.get(t.key).classList.toggle('hidden', t.key !== state.caSubTab);
+    }
+  };
+  for (const t of CA_SUB_TABS) {
+    const b = button(t.label, () => activate(t.key), 'tab-btn');
+    b.title = t.hint;
+    b.setAttribute('role', 'tab');
+    b.dataset.subTabKey = t.key;
+    buttons.set(t.key, b);
+    nav.appendChild(b);
+    panels.set(t.key, h('div', {
+      class: 'cfg-sub-tab-panel', role: 'tabpanel',
+      dataset: { subTabKey: t.key, subTabLabel: t.label },
+    }));
+  }
+
+  // 核心规则：状态集合 · 邻域 · 边界 · 更新顺序
+  panels.get('core').append(
     field('环境状态集合', stateListEditor(ca.states)),
     row(
       field('邻域', selBind(ca, 'neighborhood', () => onSimChange(), NEIGHBORHOODS)),
@@ -4643,6 +4891,17 @@ function caGroup(cfg) {
       field('边界条件', selBind(ca, 'boundary', () => onSimChange(), Object.entries(CA_BOUNDARY_LABELS).map(([value, label]) => ({ value, label })))),
       field('更新顺序', selBind(ca, 'update', () => onSimChange(), Object.entries(CA_UPDATE_LABELS).map(([value, label]) => ({ value, label })))),
     ),
+    h('div', { class: 'hint' }, '「更新顺序」决定同步 / 异步 / 随机三种推进方式，会同时影响演化结果与单步耗时；邻域半径越大，每步参与计算的格子越多。'),
+  );
+
+  // 演化规则：规则表 + 规则集导入导出
+  panels.get('rules').append(
+    field('状态转移规则表', caRulesEditor(ca)),
+    ...caRulesetSection(ca),
+  );
+
+  // 初始环境：第 0 步环境 + 环境模板
+  panels.get('initial').append(
     field('初始状态', selBind(ca.initial, 'mode', () => { onSimChange(); rebuildAll(); }, [
       { value: 'empty', label: '全空' }, { value: 'random', label: '随机散布' }, { value: 'pattern', label: '图案文本' },
     ])),
@@ -4656,6 +4915,12 @@ function caGroup(cfg) {
       ? field('图案文本', textArea(ca.initial.pattern, (v) => { ca.initial.pattern = v; onSimChange(); }, { rows: 5, placeholder: '每行一个字符串，O/#/状态符号 表示存活，. 表示空' }),
         '图案居中放置；符号可用状态首字母、O / X / # / @')
       : null,
+    h('div', { class: 'hint' }, '手工绘制的格子（画布格子编辑器 → 放置到「初始环境」）优先于「随机散布 / 图案文本」，两者可叠加使用。'),
+    ...caEnvTemplateSection(),
+  );
+
+  // 运行与性能
+  panels.get('run').append(
     row(
       field('与环境同步方式', selBind(ca, 'syncWithAgent', () => onSimChange(), [
         { value: 'beforeMove', label: '移动前演化' },
@@ -4669,9 +4934,15 @@ function caGroup(cfg) {
       chkBind(ca, 'stopOnStable', () => { onSimChange(); rebuildAll(); }, 'CA 进入稳定态时结束运行'),
       field('连续稳定步数', numBind(ca, 'stableSteps', () => onSimChange(), { min: 1, max: 1000 })),
     ), '连续若干次演化中所有单元都没有变化时结束运行（纯 CA 场景常用）；勾选后会同步打开「结束规则 → 元胞自动机稳定」'),
+    h('div', { class: 'hint' }, '性能提示：元胞自动机每步都要遍历全网格，是长跑时的主要开销。'
+      + '缩小「邻域半径」与网格尺寸的收益最直接；「与环境同步方式」设为「每 N 步演化」可线性降低演化开销；'
+      + '「稳定即收尾」能让已经不再变化的场景提前结束，避免无意义的空转。'),
+  );
+
+  // 交互与模板
+  panels.get('extend').append(
     field('标记物交互机制', markerInteractionEditor(ca),
       '把指定的元胞状态定义为「交互标记物」：蛇头进入该格时按反馈规则表产生长度 / 颜色变化，可设置消耗该标记物'),
-    field('状态转移规则表', caRulesEditor(ca)),
     field('快捷模板', row(
       button('生命游戏（无干涉）', () => applyCaTemplate(cfg, 'life'), 'ghost small'),
       button('生命游戏（交互）', () => applyCaTemplate(cfg, 'lifeInteractive'), 'ghost small'),
@@ -4679,8 +4950,245 @@ function caGroup(cfg) {
       button('森林火灾', () => applyCaTemplate(cfg, 'forest'), 'ghost small'),
       button('交通流', () => applyCaTemplate(cfg, 'traffic'), 'ghost small'),
     )),
+    ...caParamPresetSection(),
+  );
+
+  const wrap = h('div', { class: 'cfg-sub-tabs' }, nav);
+  for (const t of CA_SUB_TABS) wrap.appendChild(panels.get(t.key));
+  activate(state.caSubTab);
+
+  const body = [
+    field('启用元胞自动机', chkBind(ca, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用')),
+    h('div', { class: 'hint' }, '环境单元按状态转移规则演化，可与移动体 / 环境规则同时生效（混合模式）。'),
+    caEditorEnvAlert(),
+    wrap,
   ];
   return group('元胞自动机模式', body, { open: false, badge: ca.enabled ? '已启用' : '' });
+}
+
+/* ---------------- 本地命名记录（环境模板 / 参数预设） ---------------- */
+
+/** 环境模板与模拟参数预设的本地存储键；条数上限与「状态存档」保持同一量级 */
+const ENV_TEMPLATE_KEY = 'gridsneaker:env-templates';
+const CA_PARAM_PRESET_KEY = 'gridsneaker:ca-presets';
+const NAMED_STORE_LIMIT = 30;
+
+function readNamedStore(key) {
+  try {
+    const list = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(list) ? list.filter((x) => x && x.name) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeNamedStore(key, list) {
+  try {
+    localStorage.setItem(key, JSON.stringify(list.slice(0, NAMED_STORE_LIMIT)));
+    return true;
+  } catch (e) {
+    toast('本地存储写入失败（浏览器存储配额不足，可先删除旧记录）', 'error');
+    return false;
+  }
+}
+
+/**
+ * 本地命名记录管理块：名称输入 + 保存 + 列表（载入 / 删除）。
+ * 「环境模板」与「模拟参数预设」的交互完全一致，只有读写内容不同，故共用同一套构建逻辑。
+ * 列表就地刷新而不重建整个配置面板，保存 / 删除因此不会触发整轮重算。
+ */
+function namedStoreSection(opts) {
+  const nameInput = textInput('', () => {}, { placeholder: opts.placeholder });
+  const host = h('div', { class: 'save-list' });
+  const renderList = () => {
+    clear(host);
+    const list = readNamedStore(opts.storeKey);
+    if (!list.length) {
+      host.appendChild(h('div', { class: 'hint' }, opts.emptyText));
+      return;
+    }
+    for (const entry of list) {
+      host.appendChild(h('div', { class: 'save-row' },
+        h('span', { class: 'save-name', title: entry.name }, entry.name),
+        h('span', { class: 'mini-label' }, formatSaveTime(entry.savedAt)),
+        button('载入', () => opts.apply(entry), 'primary small'),
+        button('删除', () => {
+          writeNamedStore(opts.storeKey, readNamedStore(opts.storeKey).filter((x) => x.name !== entry.name));
+          toast(`已删除${opts.label}「${entry.name}」`, 'info');
+          renderList();
+        }, 'ghost small')));
+    }
+  };
+  const save = () => {
+    const name = String(nameInput.value || '').trim() || `${opts.defaultPrefix} ${formatSaveTime(Date.now())}`;
+    const list = readNamedStore(opts.storeKey).filter((x) => x.name !== name);
+    list.unshift({ name, savedAt: Date.now(), data: opts.build(name) });
+    if (!writeNamedStore(opts.storeKey, list)) return;
+    nameInput.value = '';
+    toast(`已保存${opts.label}「${name}」`, 'success');
+    renderList();
+  };
+  renderList();
+  return [
+    h('div', { class: 'sub-title' }, opts.title),
+    h('div', { class: 'hint' }, opts.hint),
+    field(opts.nameLabel, nameInput),
+    row(button(opts.saveText, save, 'primary'), ...(opts.extraButtons || [])),
+    ...(opts.extraNodes || []),
+    host,
+  ];
+}
+
+/**
+ * 规则集导入 / 导出。
+ * 规则集只含「状态转移规则表」本身，不夹带移动体、规则与外观配置，
+ * 因此可在不同场景 / 不同用户之间直接传递，导入后与手写的规则完全等价。
+ */
+function caRulesetSection(ca) {
+  const area = textArea('', () => {}, { rows: 4, placeholder: '在此粘贴规则集 JSON（本面板导出的格式，或规则数组）…' });
+  const importRules = (append) => {
+    let res;
+    try {
+      res = parseCaRuleset(area.value, ca.states);
+    } catch (e) {
+      toast(`规则集导入失败：${e.message}`, 'error');
+      return;
+    }
+    ca.rules = append ? [...ca.rules, ...res.rules] : res.rules;
+    area.value = '';
+    if (res.warnings.length) toast(res.warnings[0], 'warn');
+    else toast(`已${append ? '追加' : '覆盖'}导入 ${res.rules.length} 条规则`, 'success');
+    rebuildAll();
+  };
+  return [
+    h('div', { class: 'sub-title' }, '规则集导入 / 导出'),
+    h('div', { class: 'hint' }, '导出内容只包含状态转移规则表（附带状态名清单，便于对方核对），'
+      + '不包含移动体、环境规则与外观配置，因此可跨场景、跨用户直接传递。'),
+    row(
+      button('复制规则集', () => copyText(exportCaRuleset(ca), `规则集已复制（${ca.rules.length} 条规则）`)),
+      button('下载规则集', () => downloadText(`${safeName(state.cfg.meta.name)}-ca-rules.json`, exportCaRuleset(ca), 'application/json')),
+    ),
+    field('粘贴导入', h('div', {},
+      area,
+      row(
+        button('覆盖导入', () => importRules(false), 'primary small'),
+        button('追加导入', () => importRules(true), 'ghost small'),
+        button('清空输入', () => { area.value = ''; }, 'ghost small'),
+      )),
+    '「覆盖导入」替换现有规则表；「追加导入」保留现有规则并把导入的规则接在后面'),
+  ];
+}
+
+/** 载入环境模板：整体替换状态集合 / 初始状态 / 手绘格子（模板来源可以是本地记录，也可以是粘贴的 JSON） */
+function applyEnvironmentTemplate(entry) {
+  let tpl;
+  try {
+    tpl = parseEnvironmentTemplate(entry.data);
+  } catch (e) {
+    toast(`环境模板无效：${e.message}`, 'error');
+    return;
+  }
+  const cfg = state.cfg;
+  cfg.caMode.states = tpl.states;
+  cfg.caMode.initial = {
+    mode: tpl.initial.mode, density: tpl.initial.density, state: tpl.initial.state, pattern: tpl.initial.pattern,
+  };
+  cfg.cellEditor.painted = tpl.painted;
+  // 状态集合被整体替换后，原有规则可能引用已不存在的状态名：复用规则集解析器给出同口径提示
+  const ruleWarn = cfg.caMode.rules.length
+    ? (() => { try { return parseCaRuleset(cfg.caMode.rules, tpl.states).warnings[0] || ''; } catch (e) { return ''; } })()
+    : '';
+  const sizeDiff = tpl.grid.width !== cfg.grid.width || tpl.grid.height !== cfg.grid.height;
+  rebuildAll();
+  toast(sizeDiff
+    ? `已载入环境模板「${tpl.name}」（${tpl.painted.length} 格手绘环境）：模板网格尺寸与当前不同，超出当前网格的格子已被忽略`
+    : `已载入环境模板「${tpl.name}」（${tpl.painted.length} 格手绘环境）`, sizeDiff ? 'warn' : 'success');
+  if (ruleWarn) toast(ruleWarn, 'warn');
+}
+
+/** 「环境模板」区域：保存 / 复用 / 导出 / 导入当前初始环境 */
+function caEnvTemplateSection() {
+  const importArea = textArea('', () => {}, { rows: 3, placeholder: '在此粘贴环境模板 JSON…' });
+  return namedStoreSection({
+    storeKey: ENV_TEMPLATE_KEY,
+    title: '环境模板（保存与复用）',
+    hint: `环境模板 = 环境状态集合 + 初始状态 + 手工绘制的格子，不含移动体 / 规则 / 外观，因此可跨场景复用；保存在浏览器本地（最多 ${NAMED_STORE_LIMIT} 条）。`,
+    nameLabel: '模板名称',
+    placeholder: '模板名称（留空则按时间命名）',
+    defaultPrefix: '环境模板',
+    emptyText: '暂无环境模板。把当前初始环境保存下来，换场景时一键复用。',
+    saveText: '保存当前环境',
+    label: '环境模板',
+    build: (name) => buildEnvironmentTemplate(state.cfg, name),
+    apply: (entry) => applyEnvironmentTemplate(entry),
+    extraButtons: [
+      button('导出当前环境', () => downloadText(
+        `${safeName(state.cfg.meta.name)}-env.json`,
+        JSON.stringify(buildEnvironmentTemplate(state.cfg, state.cfg.meta.name), null, 2),
+        'application/json',
+      ), 'ghost'),
+    ],
+    extraNodes: [
+      field('粘贴导入模板', h('div', {},
+        importArea,
+        row(button('导入模板', () => {
+          let tpl;
+          try {
+            tpl = parseEnvironmentTemplate(importArea.value);
+          } catch (e) {
+            toast(`环境模板导入失败：${e.message}`, 'error');
+            return;
+          }
+          importArea.value = '';
+          applyEnvironmentTemplate({ name: tpl.name, data: tpl });
+        }, 'primary small'), button('清空输入', () => { importArea.value = ''; }, 'ghost small'))),
+      '导入会整体替换当前的「环境状态集合 / 初始状态 / 手绘格子」，可通过「撤销上次变更」或 Ctrl+Z 回退'),
+    ],
+  });
+}
+
+/**
+ * 可保存 / 复用的「模拟参数」字段。
+ * 刻意不含规则表与手绘环境：这样可以在一套固定的环境上快速切换邻域、边界、更新顺序等
+ * 演化参数组合，观察同一初始局面的不同演化结果。
+ */
+const CA_PARAM_KEYS = ['neighborhood', 'radius', 'boundary', 'update', 'syncWithAgent', 'every', 'stopOnStable', 'stableSteps'];
+
+function caParamSnapshot(ca) {
+  const out = {};
+  for (const k of CA_PARAM_KEYS) out[k] = ca[k];
+  out.initial = JSON.parse(JSON.stringify(ca.initial));
+  return out;
+}
+
+/** 「模拟参数预设」区域：保存 / 载入 / 删除一组演化参数 */
+function caParamPresetSection() {
+  return namedStoreSection({
+    storeKey: CA_PARAM_PRESET_KEY,
+    title: '模拟参数预设',
+    hint: `只保存演化参数（邻域 / 半径 / 边界 / 更新顺序 / 同步方式 / 演化间隔 / 稳定判定 / 初始状态，最多 ${NAMED_STORE_LIMIT} 条），不含规则表与手绘环境，因此可以在同一套环境上快速对比不同参数组合。`,
+    nameLabel: '预设名称',
+    placeholder: '预设名称（留空则按时间命名）',
+    defaultPrefix: '参数预设',
+    emptyText: '暂无参数预设。调好一组演化参数后保存，之后一键切换。',
+    saveText: '保存当前参数',
+    label: '参数预设',
+    build: () => caParamSnapshot(state.cfg.caMode),
+    apply: (entry) => {
+      const data = entry.data && typeof entry.data === 'object' ? entry.data : {};
+      let n = 0;
+      for (const k of CA_PARAM_KEYS) {
+        if (data[k] === undefined) continue;
+        state.cfg.caMode[k] = data[k];
+        n++;
+      }
+      if (data.initial) {
+        state.cfg.caMode.initial = { mode: 'empty', density: 0.3, state: '', pattern: '', ...data.initial };
+      }
+      rebuildAll();
+      toast(`已载入参数预设「${entry.name}」（${n} 项参数）`, 'success');
+    },
+  });
 }
 
 function stateListEditor(states) {
@@ -5249,6 +5757,23 @@ function cellEditorGroup(cfg) {
   // 「本次点击实际会写入哪个状态」的实时读数：把「自动」的解析结果摊开，避免选择歧义
   const placedStateLabel = h('div', { class: 'hint' },
     `本次点击将放置：${stateLabel(cellEditorStateName(cfg)) || '无'}（${cellEditorStateName(cfg) || '—'}）`);
+  /**
+   * 「本次点击会落到哪一步」的实时读数。
+   * 延迟放置的关键在于「只对当前步及之后生效」，把落点摊开写明才能让用户放心操作。
+   */
+  const placeHint = h('div', { class: 'hint' }, '');
+  const syncPlaceHint = () => {
+    const tick = currentEditorTick();
+    if (ce.placeMode !== 'step') {
+      placeHint.textContent = '本次点击将写入「初始环境（第 0 步）」：手绘格子在整个模拟开始前写入世界，是环境演化的起点。';
+    } else if (!cellEditorActive() || tick <= 0) {
+      placeHint.textContent = `当前停留在第 ${tick} 步（模拟起点），「当前步放置」与「初始环境」等价，本次点击仍写入第 0 步；`
+        + '向后推进到任意步后，点击即写入该步。';
+    } else {
+      placeHint.textContent = `本次点击将写入第 ${tick} 步：只影响该步及其之后的帧，此前已完成的帧保持原样（不回溯）。`;
+    }
+  };
+  syncPlaceHint();
   const body = [
     switchField('启用画布格子编辑', chkBind(ce, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用'),
       '开启后：左键单击格子添加元素、再次单击同一格删除；关闭时点击画布仍是「跳到该格首次经过的步数」'),
@@ -5258,6 +5783,15 @@ function cellEditorGroup(cfg) {
     return group('画布格子编辑器', body, { open: false });
   }
   body.push(
+    h('div', { class: 'sub-title' }, '放置方式'),
+    field('放置到', select(ce.placeMode, CELL_PLACE_MODES.map((v) => ({ value: v, label: CELL_PLACE_MODE_LABELS[v] })), (v) => {
+      ce.placeMode = v;
+      onSimChange(0);
+      rebuildAll();
+    }), '「初始环境」写入第 0 步；「当前步放置」把格子写进当前所在步数，不回溯影响此前已完成的模拟帧'),
+    placeHint,
+    caEditorEnvAlert(),
+
     h('div', { class: 'sub-title' }, '放置工具'),
     field('编辑工具', select(ce.tool, CELL_TOOLS.map((v) => ({ value: v, label: CELL_TOOL_LABELS[v] })), (v) => { ce.tool = v; onSimChange(); rebuildAll(); }),
       '标记物 / 障碍物 / 元胞自动机状态 / 擦除：擦除工具下点击即清空格子'),
@@ -5303,6 +5837,13 @@ function cellEditorGroup(cfg) {
       button('重做', () => { if (!redoEdit()) toast('没有可重做的编辑', 'info'); }, 'ghost'),
       button('清空手绘', clearPainted, 'ghost danger'),
     ),
+    // 延迟放置的清理入口：只在「当前步放置」模式或确实存在补丁时出现，避免长期占据版面
+    (ce.placeMode === 'step' || ce.timedPatches.length)
+      ? row(
+        button('清除本步放置', clearStepPatch, 'ghost danger'),
+        button('清空全部延迟放置', clearAllTimedPatches, 'ghost danger'),
+      )
+      : null,
     editorCountEl,
   );
   return group('画布格子编辑器', body, { open: false, badge: `${ce.painted.length} 格` });

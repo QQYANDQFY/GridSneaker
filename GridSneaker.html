@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
   <style>
-:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078;--tab-off-bg:#10141b;--tab-off-text:#8394a8;--tab-off-border:#232c3a;--tab-on-bg:#2f6da8;--tab-on-text:#ffffff;--tab-on-border:#7cc0ff}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.tooltip.term-tip{max-width:min(380px,76vw)}.tooltip .tip-term{display:block;color:var(--accent);font-size:12px;margin-bottom:3px}.tooltip .tip-desc{display:block;color:var(--text);line-height:1.55}.tooltip .tip-desc b{color:var(--accent);font-weight:600}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.controls-line.speed-line{flex-wrap:nowrap}.controls-line.speed-line .speed-wrap{flex:1 1 auto;min-width:120px}.run-loading{color:#ffd166;font-size:11px}.run-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.switch-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:2px;min-height:30px;margin:7px 0;padding:3px 0;border-bottom:1px dashed var(--line)}.switch-field:last-child{border-bottom:none}.switch-field>.switch-label{color:var(--muted);font-size:11.5px;line-height:20px;min-width:0}.switch-field>.switch-control{display:flex;align-items:center;gap:8px;justify-self:end;line-height:20px}.switch-field>.switch-control .check-wrap{padding:0;line-height:20px}.switch-field>.switch-control .checkbox{margin:0}.switch-field>.switch-hint{grid-column:1 / -1;color:#6f7d8c;font-size:11px;line-height:1.5}.switch-field>.switch-hint .mini-label{display:block}.panel-tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.divider{height:1px;background:var(--line);margin:10px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.chip-item{display:inline-flex;align-items:center;gap:2px}.chip-help{width:15px;height:15px;padding:0;border-radius:50%;border:1px solid var(--line);background:#0d1117;color:var(--muted);font-size:10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:help}.chip-help:hover,.chip-help:focus-visible{color:var(--text);border-color:var(--accent)}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}details.group.target{outline:2px solid #ffd166;outline-offset:2px;border-radius:8px;animation:end-row-flash 0.5s ease-in-out 4 alternate}.end-hint-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap;background:var(--tab-off-bg);color:var(--tab-off-text);border-color:var(--tab-off-border)}.cfg-tab-nav .btn.tab-btn:hover{color:var(--tab-on-text);border-color:var(--tab-on-border)}.cfg-tab-nav .btn.tab-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);border-color:var(--tab-on-border);font-weight:600;box-shadow:inset 0 0 0 1px var(--tab-on-border),0 2px 8px rgba(0,0,0,0.35)}.cfg-tab-panel{padding-top:2px}.cfg-tab-panel>.group:first-child{margin-top:2px}.group .group-body>.group{margin-left:5px}.group .group-body>.group>summary{font-size:12px}.tab-preview{display:flex;gap:6px;margin:6px 0 8px}.tab-preview .tab-demo{padding:5px 12px;border-radius:7px;border:1px solid var(--tab-off-border);background:var(--tab-off-bg);color:var(--tab-off-text);font-size:11.5px}.tab-preview .tab-demo.on{border-color:var(--tab-on-border);background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat.has-term .stat-label,.check-wrap.has-term>span{cursor:help;text-decoration:underline dotted;text-decoration-color:rgba(150,175,200,0.45);text-underline-offset:2px}.stat.has-term:hover .stat-label{color:var(--text)}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:var(--tab-off-bg);color:var(--tab-off-text);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#canvas.editing{cursor:crosshair}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}body.compact .panel{padding:5px}body.compact .group{margin:5px 0;border-radius:7px}body.compact .group>summary{padding:5px 8px;font-size:12px}body.compact .group-body{padding:2px 8px 6px}body.compact .field{margin:4px 0}body.compact .field-label{margin-bottom:2px;font-size:11px}body.compact .field-hint{margin-top:2px;font-size:10.5px}body.compact .switch-field{margin:4px 0;padding:1px 0;min-height:26px}body.compact .row{gap:6px}body.compact .hint{margin:2px 0;font-size:10.5px}body.compact .sub-title{margin:6px 0 1px;font-size:11.5px}body.compact .divider{margin:6px 0 0}body.compact .stage-stats{gap:5px}body.compact .stat{padding:4px 6px}body.compact .stat-value{font-size:12px}body.compact .mode-switch{margin:2px 0}body.compact .panel-tools{margin-bottom:5px}
+:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078;--tab-off-bg:#10141b;--tab-off-text:#8394a8;--tab-off-border:#232c3a;--tab-on-bg:#2f6da8;--tab-on-text:#ffffff;--tab-on-border:#7cc0ff}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.tooltip.term-tip{max-width:min(380px,76vw)}.tooltip .tip-term{display:block;color:var(--accent);font-size:12px;margin-bottom:3px}.tooltip .tip-desc{display:block;color:var(--text);line-height:1.55}.tooltip .tip-desc b{color:var(--accent);font-weight:600}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.controls-line.speed-line{flex-wrap:nowrap}.controls-line.speed-line .speed-wrap{flex:1 1 auto;min-width:120px}.run-loading{color:#ffd166;font-size:11px}.run-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.switch-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:2px;min-height:30px;margin:7px 0;padding:3px 0;border-bottom:1px dashed var(--line)}.switch-field:last-child{border-bottom:none}.switch-field>.switch-label{color:var(--muted);font-size:11.5px;line-height:20px;min-width:0}.switch-field>.switch-control{display:flex;align-items:center;gap:8px;justify-self:end;line-height:20px}.switch-field>.switch-control .check-wrap{padding:0;line-height:20px}.switch-field>.switch-control .checkbox{margin:0}.switch-field>.switch-hint{grid-column:1 / -1;color:#6f7d8c;font-size:11px;line-height:1.5}.switch-field>.switch-hint .mini-label{display:block}.panel-tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.divider{height:1px;background:var(--line);margin:10px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.chip-item{display:inline-flex;align-items:center;gap:2px}.chip-help{width:15px;height:15px;padding:0;border-radius:50%;border:1px solid var(--line);background:#0d1117;color:var(--muted);font-size:10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:help}.chip-help:hover,.chip-help:focus-visible{color:var(--text);border-color:var(--accent)}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}details.group.target{outline:2px solid #ffd166;outline-offset:2px;border-radius:8px;animation:end-row-flash 0.5s ease-in-out 4 alternate}.end-hint-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap;background:var(--tab-off-bg);color:var(--tab-off-text);border-color:var(--tab-off-border)}.cfg-tab-nav .btn.tab-btn:hover{color:var(--tab-on-text);border-color:var(--tab-on-border)}.cfg-tab-nav .btn.tab-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);border-color:var(--tab-on-border);font-weight:600;box-shadow:inset 0 0 0 1px var(--tab-on-border),0 2px 8px rgba(0,0,0,0.35)}.cfg-tab-panel{padding-top:2px}.cfg-tab-panel>.group:first-child{margin-top:2px}.group .group-body>.group{margin-left:5px}.group .group-body>.group>summary{font-size:12px}.tab-preview{display:flex;gap:6px;margin:6px 0 8px}.tab-preview .tab-demo{padding:5px 12px;border-radius:7px;border:1px solid var(--tab-off-border);background:var(--tab-off-bg);color:var(--tab-off-text);font-size:11.5px}.tab-preview .tab-demo.on{border-color:var(--tab-on-border);background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.cfg-sub-tabs{margin:2px 0 4px}.cfg-sub-tab-nav{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid var(--line)}.cfg-sub-tab-nav .btn.tab-btn{flex:0 1 auto;padding:4px 9px;font-size:11px;border-radius:6px;white-space:nowrap;background:var(--tab-off-bg);color:var(--tab-off-text);border-color:var(--tab-off-border)}.cfg-sub-tab-nav .btn.tab-btn:hover{color:var(--tab-on-text);border-color:var(--tab-on-border)}.cfg-sub-tab-nav .btn.tab-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);border-color:var(--tab-on-border);font-weight:600}.cfg-sub-tabs .cfg-sub-tab-panel{padding-top:2px}.cfg-sub-tabs.searching .cfg-sub-tab-panel{display:block !important}.cfg-sub-tabs.searching .cfg-sub-tab-panel+.cfg-sub-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-sub-tabs.searching .cfg-sub-tab-panel::before{content:attr(data-sub-tab-label);display:block;color:var(--accent);font-size:11px;font-weight:600;margin:2px 0 4px}.cfg-sub-tabs.searching .cfg-sub-tab-nav{display:none}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat.has-term .stat-label,.check-wrap.has-term>span{cursor:help;text-decoration:underline dotted;text-decoration-color:rgba(150,175,200,0.45);text-underline-offset:2px}.stat.has-term:hover .stat-label{color:var(--text)}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:var(--tab-off-bg);color:var(--tab-off-text);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:var(--tab-on-bg);color:var(--tab-on-text);font-weight:600}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#canvas.editing{cursor:crosshair}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.cfg-sub-tab-nav .btn.tab-btn{font-size:12px;padding:6px 10px}.save-row{padding:6px 8px}}body.compact .panel{padding:5px}body.compact .group{margin:5px 0;border-radius:7px}body.compact .group>summary{padding:5px 8px;font-size:12px}body.compact .group-body{padding:2px 8px 6px}body.compact .field{margin:4px 0}body.compact .field-label{margin-bottom:2px;font-size:11px}body.compact .field-hint{margin-top:2px;font-size:10.5px}body.compact .switch-field{margin:4px 0;padding:1px 0;min-height:26px}body.compact .row{gap:6px}body.compact .hint{margin:2px 0;font-size:10.5px}body.compact .sub-title{margin:6px 0 1px;font-size:11.5px}body.compact .divider{margin:6px 0 0}body.compact .stage-stats{gap:5px}body.compact .stat{padding:4px 6px}body.compact .stat-value{font-size:12px}body.compact .mode-switch{margin:2px 0}body.compact .panel-tools{margin-bottom:5px}
   </style>
 </head>
 <body>
@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.8.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.9.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -816,12 +816,20 @@ __MODULES["src/core/config.js"]=(function(){
 const{normalizeStates}=__MODULES["src/core/world.js"];
 const{Grid,parseDir,dirNames,DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const{patternStateNameAt,clearPatternCell,parsePatternText}=__MODULES["src/core/ca.js"];
-const CONFIG_VERSION='1.4';
+const CONFIG_VERSION='1.5';
 const MAX_STEPS_LIMIT=1e15;
 const DEFAULT_RUN_FRAME_CAP=20000;
 const MAX_RUN_FRAME_CAP=200000;
 const LIFE_MIN=1;
 const LIFE_MAX=9;
+const CELL_PLACE_MODES=['initial','step'];
+const CELL_PLACE_MODE_LABELS={
+initial:'初始环境（写入第 0 步）',
+step:'当前步放置（仅本步及之后生效）',
+};
+const MAX_TIMED_PATCHES=2000;
+const CA_RULESET_KIND='gridsneaker:ca-rules';
+const ENV_TEMPLATE_KIND='gridsneaker:env-template';
 const END_PRIORITY_DEFAULT=[
 'wall',
 'outOfBounds',
@@ -1153,6 +1161,8 @@ rightClickErase:true,
 historyLimit:60,
 scatterDensity:0.15,
 painted:[],
+placeMode:'initial',
+timedPatches:[],
 },
 endConditions:{
 wall:true,
@@ -1458,7 +1468,7 @@ stop:Math.max(0,num(r.moves?.stop,0)),
 priority:Math.round(num(r.priority,1)),
 }));
 }
-function normCaRules(raw){
+function normalizeCaRules(raw){
 if(!Array.isArray(raw))return[];
 return raw.map((r,i)=>{
 const counts=Array.isArray(r.counts)
@@ -1716,6 +1726,16 @@ if(!names.has(state)||state==='empty')continue;
 map.set(`${col},${row}`,{col,row,state});
 }
 const pool=Array.isArray(src.randomPool)?src.randomPool.map(String):[];
+const timedMap=new Map();
+for(const item of Array.isArray(src.timedPatches)?src.timedPatches:[]){
+const tick=Math.round(num(item?.tick,-1));
+const col=Math.round(num(item?.col,-1));
+const row=Math.round(num(item?.row,-1));
+const state=String(item?.state??'');
+if(tick<0||col<0||row<0||col>=grid.width||row>=grid.height)continue;
+if(!names.has(state)||state==='empty')continue;
+timedMap.set(`${tick},${col},${row}`,{tick,col,row,state});
+}
 const stateName=String(src.stateName??'');
 const validState=stateName&&stateName!=='empty'&&names.has(stateName)?stateName:'';
 return{
@@ -1733,6 +1753,8 @@ rightClickErase:bool(src.rightClickErase,d.rightClickErase),
 historyLimit:clamp(Math.round(num(src.historyLimit,d.historyLimit)),0,1000),
 scatterDensity:clamp(num(src.scatterDensity,d.scatterDensity),0,1),
 painted:[...map.values()],
+placeMode:CELL_PLACE_MODES.includes(src.placeMode)?src.placeMode:d.placeMode,
+timedPatches:[...timedMap.values()].slice(0,MAX_TIMED_PATCHES),
 };
 }
 function obstacleTypeForState(cfg,stateName){
@@ -1945,7 +1967,7 @@ neighborhood:normNeighborhood(caRaw.neighborhood),
 radius:clamp(Math.round(num(caRaw.radius,1)),1,4),
 boundary:['fixed','wrap','reflect'].includes(caRaw.boundary)?caRaw.boundary:'wrap',
 update:['synchronous','asynchronous','random'].includes(caRaw.update)?caRaw.update:'synchronous',
-rules:normCaRules(caRaw.rules),
+rules:normalizeCaRules(caRaw.rules),
 initial:{
 mode:['empty','random','pattern'].includes(caRaw.initial?.mode)?caRaw.initial.mode:'empty',
 density:clamp(num(caRaw.initial?.density,0.3),0,1),
@@ -2039,6 +2061,114 @@ const y=pb[i]||0;
 if(x!==y)return x<y;
 }
 return false;
+}
+function exportCaRuleset(caMode){
+const ca=caMode&&typeof caMode==='object'?caMode:{};
+return JSON.stringify({
+kind:CA_RULESET_KIND,
+version:1,
+states:(Array.isArray(ca.states)?ca.states:[]).map((s)=>(typeof s==='string'?s:s&&s.name)).filter(Boolean),
+rules:Array.isArray(ca.rules)?ca.rules:[],
+},null,2);
+}
+function parseCaRuleset(text,states=[]){
+let obj=text;
+if(typeof obj==='string'){
+try{
+obj=JSON.parse(obj);
+}catch(e){
+throw new Error(`JSON 解析失败：${e.message}`);
+}
+}
+const rawList=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.rules)?obj.rules:null);
+if(!rawList)throw new Error('未找到规则表：应为规则数组，或包含 rules 数组的对象');
+if(!rawList.length)throw new Error('规则表为空，没有可导入的规则');
+const rules=normalizeCaRules(rawList);
+const names=new Set((Array.isArray(states)?states:[])
+.map((s)=>(typeof s==='string'?s:s&&s.name))
+.filter(Boolean));
+const warnings=[];
+if(names.size){
+const missing=new Set();
+for(const r of rules){
+const froms=Array.isArray(r.from)?r.from:[];
+for(const f of froms)if(!names.has(f))missing.add(f);
+if(!names.has(r.to))missing.add(r.to);
+for(const c of r.counts)if(!names.has(c.state))missing.add(c.state);
+}
+if(missing.size){
+warnings.push(`规则引用了当前环境状态集合中不存在的状态：${[...missing].join('、')}（这些引用会被当作「空格」处理）`);
+}
+}
+return{rules,warnings};
+}
+function buildEnvironmentTemplate(cfg,name){
+const c=cfg&&typeof cfg==='object'?cfg:{};
+const ca=c.caMode||{};
+const ce=c.cellEditor||{};
+const grid=c.grid||{};
+return{
+kind:ENV_TEMPLATE_KIND,
+version:1,
+name:String(name||'').trim()||'未命名环境',
+states:JSON.parse(JSON.stringify(Array.isArray(ca.states)?ca.states:[])),
+initial:JSON.parse(JSON.stringify(ca.initial||{mode:'empty',density:0.3,state:'',pattern:''})),
+painted:JSON.parse(JSON.stringify(Array.isArray(ce.painted)?ce.painted:[])),
+grid:{
+type:grid.type==='hex'?'hex':'square',
+width:Math.max(0,Math.round(Number(grid.width)||0)),
+height:Math.max(0,Math.round(Number(grid.height)||0)),
+},
+};
+}
+function parseEnvironmentTemplate(textOrObj){
+let obj=textOrObj;
+if(typeof obj==='string'){
+try{
+obj=JSON.parse(obj);
+}catch(e){
+throw new Error(`JSON 解析失败：${e.message}`);
+}
+}
+if(!obj||typeof obj!=='object'||Array.isArray(obj)){
+throw new Error('环境模板格式不正确（应为对象或模板 JSON 文本）');
+}
+const states=normalizeStates(obj.states);
+if(states.length<2)throw new Error('环境模板缺少有效的状态集合（至少需要一个非空状态）');
+const names=new Set(states.map((s)=>s.name));
+const initRaw=obj.initial&&typeof obj.initial==='object'?obj.initial:{};
+const initial={
+mode:['empty','random','pattern'].includes(initRaw.mode)?initRaw.mode:'empty',
+density:clamp(num(initRaw.density,0.3),0,1),
+state:names.has(initRaw.state)?String(initRaw.state):(states[1]?states[1].name:''),
+pattern:str(initRaw.pattern,''),
+};
+const painted=[];
+const seen=new Set();
+for(const item of Array.isArray(obj.painted)?obj.painted:[]){
+const col=Math.round(num(item?.col,-1));
+const row=Math.round(num(item?.row,-1));
+const state=String(item?.state??'');
+if(col<0||row<0|| !names.has(state)||state==='empty')continue;
+const key=`${col},${row}`;
+if(seen.has(key))continue;
+seen.add(key);
+painted.push({col,row,state});
+}
+const g=obj.grid&&typeof obj.grid==='object'?obj.grid:{};
+return{
+kind:ENV_TEMPLATE_KIND,
+version:1,
+name:String(obj.name||'').trim()||'未命名环境',
+states,
+initial,
+painted,
+grid:{
+type:g.type==='hex'?'hex':'square',
+width:clamp(Math.round(num(g.width,0)),0,400),
+height:clamp(Math.round(num(g.height,0)),0,400),
+},
+};
 }
 const DIAG_LEVELS=['error','warning','info'];
 const GRID_MAX=400;
@@ -2490,7 +2620,7 @@ console.warn('分享链接解析失败',e);
 return null;
 }
 }
-return{defaultConfig,defaultRule,defaultClause,MAX_AGENT_SLOTS,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,obstacleTypeForState,markerConditionMet,markerTypesForState,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP,INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES};
+return{defaultConfig,defaultRule,defaultClause,MAX_AGENT_SLOTS,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,agentSafetyEnabled,obstacleTypeForState,markerConditionMet,markerTypesForState,DEFAULT_RUN_FRAME_CAP,MAX_RUN_FRAME_CAP,INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS,CELL_PLACE_MODE_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES,CELL_PLACE_MODES,MAX_TIMED_PATCHES,exportCaRuleset,parseCaRuleset,buildEnvironmentTemplate,parseEnvironmentTemplate};
 })();
 __MODULES["src/core/trail.js"]=(function(){
 function colOf(grid,index){
@@ -4707,6 +4837,13 @@ if(ca)ca.init(world,rng);
 for(const p of(cfg.cellEditor&&Array.isArray(cfg.cellEditor.painted)?cfg.cellEditor.painted:[])){
 world.set(p,p.state);
 }
+const timedByTick=new Map();
+for(const p of(cfg.cellEditor&&Array.isArray(cfg.cellEditor.timedPatches)?cfg.cellEditor.timedPatches:[])){
+const t=Math.max(0,Math.round(Number(p.tick))||0);
+if(!timedByTick.has(t))timedByTick.set(t,[]);
+timedByTick.get(t).push(p);
+}
+for(const p of timedByTick.get(0)||[])world.set(p,p.state);
 this.runtimeDiagnostics=[];
 this.diagCodes.clear();
 const bodyOn=isBodyEnabled(cfg);
@@ -4802,6 +4939,26 @@ endReason=maxStepsEnabled
 break;
 }
 tick++;
+const timedHits=timedByTick.get(tick);
+let timedDirty=false;
+if(timedHits){
+for(const p of timedHits){
+world.set(p,p.state);
+timedDirty=true;
+}
+pushLog({
+tick,
+ruleId:'cellEditor',
+ruleName:'画布格子编辑器',
+trigger:'timedPlace',
+subject:'延迟放置',
+coord:{col:timedHits[0].col,row:timedHits[0].row},
+priority:0,
+condition:`在第 ${tick} 步（当前步）放置环境`,
+actions:`就地写入 ${timedHits.length} 格`,
+text:`第 ${tick} 步延迟放置：就地改写 ${timedHits.length} 格环境，此前帧不受影响`,
+});
+}
 const ctx={
 grid,
 world,
@@ -4816,7 +4973,7 @@ logs,
 log:pushLog,
 highlights:[],
 events:[],
-cellsDirty:false,
+cellsDirty:timedDirty,
 ca,
 spawnCtl,
 };
@@ -6214,7 +6371,7 @@ return difficultyOf(stats,grid).speedScale;
 return{difficultyOf};
 })();
 __MODULES["src/core/config-diff.js"]=(function(){
-const{INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS}=__MODULES["src/core/config.js"];
+const{INTERACTION_LABELS,SPAWN_LABELS,CELL_TOOL_LABELS,SAFETY_ON_AVOID_LABELS,CELL_PLACE_MODE_LABELS}=__MODULES["src/core/config.js"];
 const{CA_UPDATE_LABELS,CA_BOUNDARY_LABELS}=__MODULES["src/core/ca.js"];
 const{DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const CONFIG_SECTION_LABELS={
@@ -6292,6 +6449,7 @@ tool:'当前工具',markerTypeId:'标记物类型',obstacleTypeId:'障碍物类�
 randomObstacle:'随机放置障碍物',randomPool:'随机池',randomProbability:'随机放置概率',
 brushSize:'画笔尺寸',drag:'拖拽连画',rightClickErase:'右键擦除',
 historyLimit:'撤销历史上限',scatterDensity:'散布密度',painted:'已绘制格子',
+placeMode:'放置方式',timedPatches:'延迟放置补丁',
 };
 const VALUE_LABELS_BY_PATH={
 'grid.type':{square:'方格图（4 方向）',hex:'六边形图（6 方向）'},
@@ -6320,6 +6478,7 @@ hex:'6 邻域（六边形）',radius:'半径 r 邻域',
 'style.trailJoin':{curve:'曲线（贝塞尔）',line:'直线',angle:'预设角度切角'},
 'style.bodyJoin':{curve:'曲线（贝塞尔）',line:'直线',angle:'预设角度切角'},
 'cellEditor.tool':CELL_TOOL_LABELS,
+'cellEditor.placeMode':CELL_PLACE_MODE_LABELS,
 'safety.onAvoid':SAFETY_ON_AVOID_LABELS,
 };
 const VALUE_LABELS_BY_KEY={
@@ -8942,7 +9101,7 @@ return openDialog({...opts,alert:true});
 return{h,clear,group,field,row,button,numberInput,textInput,textArea,select,checkbox,range,colorInput,numBind,selBind,chkBind,textBind,rangeBind,colorBind,toast,formatNumber,confirmDialog,alertDialog,dialogOpen,switchField};
 })();
 __MODULES["src/ui/app.js"]=(function(){
-const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MAX_AGENT_SLOTS,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,CELL_TOOL_LABELS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES,SAFETY_ON_AVOID_LABELS}=__MODULES["src/core/config.js"];
+const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX,DEFAULT_HIDDEN_STATS,TAB_COLOR_KEYS,TAB_COLORS_DEFAULT,MAX_AGENT_SLOTS,MOVE_KEYS,MOVE_LABELS,MARKER_CONDITION_TYPES,MARKER_CONDITION_LABELS,CELL_TOOLS,CELL_TOOL_LABELS,isTrapState,MAX_MARKER_TYPES,MAX_OBSTACLE_TYPES,SAFETY_ON_AVOID_MODES,SAFETY_ON_AVOID_LABELS,CELL_PLACE_MODES,CELL_PLACE_MODE_LABELS,MAX_TIMED_PATCHES,exportCaRuleset,parseCaRuleset,buildEnvironmentTemplate,parseEnvironmentTemplate}=__MODULES["src/core/config.js"];
 const{defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText}=__MODULES["src/core/trail.js"];
 const{PRESETS,buildPresetConfig,matchPreset}=__MODULES["src/core/presets.js"];
 const{Simulation,DEFAULT_FRAME_CAP,MAX_FRAME_CAP,MAX_STORED_FRAMES}=__MODULES["src/core/simulation.js"];
@@ -9039,6 +9198,8 @@ cfgBaseline:null,
 cfgHistory:[],
 cfgSearch:'',
 cfgTab:'core',
+caSubTab:'core',
+pendingTick:null,
 };
 const els={};
 let renderer=null;
@@ -9893,6 +10054,10 @@ return;
 state.result=result;
 state.dirty=false;
 state.frameIndex=Math.min(state.frameIndex,result.frames.length-1);
+if(Number.isFinite(state.pendingTick)){
+state.frameIndex=frameIndexForTick(state.pendingTick);
+state.pendingTick=null;
+}
 state.score=result.summary.score||null;
 state.highScore=loadHighScore(result.grid);
 let brokeRecord=false;
@@ -10247,6 +10412,50 @@ const map=new Map();
 for(const p of state.cfg.cellEditor.painted)map.set(`${p.col},${p.row}`,p);
 return map;
 }
+function currentEditorTick(){
+if(!state.result)return 0;
+const frame=state.result.frames[state.frameIndex];
+return frame?frame.tick:0;
+}
+function editorPlaceTarget(){
+const ce=state.cfg.cellEditor;
+if(ce.placeMode!=='step'|| !cellEditorActive())return{mode:'initial',tick:0};
+const tick=currentEditorTick();
+if(tick<=0)return{mode:'initial',tick:0};
+return{mode:'step',tick};
+}
+function editorTarget(forceMode){
+const ce=state.cfg.cellEditor;
+const t=forceMode==='initial'?{mode:'initial',tick:0}:editorPlaceTarget();
+const map=new Map();
+if(t.mode==='initial'){
+for(const p of ce.painted)map.set(`${p.col},${p.row}`,{col:p.col,row:p.row,state:p.state});
+return{
+mode:'initial',
+tick:0,
+label:'初始环境（第 0 步）',
+emptyText:'当前没有手绘格子',
+map,
+commit:(m)=>{ce.painted=[...m.values()];},
+};
+}
+for(const p of ce.timedPatches){
+if(p.tick===t.tick)map.set(`${p.col},${p.row}`,{col:p.col,row:p.row,state:p.state});
+}
+return{
+mode:'step',
+tick:t.tick,
+label:`当前步（第 ${t.tick} 步）`,
+emptyText:`第 ${t.tick} 步没有放置补丁`,
+map,
+commit:(m)=>{
+const rest=ce.timedPatches.filter((p)=>p.tick!==t.tick);
+const added=[...m.values()].map((p)=>({tick:t.tick,col:p.col,row:p.row,state:p.state}));
+ce.timedPatches=[...rest,...added]
+.sort((a,b)=>a.tick-b.tick||a.row-b.row||a.col-b.col);
+},
+};
+}
 function brushCells(col,row,n){
 const size=Math.max(1,Math.round(n||1));
 const off=Math.floor((size-1)/2);
@@ -10296,22 +10505,36 @@ if(fallback)return fallback;
 const idx=cfg.caMode.states.findIndex((s)=>s.name==='marker');
 return idx>=0?'marker':(cfg.caMode.states[1]?cfg.caMode.states[1].name:'');
 }
+function editSnapshot(){
+const ce=state.cfg.cellEditor;
+return JSON.stringify({painted:ce.painted,timedPatches:ce.timedPatches});
+}
+function applyEditSnapshot(json){
+const snap=JSON.parse(json)||{};
+state.cfg.cellEditor.painted=snap.painted||[];
+state.cfg.cellEditor.timedPatches=snap.timedPatches||[];
+}
 function pushEditHistory(){
 const limit=state.cfg.cellEditor.historyLimit;
 if(!limit)return;
-editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+editHistory.undo.push(editSnapshot());
 if(editHistory.undo.length>limit)editHistory.undo.shift();
 editHistory.redo.length=0;
 }
-function commitPainted(map){
-state.cfg.cellEditor.painted=[...map.values()];
+function markPlacedTick(target){
+if(target&&target.mode==='step')state.pendingTick=target.tick;
+}
+function commitPainted(map,target){
+const t=target||editorTarget();
+t.commit(map);
 syncEditorCount();
 onSimChange(0);
 }
 function applyEditAt(col,row,opts={}){
 const ce=state.cfg.cellEditor;
+const target=editorTarget();
 const cells=brushCells(col,row,ce.brushSize);
-const map=paintedMap();
+const map=target.map;
 pushEditHistory();
 const removing= !opts.erase&& !opts.force&&map.has(`${col},${row}`);
 for(const c of cells){
@@ -10320,10 +10543,12 @@ if(opts.erase||removing){map.delete(k);continue;}
 const st=paintStateForCell();
 if(st)map.set(k,{col:c.col,row:c.row,state:st});
 }
-commitPainted(map);
+commitPainted(map,target);
+markPlacedTick(target);
 }
 function paintByDrag(c){
-const map=paintedMap();
+const target=editorTarget();
+const map=target.map;
 const k=`${c.col},${c.row}`;
 if(editDrag.mode==='erase'){
 map.delete(k);
@@ -10332,22 +10557,23 @@ const st=paintStateForCell();
 if(!st)return;
 map.set(k,{col:c.col,row:c.row,state:st});
 }
-state.cfg.cellEditor.painted=[...map.values()];
+target.commit(map);
 syncEditorCount();
+markPlacedTick(target);
 onSimChange(0);
 }
 function undoEdit(){
 if(!editHistory.undo.length)return false;
-editHistory.redo.push(JSON.stringify(state.cfg.cellEditor.painted));
-state.cfg.cellEditor.painted=JSON.parse(editHistory.undo.pop());
+editHistory.redo.push(editSnapshot());
+applyEditSnapshot(editHistory.undo.pop());
 syncEditorCount();
 onSimChange(0);
 return true;
 }
 function redoEdit(){
 if(!editHistory.redo.length)return false;
-editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
-state.cfg.cellEditor.painted=JSON.parse(editHistory.redo.pop());
+editHistory.undo.push(editSnapshot());
+applyEditSnapshot(editHistory.redo.pop());
 syncEditorCount();
 onSimChange(0);
 return true;
@@ -10355,7 +10581,8 @@ return true;
 function scatterPainted(){
 const ce=state.cfg.cellEditor;
 const grid=state.result.grid;
-const map=paintedMap();
+const target=editorTarget();
+const map=target.map;
 pushEditHistory();
 for(let row=0;row<grid.height;row++){
 for(let col=0;col<grid.width;col++){
@@ -10364,8 +10591,9 @@ const st=paintStateForCell();
 if(st)map.set(`${col},${row}`,{col,row,state:st});
 }
 }
-commitPainted(map);
-toast(`已按 ${(ce.scatterDensity*100).toFixed(0)}% 密度随机散布`,'success');
+commitPainted(map,target);
+markPlacedTick(target);
+toast(`已按 ${(ce.scatterDensity*100).toFixed(0)}% 密度随机散布到${target.label}`,'success');
 }
 async function clearPainted(){
 const n=state.cfg.cellEditor.painted.length;
@@ -10379,12 +10607,53 @@ danger:true,
 });
 if(!okClear)return;
 pushEditHistory();
-commitPainted(new Map());
+commitPainted(new Map(),editorTarget('initial'));
 toast('已清空手绘格子','success');
+}
+async function clearStepPatch(){
+const ce=state.cfg.cellEditor;
+const tick=currentEditorTick();
+const n=ce.timedPatches.filter((p)=>p.tick===tick).length;
+if(!n){toast(`第 ${tick} 步没有延迟放置补丁`,'info');return;}
+const okClear=await confirmDialog({
+title:'清除当前步放置',
+message:`将删除第 ${tick} 步的 ${n} 个延迟放置补丁（其它步的补丁与初始手绘环境不受影响），此操作可通过「撤销」回退。`,
+confirmText:'清除',
+cancelText:'取消',
+danger:true,
+});
+if(!okClear)return;
+const target=editorTarget();
+pushEditHistory();
+target.commit(new Map());
+syncEditorCount();
+onSimChange(0);
+toast(`已清除第 ${tick} 步的延迟放置补丁`,'success');
+}
+async function clearAllTimedPatches(){
+const ce=state.cfg.cellEditor;
+const n=ce.timedPatches.length;
+if(!n){toast('当前没有延迟放置补丁','info');return;}
+const ticks=new Set(ce.timedPatches.map((p)=>p.tick)).size;
+const okClear=await confirmDialog({
+title:'清空全部延迟放置补丁',
+message:`将删除全部 ${n} 个延迟放置补丁（分布在 ${ticks} 个步），手绘的初始环境不受影响，此操作可通过「撤销」回退。`,
+confirmText:'清空',
+cancelText:'取消',
+danger:true,
+});
+if(!okClear)return;
+pushEditHistory();
+ce.timedPatches=[];
+syncEditorCount();
+onSimChange(0);
+toast('已清空全部延迟放置补丁','success');
 }
 function syncEditorCount(){
 if(!editorCountEl)return;
-editorCountEl.textContent=`已绘制 ${state.cfg.cellEditor.painted.length} 格 · 可撤销 ${editHistory.undo.length} 步`;
+const ce=state.cfg.cellEditor;
+const ticks=new Set(ce.timedPatches.map((p)=>p.tick)).size;
+editorCountEl.textContent=`已绘制 ${ce.painted.length} 格 · 延迟放置 ${ce.timedPatches.length} 格（${ticks} 个步） · 可撤销 ${editHistory.undo.length} 步`;
 }
 function bindCanvasEvents(){
 els.canvas.addEventListener('mousemove',(e)=>{
@@ -10422,7 +10691,7 @@ els.canvas.addEventListener('mousedown',(e)=>{
 if(!cellEditorActive()||e.button!==0)return;
 const c=renderer.hitTest(e.clientX,e.clientY);
 if(!c)return;
-const existed=state.cfg.cellEditor.painted.some((p)=>p.col===c.col&&p.row===c.row);
+const existed=editorTarget().map.has(`${c.col},${c.row}`);
 applyEditAt(c.col,c.row);
 if(state.cfg.cellEditor.drag){
 editDrag={mode:existed?'erase':'paint',last:`${c.col},${c.row}`};
@@ -11710,8 +11979,10 @@ const groups=[...root.querySelectorAll('details.group')];
 const q=String(query||'').trim().toLowerCase();
 const tabs=root.querySelector('.cfg-tabs');
 const navBtns=[...root.querySelectorAll('.cfg-tab-nav .tab-btn')];
+const subTabs=[...root.querySelectorAll('.cfg-sub-tabs')];
 if(!q){
 if(tabs)tabs.classList.remove('searching');
+for(const s of subTabs)s.classList.remove('searching');
 for(const b of navBtns)b.classList.remove('has-hits','no-hits');
 for(const g of groups){
 g.classList.remove('hidden');
@@ -11723,6 +11994,7 @@ resetCfgTabPanels();
 return;
 }
 if(tabs)tabs.classList.add('searching');
+for(const s of subTabs)s.classList.add('searching');
 let matched=0;
 for(const g of groups){
 const hit=String(g.textContent||'').toLowerCase().includes(q);
@@ -12644,11 +12916,74 @@ return[...BASE_OBJECTS,...extra];
 function stateOptions(){
 return state.cfg.caMode.states.map((s)=>({value:s.name,label:stateLabelWithKey(s.name)}));
 }
+const CA_SUB_TABS=[
+{key:'core',label:'核心规则',hint:'启用开关、环境状态集合、邻域与半径、边界条件、更新顺序'},
+{key:'rules',label:'演化规则',hint:'状态转移规则表，以及规则集的导入 / 导出（可跨场景传递）'},
+{key:'initial',label:'初始环境',hint:'第 0 步环境的生成方式，以及环境模板的保存与复用'},
+{key:'run',label:'运行与性能',hint:'与移动体的同步方式、演化间隔、稳定即收尾（避免无效长跑）'},
+{key:'extend',label:'交互与模板',hint:'标记物交互机制、快捷模板与模拟参数预设'},
+];
+function caEditorEnvWarning(){
+const cfg=state.cfg;
+const ce=cfg.cellEditor;
+if(!ce.enabled||ce.painted.length)return null;
+const init=cfg.caMode.initial;
+const caFills=cfg.caMode.enabled
+&&((init.mode==='random'&&init.density>0)
+||(init.mode==='pattern'&&String(init.pattern||'').trim()));
+if(caFills)return null;
+const steps=new Set(ce.timedPatches.map((p)=>p.tick));
+const firstTick=steps.size?Math.min(...steps):0;
+return{
+title:'第 0 步还没有初始环境',
+text:'画布格子编辑器已启用，但模拟起点（第 0 步）既没有手工绘制的格子，元胞自动机的初始状态也等价于「全空」。'
++'这样运行后画面上不会出现任何环境单元，很难观测到模拟的直观变化。'
++(steps.size
+?`当前只有 ${ce.timedPatches.length} 格「延迟放置」补丁（最早在第 ${firstTick} 步生效），第 0 步仍是全空。`
+:'请先在第 0 步补充环境：直接在画布上绘制，或把「初始环境 → 初始状态」改为「随机散布 / 图案文本」。')
++' 也可以改用「当前步放置」，把环境安排在后续某一步出现。',
+};
+}
+function caEditorEnvAlert(){
+const warn=caEditorEnvWarning();
+if(!warn)return null;
+return h('div',{class:'alert warn'},
+h('span',{class:'alert-icon'},'⚠'),
+h('div',{class:'alert-text'},
+h('strong',{},warn.title),
+h('div',{},warn.text)),
+button('去配置初始环境',()=>{
+state.caSubTab='initial';
+activateCfgTab('extend');
+rebuildAll();
+},'primary small'));
+}
 function caGroup(cfg){
 const ca=cfg.caMode;
-const body=[
-field('启用元胞自动机',chkBind(ca,'enabled',()=>{onSimChange(0);rebuildAll();},'启用')),
-h('div',{class:'hint'},'环境单元按状态转移规则演化，可与移动体 / 环境规则同时生效（混合模式）。'),
+const nav=h('div',{class:'cfg-sub-tab-nav',role:'tablist'});
+const panels=new Map();
+const buttons=new Map();
+const activate=(key)=>{
+state.caSubTab=CA_SUB_TABS.some((t)=>t.key===key)?key:CA_SUB_TABS[0].key;
+for(const t of CA_SUB_TABS){
+buttons.get(t.key).classList.toggle('on',t.key===state.caSubTab);
+buttons.get(t.key).setAttribute('aria-selected',t.key===state.caSubTab?'true':'false');
+panels.get(t.key).classList.toggle('hidden',t.key!==state.caSubTab);
+}
+};
+for(const t of CA_SUB_TABS){
+const b=button(t.label,()=>activate(t.key),'tab-btn');
+b.title=t.hint;
+b.setAttribute('role','tab');
+b.dataset.subTabKey=t.key;
+buttons.set(t.key,b);
+nav.appendChild(b);
+panels.set(t.key,h('div',{
+class:'cfg-sub-tab-panel',role:'tabpanel',
+dataset:{subTabKey:t.key,subTabLabel:t.label},
+}));
+}
+panels.get('core').append(
 field('环境状态集合',stateListEditor(ca.states)),
 row(
 field('邻域',selBind(ca,'neighborhood',()=>onSimChange(),NEIGHBORHOODS)),
@@ -12658,6 +12993,13 @@ row(
 field('边界条件',selBind(ca,'boundary',()=>onSimChange(),Object.entries(CA_BOUNDARY_LABELS).map(([value,label])=>({value,label})))),
 field('更新顺序',selBind(ca,'update',()=>onSimChange(),Object.entries(CA_UPDATE_LABELS).map(([value,label])=>({value,label})))),
 ),
+h('div',{class:'hint'},'「更新顺序」决定同步 / 异步 / 随机三种推进方式，会同时影响演化结果与单步耗时；邻域半径越大，每步参与计算的格子越多。'),
+);
+panels.get('rules').append(
+field('状态转移规则表',caRulesEditor(ca)),
+...caRulesetSection(ca),
+);
+panels.get('initial').append(
 field('初始状态',selBind(ca.initial,'mode',()=>{onSimChange();rebuildAll();},[
 {value:'empty',label:'全空'},{value:'random',label:'随机散布'},{value:'pattern',label:'图案文本'},
 ])),
@@ -12671,6 +13013,10 @@ ca.initial.mode==='pattern'
 ?field('图案文本',textArea(ca.initial.pattern,(v)=>{ca.initial.pattern=v;onSimChange();},{rows:5,placeholder:'每行一个字符串，O/#/状态符号 表示存活，. 表示空'}),
 '图案居中放置；符号可用状态首字母、O / X / # / @')
 :null,
+h('div',{class:'hint'},'手工绘制的格子（画布格子编辑器 → 放置到「初始环境」）优先于「随机散布 / 图案文本」，两者可叠加使用。'),
+...caEnvTemplateSection(),
+);
+panels.get('run').append(
 row(
 field('与环境同步方式',selBind(ca,'syncWithAgent',()=>onSimChange(),[
 {value:'beforeMove',label:'移动前演化'},
@@ -12684,9 +13030,13 @@ field('稳定即收尾',row(
 chkBind(ca,'stopOnStable',()=>{onSimChange();rebuildAll();},'CA 进入稳定态时结束运行'),
 field('连续稳定步数',numBind(ca,'stableSteps',()=>onSimChange(),{min:1,max:1000})),
 ),'连续若干次演化中所有单元都没有变化时结束运行（纯 CA 场景常用）；勾选后会同步打开「结束规则 → 元胞自动机稳定」'),
+h('div',{class:'hint'},'性能提示：元胞自动机每步都要遍历全网格，是长跑时的主要开销。'
++'缩小「邻域半径」与网格尺寸的收益最直接；「与环境同步方式」设为「每 N 步演化」可线性降低演化开销；'
++'「稳定即收尾」能让已经不再变化的场景提前结束，避免无意义的空转。'),
+);
+panels.get('extend').append(
 field('标记物交互机制',markerInteractionEditor(ca),
 '把指定的元胞状态定义为「交互标记物」：蛇头进入该格时按反馈规则表产生长度 / 颜色变化，可设置消耗该标记物'),
-field('状态转移规则表',caRulesEditor(ca)),
 field('快捷模板',row(
 button('生命游戏（无干涉）',()=>applyCaTemplate(cfg,'life'),'ghost small'),
 button('生命游戏（交互）',()=>applyCaTemplate(cfg,'lifeInteractive'),'ghost small'),
@@ -12694,8 +13044,211 @@ button('六边形 CA',()=>applyCaTemplate(cfg,'hexCa'),'ghost small'),
 button('森林火灾',()=>applyCaTemplate(cfg,'forest'),'ghost small'),
 button('交通流',()=>applyCaTemplate(cfg,'traffic'),'ghost small'),
 )),
+...caParamPresetSection(),
+);
+const wrap=h('div',{class:'cfg-sub-tabs'},nav);
+for(const t of CA_SUB_TABS)wrap.appendChild(panels.get(t.key));
+activate(state.caSubTab);
+const body=[
+field('启用元胞自动机',chkBind(ca,'enabled',()=>{onSimChange(0);rebuildAll();},'启用')),
+h('div',{class:'hint'},'环境单元按状态转移规则演化，可与移动体 / 环境规则同时生效（混合模式）。'),
+caEditorEnvAlert(),
+wrap,
 ];
 return group('元胞自动机模式',body,{open:false,badge:ca.enabled?'已启用':''});
+}
+const ENV_TEMPLATE_KEY='gridsneaker:env-templates';
+const CA_PARAM_PRESET_KEY='gridsneaker:ca-presets';
+const NAMED_STORE_LIMIT=30;
+function readNamedStore(key){
+try{
+const list=JSON.parse(localStorage.getItem(key)||'[]');
+return Array.isArray(list)?list.filter((x)=>x&&x.name):[];
+}catch(e){
+return[];
+}
+}
+function writeNamedStore(key,list){
+try{
+localStorage.setItem(key,JSON.stringify(list.slice(0,NAMED_STORE_LIMIT)));
+return true;
+}catch(e){
+toast('本地存储写入失败（浏览器存储配额不足，可先删除旧记录）','error');
+return false;
+}
+}
+function namedStoreSection(opts){
+const nameInput=textInput('',()=>{},{placeholder:opts.placeholder});
+const host=h('div',{class:'save-list'});
+const renderList=()=>{
+clear(host);
+const list=readNamedStore(opts.storeKey);
+if(!list.length){
+host.appendChild(h('div',{class:'hint'},opts.emptyText));
+return;
+}
+for(const entry of list){
+host.appendChild(h('div',{class:'save-row'},
+h('span',{class:'save-name',title:entry.name},entry.name),
+h('span',{class:'mini-label'},formatSaveTime(entry.savedAt)),
+button('载入',()=>opts.apply(entry),'primary small'),
+button('删除',()=>{
+writeNamedStore(opts.storeKey,readNamedStore(opts.storeKey).filter((x)=>x.name!==entry.name));
+toast(`已删除${opts.label}「${entry.name}」`,'info');
+renderList();
+},'ghost small')));
+}
+};
+const save=()=>{
+const name=String(nameInput.value||'').trim()||`${opts.defaultPrefix} ${formatSaveTime(Date.now())}`;
+const list=readNamedStore(opts.storeKey).filter((x)=>x.name!==name);
+list.unshift({name,savedAt:Date.now(),data:opts.build(name)});
+if(!writeNamedStore(opts.storeKey,list))return;
+nameInput.value='';
+toast(`已保存${opts.label}「${name}」`,'success');
+renderList();
+};
+renderList();
+return[
+h('div',{class:'sub-title'},opts.title),
+h('div',{class:'hint'},opts.hint),
+field(opts.nameLabel,nameInput),
+row(button(opts.saveText,save,'primary'),...(opts.extraButtons||[])),
+...(opts.extraNodes||[]),
+host,
+];
+}
+function caRulesetSection(ca){
+const area=textArea('',()=>{},{rows:4,placeholder:'在此粘贴规则集 JSON（本面板导出的格式，或规则数组）…'});
+const importRules=(append)=>{
+let res;
+try{
+res=parseCaRuleset(area.value,ca.states);
+}catch(e){
+toast(`规则集导入失败：${e.message}`,'error');
+return;
+}
+ca.rules=append?[...ca.rules,...res.rules]:res.rules;
+area.value='';
+if(res.warnings.length)toast(res.warnings[0],'warn');
+else toast(`已${append?'追加':'覆盖'}导入 ${res.rules.length} 条规则`,'success');
+rebuildAll();
+};
+return[
+h('div',{class:'sub-title'},'规则集导入 / 导出'),
+h('div',{class:'hint'},'导出内容只包含状态转移规则表（附带状态名清单，便于对方核对），'
++'不包含移动体、环境规则与外观配置，因此可跨场景、跨用户直接传递。'),
+row(
+button('复制规则集',()=>copyText(exportCaRuleset(ca),`规则集已复制（${ca.rules.length} 条规则）`)),
+button('下载规则集',()=>downloadText(`${safeName(state.cfg.meta.name)}-ca-rules.json`,exportCaRuleset(ca),'application/json')),
+),
+field('粘贴导入',h('div',{},
+area,
+row(
+button('覆盖导入',()=>importRules(false),'primary small'),
+button('追加导入',()=>importRules(true),'ghost small'),
+button('清空输入',()=>{area.value='';},'ghost small'),
+)),
+'「覆盖导入」替换现有规则表；「追加导入」保留现有规则并把导入的规则接在后面'),
+];
+}
+function applyEnvironmentTemplate(entry){
+let tpl;
+try{
+tpl=parseEnvironmentTemplate(entry.data);
+}catch(e){
+toast(`环境模板无效：${e.message}`,'error');
+return;
+}
+const cfg=state.cfg;
+cfg.caMode.states=tpl.states;
+cfg.caMode.initial={
+mode:tpl.initial.mode,density:tpl.initial.density,state:tpl.initial.state,pattern:tpl.initial.pattern,
+};
+cfg.cellEditor.painted=tpl.painted;
+const ruleWarn=cfg.caMode.rules.length
+?(()=>{try{return parseCaRuleset(cfg.caMode.rules,tpl.states).warnings[0]||'';}catch(e){return'';}})()
+:'';
+const sizeDiff=tpl.grid.width!==cfg.grid.width||tpl.grid.height!==cfg.grid.height;
+rebuildAll();
+toast(sizeDiff
+?`已载入环境模板「${tpl.name}」（${tpl.painted.length} 格手绘环境）：模板网格尺寸与当前不同，超出当前网格的格子已被忽略`
+:`已载入环境模板「${tpl.name}」（${tpl.painted.length} 格手绘环境）`,sizeDiff?'warn':'success');
+if(ruleWarn)toast(ruleWarn,'warn');
+}
+function caEnvTemplateSection(){
+const importArea=textArea('',()=>{},{rows:3,placeholder:'在此粘贴环境模板 JSON…'});
+return namedStoreSection({
+storeKey:ENV_TEMPLATE_KEY,
+title:'环境模板（保存与复用）',
+hint:`环境模板 = 环境状态集合 + 初始状态 + 手工绘制的格子，不含移动体 / 规则 / 外观，因此可跨场景复用；保存在浏览器本地（最多 ${NAMED_STORE_LIMIT} 条）。`,
+nameLabel:'模板名称',
+placeholder:'模板名称（留空则按时间命名）',
+defaultPrefix:'环境模板',
+emptyText:'暂无环境模板。把当前初始环境保存下来，换场景时一键复用。',
+saveText:'保存当前环境',
+label:'环境模板',
+build:(name)=>buildEnvironmentTemplate(state.cfg,name),
+apply:(entry)=>applyEnvironmentTemplate(entry),
+extraButtons:[
+button('导出当前环境',()=>downloadText(
+`${safeName(state.cfg.meta.name)}-env.json`,
+JSON.stringify(buildEnvironmentTemplate(state.cfg,state.cfg.meta.name),null,2),
+'application/json',
+),'ghost'),
+],
+extraNodes:[
+field('粘贴导入模板',h('div',{},
+importArea,
+row(button('导入模板',()=>{
+let tpl;
+try{
+tpl=parseEnvironmentTemplate(importArea.value);
+}catch(e){
+toast(`环境模板导入失败：${e.message}`,'error');
+return;
+}
+importArea.value='';
+applyEnvironmentTemplate({name:tpl.name,data:tpl});
+},'primary small'),button('清空输入',()=>{importArea.value='';},'ghost small'))),
+'导入会整体替换当前的「环境状态集合 / 初始状态 / 手绘格子」，可通过「撤销上次变更」或 Ctrl+Z 回退'),
+],
+});
+}
+const CA_PARAM_KEYS=['neighborhood','radius','boundary','update','syncWithAgent','every','stopOnStable','stableSteps'];
+function caParamSnapshot(ca){
+const out={};
+for(const k of CA_PARAM_KEYS)out[k]=ca[k];
+out.initial=JSON.parse(JSON.stringify(ca.initial));
+return out;
+}
+function caParamPresetSection(){
+return namedStoreSection({
+storeKey:CA_PARAM_PRESET_KEY,
+title:'模拟参数预设',
+hint:`只保存演化参数（邻域 / 半径 / 边界 / 更新顺序 / 同步方式 / 演化间隔 / 稳定判定 / 初始状态，最多 ${NAMED_STORE_LIMIT} 条），不含规则表与手绘环境，因此可以在同一套环境上快速对比不同参数组合。`,
+nameLabel:'预设名称',
+placeholder:'预设名称（留空则按时间命名）',
+defaultPrefix:'参数预设',
+emptyText:'暂无参数预设。调好一组演化参数后保存，之后一键切换。',
+saveText:'保存当前参数',
+label:'参数预设',
+build:()=>caParamSnapshot(state.cfg.caMode),
+apply:(entry)=>{
+const data=entry.data&&typeof entry.data==='object'?entry.data:{};
+let n=0;
+for(const k of CA_PARAM_KEYS){
+if(data[k]===undefined)continue;
+state.cfg.caMode[k]=data[k];
+n++;
+}
+if(data.initial){
+state.cfg.caMode.initial={mode:'empty',density:0.3,state:'',pattern:'',...data.initial};
+}
+rebuildAll();
+toast(`已载入参数预设「${entry.name}」（${n} 项参数）`,'success');
+},
+});
 }
 function stateListEditor(states){
 const list=h('div',{class:'state-list'});
@@ -13197,6 +13750,19 @@ const stateOptions=[
 ];
 const placedStateLabel=h('div',{class:'hint'},
 `本次点击将放置：${stateLabel(cellEditorStateName(cfg))||'无'}（${cellEditorStateName(cfg)||'—'}）`);
+const placeHint=h('div',{class:'hint'},'');
+const syncPlaceHint=()=>{
+const tick=currentEditorTick();
+if(ce.placeMode!=='step'){
+placeHint.textContent='本次点击将写入「初始环境（第 0 步）」：手绘格子在整个模拟开始前写入世界，是环境演化的起点。';
+}else if(!cellEditorActive()||tick<=0){
+placeHint.textContent=`当前停留在第 ${tick} 步（模拟起点），「当前步放置」与「初始环境」等价，本次点击仍写入第 0 步；`
++'向后推进到任意步后，点击即写入该步。';
+}else{
+placeHint.textContent=`本次点击将写入第 ${tick} 步：只影响该步及其之后的帧，此前已完成的帧保持原样（不回溯）。`;
+}
+};
+syncPlaceHint();
 const body=[
 switchField('启用画布格子编辑',chkBind(ce,'enabled',()=>{onSimChange();rebuildAll();},'启用'),
 '开启后：左键单击格子添加元素、再次单击同一格删除；关闭时点击画布仍是「跳到该格首次经过的步数」'),
@@ -13206,6 +13772,14 @@ body.push(h('div',{class:'hint'},'未启用：画布点击保持「跳转到首�
 return group('画布格子编辑器',body,{open:false});
 }
 body.push(
+h('div',{class:'sub-title'},'放置方式'),
+field('放置到',select(ce.placeMode,CELL_PLACE_MODES.map((v)=>({value:v,label:CELL_PLACE_MODE_LABELS[v]})),(v)=>{
+ce.placeMode=v;
+onSimChange(0);
+rebuildAll();
+}),'「初始环境」写入第 0 步；「当前步放置」把格子写进当前所在步数，不回溯影响此前已完成的模拟帧'),
+placeHint,
+caEditorEnvAlert(),
 h('div',{class:'sub-title'},'放置工具'),
 field('编辑工具',select(ce.tool,CELL_TOOLS.map((v)=>({value:v,label:CELL_TOOL_LABELS[v]})),(v)=>{ce.tool=v;onSimChange();rebuildAll();}),
 '标记物 / 障碍物 / 元胞自动机状态 / 擦除：擦除工具下点击即清空格子'),
@@ -13250,6 +13824,12 @@ button('撤销',()=>{if(!undoEdit())toast('没有可撤销的编辑','info');},'
 button('重做',()=>{if(!redoEdit())toast('没有可重做的编辑','info');},'ghost'),
 button('清空手绘',clearPainted,'ghost danger'),
 ),
+(ce.placeMode==='step'||ce.timedPatches.length)
+?row(
+button('清除本步放置',clearStepPatch,'ghost danger'),
+button('清空全部延迟放置',clearAllTimedPatches,'ghost danger'),
+)
+:null,
 editorCountEl,
 );
 return group('画布格子编辑器',body,{open:false,badge:`${ce.painted.length} 格`});

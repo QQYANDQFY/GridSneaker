@@ -17,6 +17,9 @@ import {
   MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES, DEFAULT_STATES,
   SAFETY_ON_AVOID_MODES, SAFETY_ON_AVOID_LABELS,
   obstacleTypeForState, isTrapState, markerConditionMet, markerTypesForState,
+  CELL_PLACE_MODES, CELL_PLACE_MODE_LABELS, MAX_TIMED_PATCHES,
+  CA_RULESET_KIND, ENV_TEMPLATE_KIND, normalizeCaRules,
+  exportCaRuleset, parseCaRuleset, buildEnvironmentTemplate, parseEnvironmentTemplate,
 } from '../src/core/config.js';
 import {
   buildTrail, unwrapTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -3466,8 +3469,11 @@ section('视觉子选项卡 / 统计项显示配置 / 开关行排版 / 选项�
   /* 2) 视觉显示模块：层级收敛为「主选项卡 → 折叠分组 → 字段」 */
   ok(!/VISUAL_SUBTABS|cfgSubTab|cfg-subtabs|cfg-sub-panel|function styleGroup\(/.test(app),
     '二级选项卡及其容器、装配函数已全部移除（去掉多余的一层嵌套）');
-  ok(!/cfg-subtabs|cfg-sub-nav|cfg-sub-panel|data-sub-tab-label/.test(css),
-    '样式表中同步移除子选项卡相关规则（不残留死样式）');
+  // 注意：这里只校验「视觉模块旧子选项卡」的类名不残留。
+  // data-sub-tab-label 属性如今由「元胞自动机模式」子选项卡合法复用（见后文回归），
+  // 因此不再纳入本断言的禁用清单，否则会把正常样式误判为死样式。
+  ok(!/cfg-subtabs|cfg-sub-nav|cfg-sub-panel/.test(css),
+    '样式表中同步移除（视觉模块）旧子选项卡相关规则（不残留死样式）');
   ok(/panels\.get\('visual'\)\.append\(\s*\n\s*visualBasicGroup\(cfg\),[\s\S]*?visualThemeGroup\(cfg\),[\s\S]*?\n\s*\);/.test(app),
     '四类视觉设置直接作为「视觉显示」主选项卡下的折叠分组');
   for (const label of ['基础视觉设置', '高级视觉特效', '悬停与提示', '色彩主题配置']) {
@@ -4730,6 +4736,412 @@ section('本轮优化：交互文本、格子编辑、避撞处理与布局（�
   ok(/\.controls-line\.speed-line \{ flex-wrap: nowrap; \}/.test(css)
     && /\.controls-line\.speed-line \.speed-wrap \{ flex: 1 1 auto; min-width: 120px; \}/.test(css),
     '速度行禁止换行且滑杆占满剩余宽度（读数不被挤压）');
+}
+
+/* ---------- 任务一：元胞自动机设置面板按功能维度收敛为子选项卡 ---------- */
+
+section('元胞自动机设置面板：子选项卡分类（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+  /* 1) 五页分类：核心规则 / 演化规则 / 初始环境 / 运行与性能 / 交互与模板 */
+  ok(/const CA_SUB_TABS = \[/.test(app), '元胞自动机面板声明子选项卡清单');
+  for (const key of ['core', 'rules', 'initial', 'run', 'extend']) {
+    ok(new RegExp(`\\{ key: '${key}', label:`).test(app), `子选项卡「${key}」存在`);
+  }
+  for (const label of ['核心规则', '演化规则', '初始环境', '运行与性能', '交互与模板']) {
+    ok(new RegExp(`label: '${label}'`).test(app), `子选项卡标题「${label}」存在`);
+  }
+
+  /* 2) 导航与面板容器：与主选项卡同构，活动子页存 state.caSubTab（面板重建后仍停留原页） */
+  ok(/class: 'cfg-sub-tab-nav', role: 'tablist'/.test(app), '子选项卡导航容器存在');
+  ok(/class: 'cfg-sub-tab-panel', role: 'tabpanel'/.test(app), '子选项卡面板容器存在');
+  ok(/dataset: \{ subTabKey: t\.key, subTabLabel: t\.label \}/.test(app),
+    '面板携带子页键与标题（供搜索展开时标注子页名称）');
+  ok(/state\.caSubTab = CA_SUB_TABS\.some\(\(t\) => t\.key === key\) \? key : CA_SUB_TABS\[0\]\.key;/.test(app),
+    '非法子页键回退首页，避免面板空白');
+  ok(/const wrap = h\('div', \{ class: 'cfg-sub-tabs' \}, nav\);/.test(app)
+    && /for \(const t of CA_SUB_TABS\) wrap\.appendChild\(panels\.get\(t\.key\)\);/.test(app),
+    '导航与各子页装配进同一容器');
+  ok(/caSubTab: 'core'/.test(app), '活动子页默认停在「核心规则」');
+
+  /* 3) 配置项按用途归类到对应子页（原先全部平铺在一个折叠分组里） */
+  ok(/panels\.get\('core'\)\.append\(\s*\n\s*field\('环境状态集合'/.test(app),
+    '环境状态集合归入「核心规则」');
+  ok(/panels\.get\('core'\)\.append\([\s\S]{0,900}field\('邻域'/.test(app)
+    && /panels\.get\('core'\)\.append\([\s\S]{0,1400}field\('更新顺序'/.test(app),
+    '邻域 / 半径 / 边界 / 更新顺序归入「核心规则」');
+  ok(/panels\.get\('rules'\)\.append\(\s*\n\s*field\('状态转移规则表'/.test(app),
+    '状态转移规则表归入「演化规则」');
+  ok(/panels\.get\('initial'\)\.append\(\s*\n\s*field\('初始状态'/.test(app),
+    '初始状态（第 0 步环境）归入「初始环境」');
+  ok(/panels\.get\('run'\)\.append\([\s\S]{0,200}field\('与环境同步方式'/.test(app),
+    '与环境同步方式归入「运行与性能」');
+  ok(/panels\.get\('run'\)\.append\([\s\S]{0,1200}field\('稳定即收尾'/.test(app),
+    '稳定即收尾归入「运行与性能」');
+  ok(/panels\.get\('extend'\)\.append\(\s*\n\s*field\('标记物交互机制'/.test(app),
+    '标记物交互机制归入「交互与模板」');
+  ok(/panels\.get\('extend'\)\.append\([\s\S]{0,1200}field\('快捷模板'/.test(app),
+    '快捷模板归入「交互与模板」');
+  ok(/性能提示：元胞自动机每步都要遍历全网格/.test(app), '「运行与性能」给出性能口径提示文案');
+  ok(/field\('启用元胞自动机', chkBind\(ca, 'enabled'/.test(app),
+    '启用开关固定在子选项卡之上（任何子页都可见）');
+  ok(/return group\('元胞自动机模式', body, \{ open: false, badge: ca\.enabled \? '已启用' : '' \}\);/.test(app),
+    '子选项卡整体仍收纳在「元胞自动机模式」折叠分组内');
+
+  /* 4) 样式：子选项卡比主选项卡更轻，配色复用同一套 --tab-* 变量 */
+  ok(/\.cfg-sub-tabs \{ margin: 2px 0 4px; \}/.test(css), '子选项卡容器有独立样式');
+  ok(/\.cfg-sub-tab-nav \{[\s\S]{0,200}display: flex;/.test(css)
+    && /\.cfg-sub-tab-nav \.btn\.tab-btn \{/.test(css), '子选项卡导航与按钮样式齐备');
+  ok(/\.cfg-sub-tab-nav \.btn\.tab-btn\.on \{[\s\S]{0,220}background: var\(--tab-on-bg\);/.test(css)
+    && /\.cfg-sub-tab-nav \.btn\.tab-btn\.on \{[\s\S]{0,220}color: var\(--tab-on-text\);/.test(css),
+    '激活态复用主选项卡配色变量（色彩主题配置对子选项卡同样生效）');
+  ok(/\.cfg-sub-tab-nav \.btn\.tab-btn \{[^}]*font-size: 11px;/.test(css),
+    '子选项卡字号小于主选项卡（视觉层级更轻）');
+
+  /* 5) 搜索联动：搜索时展开全部子页，命中项不会藏在未激活的子页里 */
+  ok(/const subTabs = \[\.\.\.root\.querySelectorAll\('\.cfg-sub-tabs'\)\];/.test(app),
+    '搜索逻辑收集全部子选项卡容器');
+  ok(/for \(const s of subTabs\) s\.classList\.add\('searching'\);/.test(app)
+    && /for \(const s of subTabs\) s\.classList\.remove\('searching'\);/.test(app),
+    '搜索开始 / 清除时同步切换子选项卡的展开态');
+  ok(/\.cfg-sub-tabs\.searching \.cfg-sub-tab-panel \{ display: block !important; \}/.test(css),
+    '搜索态强制展开全部子页（优先级高于 .hidden）');
+  ok(/content: attr\(data-sub-tab-label\);/.test(css), '展开的子页带名称标注（知道命中项属于哪一类）');
+  ok(/\.cfg-sub-tabs\.searching \.cfg-sub-tab-nav \{ display: none; \}/.test(css),
+    '搜索期间隐藏子页切换按钮（此时点按无意义）');
+}
+
+/* ---------- 任务二：编辑器「第 0 步无初始环境」警告 + 延迟放置 ---------- */
+
+section('画布格子编辑器：延迟放置仅本步生效、不回溯历史帧（行为级）');
+{
+  /* 生命游戏式状态集：仅 empty / alive，没有任何 marker 状态 */
+  const LIFE_STATES = [
+    { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
+    { name: 'alive', color: '#51cf66', blocking: false, symbol: 'o', render: 'dot' },
+  ];
+  /* 规则表为空 → 状态不发生演化，帧内容只由初始环境与延迟放置决定，断言稳定可复现 */
+  const base = () => editorScene({
+    caMode: { enabled: true, states: LIFE_STATES, rules: [], initial: { mode: 'empty', density: 0 } },
+    cellEditor: { enabled: true },
+    endConditions: { maxSteps: 3 },
+  });
+
+  /* 1) 在第 1 步放置：第 0 步（历史帧）不受影响，第 1 步起生效 */
+  const cfg = base();
+  cfg.cellEditor.timedPatches = [{ tick: 1, col: 6, row: 2, state: 'alive' }];
+  const r = new Simulation(cfg).run();
+  const w = r.grid.width;
+  eq(r.frames[0].tick, 0, '首帧即第 0 步');
+  eq(r.frames[0].cells[2 * w + 6], 0, '第 0 步该格仍为空（延迟放置不回溯改写历史帧）');
+  eq(r.frames[1].cells[2 * w + 6], 1, '第 1 步该格写入存活（放置只在当前步生效）');
+  eq(r.frames[2].cells[2 * w + 6], 1, '第 2 步继续保持（放置对本步及之后可见）');
+
+  /* 2) 步号 ≤ 0 的补丁等价于初始环境：与手工绘制一并在主循环之前写入 */
+  const zero = base();
+  zero.cellEditor.timedPatches = [{ tick: 0, col: 7, row: 2, state: 'alive' }];
+  const r0 = new Simulation(zero).run();
+  eq(r0.frames[0].cells[2 * w + 7], 1, '第 0 步补丁直接进入初始环境（首帧即可见）');
+
+  /* 3) 运行日志留下「延迟放置」痕迹，并注明不影响此前帧 */
+  const hit = r.logs.find((l) => l.trigger === 'timedPlace');
+  ok(hit, '延迟放置写入运行日志（可回溯）');
+  eq(hit && hit.tick, 1, '日志步号与放置步号一致');
+  ok(hit && /此前帧不受影响/.test(hit.text), '日志文案说明「此前帧不受影响」');
+
+  /* 4) 放置不打断模拟推进 */
+  ok(r.stats.steps >= 1, '延迟放置不中断模拟推进');
+
+  /* 5) 配置层：越界 / 空状态 / 非法步号被剔除，且规范化幂等、可随分享链接往返 */
+  const d = defaultConfig();
+  const messy = normalizeConfig({
+    ...d,
+    cellEditor: {
+      ...d.cellEditor,
+      timedPatches: [
+        { tick: 2, col: 3, row: 3, state: 'obstacle' },
+        { tick: 2, col: 3, row: 3, state: 'marker' },    // 同一 (步, 坐标) 只保留最后一次
+        { tick: -1, col: 1, row: 1, state: 'obstacle' }, // 步号非法
+        { tick: 1, col: 999, row: 1, state: 'obstacle' },// 越界
+        { tick: 1, col: 1, row: 1, state: '' },          // 状态为空
+      ],
+    },
+  });
+  eq(messy.cellEditor.timedPatches.length, 1, '非法延迟放置被剔除，同一 (步, 坐标) 只保留最后一次录入');
+  eq(messy.cellEditor.timedPatches[0].state, 'marker', '同格后者覆盖前者');
+  eq(JSON.stringify(normalizeConfig(JSON.parse(JSON.stringify(messy)))), JSON.stringify(messy),
+    '延迟放置规范化幂等（往返一致）');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, timedPatches: 'x' } }).cellEditor.timedPatches.length, 0,
+    '非法形态（非数组）回退为空');
+  eq(decodeConfigFromToken(encodeConfigToToken(messy)).cellEditor.timedPatches.length, 1,
+    '延迟放置可随分享链接往返');
+  eq(decodeConfigFromToken(encodeConfigToToken(messy)).cellEditor.timedPatches[0].tick, 2,
+    '往返后步号保持不变');
+  ok(MAX_TIMED_PATCHES >= 100, '延迟放置条数有上限保护（避免配置被撑爆）');
+
+  /* 6) 放置方式：initial / step 两种，且各有明确中文文案 */
+  eq(CELL_PLACE_MODES.join(','), 'initial,step', '放置方式包含「初始环境」与「当前步放置」');
+  ok(CELL_PLACE_MODE_LABELS.initial.includes('第 0 步') && CELL_PLACE_MODE_LABELS.step.includes('本步'),
+    '两种放置方式都有明确的中文说明');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, placeMode: 'step' } }).cellEditor.placeMode, 'step',
+    '放置方式可被规范化保留');
+  eq(normalizeConfig({ ...d, cellEditor: { ...d.cellEditor, placeMode: '乱填' } }).cellEditor.placeMode, 'initial',
+    '非法放置方式回退「初始环境」（与旧行为一致）');
+  eq(d.cellEditor.placeMode, 'initial', '默认放置到初始环境（不改变旧存档语义）');
+}
+
+section('画布格子编辑器：第 0 步缺环境警告与放置方式（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const simSrc = readFileSync(new URL('../src/core/simulation.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+
+  /* 1) 警告判定：编辑器已启用 + 无手绘格 + CA 初始状态等价「全空」 */
+  ok(/function caEditorEnvWarning\(\)/.test(app), '提供「第 0 步缺少初始环境」的判定函数');
+  ok(/if \(!ce\.enabled \|\| ce\.painted\.length\) return null;/.test(app),
+    '未启用编辑器或已有手绘格时不打扰用户');
+  ok(/const caFills = cfg\.caMode\.enabled/.test(app)
+    && /init\.mode === 'random' && init\.density > 0/.test(app)
+    && /init\.mode === 'pattern' && String\(init\.pattern \|\| ''\)\.trim\(\)/.test(app),
+    '随机散布（密度 > 0）与图案文本（非空白）都视为「已有初始环境」');
+  ok(/第 0 步还没有初始环境/.test(app), '警告标题点明缺失的是第 0 步环境');
+  ok(/很难观测到模拟的直观变化/.test(app), '警告说明「为什么需要补充」');
+  ok(/最早在第 \$\{firstTick\} 步生效/.test(app) && /当前只有 \$\{ce\.timedPatches\.length\} 格/.test(app),
+    '只有延迟放置时明确告知第 0 步仍为空（并把延迟放置作为可选路径）');
+  ok(/请先在第 0 步补充环境：直接在画布上绘制/.test(app), '给出可操作的补充指引');
+
+  /* 2) 警告展示：面板内醒目提示条 + 一键跳转到「初始环境」子页 */
+  ok(/function caEditorEnvAlert\(\)/.test(app) && /class: 'alert warn'/.test(app),
+    '警告以面板内的醒目提示条呈现（复用既有 .alert 样式）');
+  ok(/'⚠'/.test(app) && /class: 'alert-icon'/.test(app) && /class: 'alert-text'/.test(app),
+    '提示条带图标与正文（视觉上可被一眼看到）');
+  ok(/button\('去配置初始环境', \(\) => \{[\s\S]{0,160}state\.caSubTab = 'initial';/.test(app)
+    && /state\.caSubTab = 'initial';[\s\S]{0,80}activateCfgTab\('extend'\);/.test(app),
+    '「去配置初始环境」一键跳到「初始环境」子页（无需自行寻找）');
+  ok(/caEditorEnvAlert\(\),/.test(app), '警告条同时接入元胞自动机分组与画布格子编辑器分组');
+
+  /* 3) 放置目标抽象：同一套增删逻辑写入 painted 或当前步的 timedPatches */
+  ok(/function editorPlaceTarget\(\)/.test(app) && /function editorTarget\(forceMode\)/.test(app),
+    '提供「放置目标」抽象（初始环境 / 当前步补丁）');
+  ok(/if \(ce\.placeMode !== 'step' \|\| !cellEditorActive\(\)\) return \{ mode: 'initial', tick: 0 \};/.test(app),
+    '非「当前步放置」或编辑器未激活时一律落到初始环境');
+  ok(/const tick = currentEditorTick\(\);[\s\S]{0,120}if \(tick <= 0\) return \{ mode: 'initial', tick: 0 \};/.test(app),
+    '第 0 步（或无结果）时把放置并入初始环境（此时二者等价）');
+  ok(/function currentEditorTick\(\)/.test(app) && /state\.result\.frames\[state\.frameIndex\]/.test(app),
+    '当前步号取自画布正在显示的帧（所见即所得）');
+  ok(/ce\.timedPatches = \[\.\.\.rest, \.\.\.added\]\s*\n\s*\.sort\(\(a, b\) => a\.tick - b\.tick \|\| a\.row - b\.row \|\| a\.col - b\.col\);/.test(app),
+    '提交后按步号 / 行列稳定排序（配置差异不随点击次序抖动）');
+  ok(/commit: \(m\) => \{ ce\.painted = \[\.\.\.m\.values\(\)\]; \}/.test(app),
+    '「初始环境」提交写回 painted');
+
+  /* 4) 全部编辑入口都走同一目标：绘制 / 拖拽 / 散布 / 清空 / 撤销重做 */
+  ok(/function commitPainted\(map, target\) \{[\s\S]{0,120}const t = target \|\| editorTarget\(\);/.test(app),
+    '绘制与提交统一走 editorTarget');
+  ok(/function paintByDrag\(/.test(app) && /target\.commit\(map\);/.test(app), '拖拽连画同样写入当前放置目标');
+  ok(/async function clearPainted\(\) \{[\s\S]{0,700}commitPainted\(new Map\(\), editorTarget\('initial'\)\);/.test(app),
+    '「清空手绘」只清初始环境，不会误删更晚步数的延迟放置');
+  ok(/async function clearStepPatch\(\)/.test(app) && /async function clearAllTimedPatches\(\)/.test(app),
+    '提供「清除本步放置」与「清空全部延迟放置」');
+  ok(/button\('清除本步放置', clearStepPatch/.test(app) && /button\('清空全部延迟放置', clearAllTimedPatches/.test(app),
+    '两个清理入口已接入编辑器面板（不是悬空函数）');
+  ok(/confirmDialog\(\{[\s\S]{0,260}清空全部延迟放置/.test(app), '清除全部延迟放置为破坏性操作，先经确认对话框');
+  ok(/function editSnapshot\(\) \{[\s\S]{0,120}return JSON\.stringify\(\{ painted: ce\.painted, timedPatches: ce\.timedPatches \}\);/.test(app)
+    && /function applyEditSnapshot\(json\)/.test(app),
+    '撤销快照同时覆盖 painted 与 timedPatches（撤销不会丢延迟放置）');
+  ok(/function markPlacedTick\(target\) \{[\s\S]{0,100}state\.pendingTick = target\.tick;/.test(app),
+    '记录本次放置的步号，供重算后回跳');
+
+  /* 5) 重算后回到放置所在步：否则每次放置都被弹回第 0 步，无法连续编辑 */
+  ok(/if \(Number\.isFinite\(state\.pendingTick\)\) \{[\s\S]{0,160}state\.frameIndex = frameIndexForTick\(state\.pendingTick\);/.test(app)
+    && /state\.pendingTick = null;/.test(app),
+    '重算后自动跳回放置步并清除待跳标记');
+
+  /* 6) 面板控件：放置方式下拉 + 实时提示当前生效步 + 计数读数 */
+  ok(/field\('放置到', select\(ce\.placeMode, CELL_PLACE_MODES\.map\(\(v\) => \(\{ value: v, label: CELL_PLACE_MODE_LABELS\[v\] \}\)\)/.test(app),
+    '面板提供「放置到」下拉（初始环境 / 当前步放置）');
+  ok(/「初始环境」写入第 0 步；「当前步放置」把格子写进当前所在步数，不回溯影响此前已完成的模拟帧/.test(app),
+    '下拉说明直白解释两种语义差异');
+  ok(/const syncPlaceHint = \(\) => \{/.test(app) && /本次点击将写入/.test(app)
+    && /只影响该步及其之后的帧，此前已完成的帧保持原样（不回溯）/.test(app),
+    '面板实时回显「本次点击会落到哪一步」（把不回溯的语义摊开写明）');
+  ok(/已绘制 \$\{ce\.painted\.length\} 格 · 延迟放置 \$\{ce\.timedPatches\.length\} 格/.test(app),
+    '计数行同时展示手绘格与延迟放置格（分布在几个步）');
+
+  /* 7) 模拟循环：只在匹配步推进前写入，且早于该步的历史帧保持原样 */
+  ok(/const timedByTick = new Map\(\);\s*\n\s*for \(const p of \(cfg\.cellEditor/.test(simSrc)
+    && /timedByTick\.get\(0\)/.test(simSrc),
+    '按步号索引延迟放置补丁，步号 ≤ 0 的在主循环之前写入（等价初始环境）');
+  ok(/const timedHits = timedByTick\.get\(tick\);\s*\n\s*let timedDirty = false;/.test(simSrc)
+    && /const ctx = \{[\s\S]{0,900}cellsDirty: timedDirty,/.test(simSrc),
+    '只在当前步匹配时写入世界，并置脏标记刷新环境计数与帧快照');
+  ok(/此前帧不受影响/.test(simSrc), '日志明确「此前帧不受影响」');
+  ok(/trigger: 'timedPlace'/.test(simSrc), '延迟放置有独立日志类型（便于回溯）');
+
+  /* 8) 差异比对：新增字段有中文标签与取值文案 */
+  ok(/placeMode: '放置方式'/.test(diffSrc) && /timedPatches: '延迟放置补丁'/.test(diffSrc),
+    '延迟放置相关字段在差异比对中有中文标签');
+  ok(/'cellEditor\.placeMode': CELL_PLACE_MODE_LABELS/.test(diffSrc),
+    '放置方式的枚举取值在差异比对中中文化');
+  ok(/CELL_PLACE_MODE_LABELS,/.test(diffSrc), '差异比对模块显式引入放置方式文案（不硬编码字符串）');
+}
+
+/* ---------- 任务三：规则集导入导出 / 环境模板 / 参数预设 ---------- */
+
+section('功能拓展：规则集导入导出与环境模板（行为级）');
+{
+  const LIFE_STATES = [
+    { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
+    { name: 'alive', color: '#51cf66', blocking: false, symbol: 'o', render: 'dot' },
+  ];
+  const LIFE_RULES = [
+    { id: 'r1', name: '诞生', enabled: true, from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive' },
+    { id: 'r2', name: '凋零', enabled: true, from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty' },
+  ];
+
+  /* 1) 规则集导出：自带类型标识与状态名清单，便于对方核对 */
+  const text = exportCaRuleset({ states: LIFE_STATES, rules: LIFE_RULES, enabled: true });
+  const parsed = JSON.parse(text);
+  eq(parsed.kind, CA_RULESET_KIND, '导出内容带规则集类型标识（导入时可判别文件类型）');
+  eq(parsed.version, 1, '导出内容带版本号（便于后续演进）');
+  eq(parsed.states.join(','), 'empty,alive', '导出内容附带状态名清单');
+  eq(parsed.rules.length, 2, '导出内容包含全部规则');
+  ok(!/"(caMode|cellEditor|style|grid|body|start)"/.test(text),
+    '规则集不夹带移动体 / 外观 / 网格配置（可跨场景传递）');
+
+  /* 2) 规则集导入：与配置内的规则走同一条规范化路径，结构完全一致 */
+  const back = parseCaRuleset(text, LIFE_STATES);
+  eq(JSON.stringify(back.rules), JSON.stringify(normalizeCaRules(LIFE_RULES)),
+    '导出的规则集原样导入后与配置内规则结构一致（往返无损）');
+  eq(back.warnings.length, 0, '状态引用都在当前状态集合内时不产生警告');
+  eq(parseCaRuleset(LIFE_RULES, LIFE_STATES).rules.length, 2, '也接受「规则数组」这一更宽松的形态');
+  eq(parseCaRuleset({ rules: LIFE_RULES }, LIFE_STATES).rules.length, 2, '也接受「含 rules 的对象」');
+
+  /* 3) 缺状态提示：导入的规则引用了当前环境没有的状态时给出中文警告 */
+  const warn = parseCaRuleset(text, [{ name: 'empty' }, { name: 'live' }]);
+  eq(warn.warnings.length, 1, '状态不匹配时给出警告');
+  ok(/不存在的状态/.test(warn.warnings[0]) && /alive/.test(warn.warnings[0]), '警告点明具体缺失的状态名');
+
+  /* 4) 非法输入：抛出带中文说明的错误，界面据此 toast 而不崩溃 */
+  let err = '';
+  try { parseCaRuleset('{ 不是 JSON', LIFE_STATES); } catch (e) { err = e.message; }
+  ok(/JSON 解析失败/.test(err), '非法 JSON 给出可读错误');
+  err = '';
+  try { parseCaRuleset({ foo: 1 }, LIFE_STATES); } catch (e) { err = e.message; }
+  ok(/未找到规则表/.test(err), '缺少规则表时给出可读错误');
+  err = '';
+  try { parseCaRuleset([], LIFE_STATES); } catch (e) { err = e.message; }
+  ok(/规则表为空/.test(err), '空规则表时给出可读错误');
+
+  /* 5) 环境模板：只含环境本身（状态集合 + 初始状态 + 手绘格 + 网格尺寸） */
+  const cfg = normalizeConfig({
+    ...editorScene(),
+    caMode: { enabled: true, states: LIFE_STATES, initial: { mode: 'random', density: 0.4, state: 'alive', pattern: '' } },
+    cellEditor: { enabled: true, painted: [{ col: 4, row: 2, state: 'alive' }] },
+  });
+  const tpl = buildEnvironmentTemplate(cfg, '滑翔机起手');
+  eq(tpl.kind, ENV_TEMPLATE_KIND, '环境模板带类型标识');
+  eq(tpl.name, '滑翔机起手', '环境模板记录名称');
+  const tplNames = tpl.states.map((s) => s.name);
+  ok(tplNames.includes('empty') && tplNames.includes('alive'), '环境模板包含环境状态集合');
+  eq(tplNames[0], 'empty', '模板状态集合同样保证 empty 在首位（与配置口径一致）');
+  eq(tpl.initial.density, 0.4, '环境模板包含初始状态');
+  eq(tpl.painted.length, 1, '环境模板包含手绘格子');
+  eq(tpl.grid.width, 12, '环境模板记录网格尺寸（载入时可提示尺寸差异）');
+  ok(!/rules/.test(JSON.stringify(buildEnvironmentTemplate(cfg, 'x'))),
+    '环境模板不夹带规则表（可跨场景复用）');
+  const tplText = JSON.stringify(tpl);
+  const tplBack = parseEnvironmentTemplate(tplText);
+  eq(JSON.stringify(tplBack), JSON.stringify(parseEnvironmentTemplate(tpl)),
+    '模板解析对「JSON 文本」与「已解析对象」结果一致');
+  eq(tplBack.painted.length, 1, '模板往返后手绘格子保留');
+  eq(tplBack.initial.mode, 'random', '模板往返后初始模式保留');
+  eq(tplBack.painted[0].state, 'alive', '模板往返后手绘格子的状态名保留');
+
+  /* 6) 环境模板：非法输入被拒绝，越界 / 重复 / 空状态数据被清洗 */
+  err = '';
+  try { parseEnvironmentTemplate('{ 坏 JSON'); } catch (e) { err = e.message; }
+  ok(/JSON 解析失败/.test(err), '模板非法 JSON 给出可读错误');
+  err = '';
+  try { parseEnvironmentTemplate({ states: [{ name: 'empty' }] }); } catch (e) { err = e.message; }
+  ok(/至少需要一个非空状态/.test(err), '模板缺少有效状态集合时给出可读错误');
+  const cleaned = parseEnvironmentTemplate({
+    states: LIFE_STATES,
+    initial: { mode: '不存在', density: 5 },
+    painted: [
+      { col: 1, row: 1, state: 'alive' },
+      { col: 1, row: 1, state: 'alive' },
+      { col: -3, row: 1, state: 'alive' },
+      { col: 2, row: 2, state: 'empty' },
+    ],
+    grid: { width: 9999, height: 12 },
+  });
+  eq(cleaned.initial.mode, 'empty', '非法初始模式回退「全空」');
+  eq(cleaned.initial.density, 1, '密度越界被夹到 [0,1]');
+  eq(cleaned.painted.length, 1, '重复 / 越界 / 空状态的格子被清洗');
+  eq(cleaned.grid.width, 400, '网格尺寸越界被夹到上限');
+  eq(parseEnvironmentTemplate({}).states[0].name, 'empty', 'empty 恒定排在状态集合首位（与配置一致）');
+}
+
+section('功能拓展：命名记录与规则集 / 模板 / 参数预设面板（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+
+  /* 1) 本地命名记录：独立存储键 + 条数上限 + 完整增删载入闭环 */
+  ok(/const ENV_TEMPLATE_KEY = 'gridsneaker:env-templates';/.test(app)
+    && /const CA_PARAM_PRESET_KEY = 'gridsneaker:ca-presets';/.test(app),
+    '环境模板与参数预设各有独立的本地存储键（互不干扰）');
+  ok(/const NAMED_STORE_LIMIT = 30;/.test(app), '本地命名记录有条数上限（避免无限增长）');
+  ok(/function readNamedStore\(key\)/.test(app) && /function writeNamedStore\(key, list\)/.test(app),
+    '本地记录的读写统一封装（解析失败 / 配额不足都有兜底）');
+  ok(/function namedStoreSection\(opts\)/.test(app)
+    && /button\('载入', \(\) => opts\.apply\(entry\), 'primary small'\)/.test(app)
+    && /button\('删除', \(\) => \{/.test(app),
+    '命名记录通用块提供「载入 / 删除」（保存与复用闭环）');
+  ok(/writeNamedStore\(opts\.storeKey, list\)/.test(app) && /renderList\(\);\s*\n\s*\};\s*\n\s*renderList\(\);/.test(app),
+    '保存 / 删除后就地刷新列表（不触发整轮重算）');
+
+  /* 2) 规则集面板：复制 / 下载导出，覆盖 / 追加导入，失败有可读提示 */
+  ok(/function caRulesetSection\(ca\)/.test(app)
+    && /button\('复制规则集'/.test(app) && /button\('下载规则集'/.test(app),
+    '规则集面板提供复制 / 下载两种导出方式');
+  ok(/button\('覆盖导入', \(\) => importRules\(false\), 'primary small'\)/.test(app)
+    && /button\('追加导入', \(\) => importRules\(true\), 'ghost small'\)/.test(app),
+    '规则集导入支持「覆盖」与「追加」两种方式');
+  ok(/ca\.rules = append \? \[\.\.\.ca\.rules, \.\.\.res\.rules\] : res\.rules;/.test(app),
+    '覆盖导入替换规则表，追加导入接在现有规则之后');
+  ok(/toast\(`规则集导入失败：\$\{e\.message\}`, 'error'\)/.test(app),
+    '导入失败给出可读的失败提示（不静默）');
+  ok(/if \(res\.warnings\.length\) toast\(res\.warnings\[0\], 'warn'\);/.test(app),
+    '状态不匹配的警告会以 toast 呈现给用户');
+
+  /* 3) 环境模板面板：保存 / 导出 / 粘贴导入，载入时明确替换范围与尺寸差异 */
+  ok(/function caEnvTemplateSection\(\)/.test(app) && /button\('导出当前环境'/.test(app)
+    && /field\('粘贴导入模板'/.test(app),
+    '环境模板面板提供保存 / 导出 / 粘贴导入');
+  ok(/function applyEnvironmentTemplate\(entry\)/.test(app)
+    && /cfg\.caMode\.states = tpl\.states;/.test(app)
+    && /cfg\.cellEditor\.painted = tpl\.painted;/.test(app),
+    '载入模板整体替换状态集合 / 初始状态 / 手绘格子');
+  ok(/模板网格尺寸与当前不同，超出当前网格的格子已被忽略/.test(app),
+    '模板与当前网格尺寸不同时明确提示（不静默丢格子）');
+  ok(/导入会整体替换当前的「环境状态集合 \/ 初始状态 \/ 手绘格子」/.test(app),
+    '导入前提示替换范围（并告知可撤销）');
+
+  /* 4) 参数预设面板：只保存演化参数，可载入并回显生效项数 */
+  ok(/const CA_PARAM_KEYS = \['neighborhood', 'radius', 'boundary', 'update', 'syncWithAgent', 'every', 'stopOnStable', 'stableSteps'\];/.test(app),
+    '参数预设覆盖邻域 / 半径 / 边界 / 更新顺序 / 同步方式 / 演化间隔 / 稳定判定');
+  ok(/function caParamSnapshot\(ca\) \{[\s\S]{0,140}for \(const k of CA_PARAM_KEYS\) out\[k\] = ca\[k\];[\s\S]{0,140}out\.initial = JSON\.parse\(JSON\.stringify\(ca\.initial\)\);/.test(app),
+    '参数快照只取上述演化参数（外加初始状态），不含规则表与手绘环境');
+  ok(/function caParamPresetSection\(\)/.test(app) && /nameLabel: '预设名称'/.test(app)
+    && /toast\(`已载入参数预设「\$\{entry\.name\}」（\$\{n\} 项参数）`, 'success'\)/.test(app),
+    '参数预设面板可保存 / 载入并回显生效项数');
+
+  /* 5) 三处新面板分别接入对应子页 */
+  ok(/\.\.\.caRulesetSection\(ca\),/.test(app) && /\.\.\.caEnvTemplateSection\(\),/.test(app)
+    && /\.\.\.caParamPresetSection\(\),/.test(app),
+    '三处新面板分别接入「演化规则 / 初始环境 / 交互与模板」子页');
 }
 
 /* ---------- 结果 ---------- */

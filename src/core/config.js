@@ -5,7 +5,7 @@ import { normalizeStates } from './world.js';
 import { Grid, parseDir, dirNames, DIR_LABEL_CN } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
-export const CONFIG_VERSION = '1.4';
+export const CONFIG_VERSION = '1.5';
 
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
@@ -21,6 +21,25 @@ export const MAX_RUN_FRAME_CAP = 200000;
 /** 生命机制：初始生命数值的合法区间（含端点），界面上以滑动条呈现 */
 export const LIFE_MIN = 1;
 export const LIFE_MAX = 9;
+
+/**
+ * 画布格子编辑器的「放置生效时机」。
+ *  - initial：写入 painted，作为「初始环境补丁」，在模拟开始（第 0 步）前写入世界；
+ *  - step：写入 timedPatches，只在该步「推进之前」写入世界，
+ *    因此不会回溯改写历史帧，仅改变本步及之后的模拟结果。
+ */
+export const CELL_PLACE_MODES = ['initial', 'step'];
+export const CELL_PLACE_MODE_LABELS = {
+  initial: '初始环境（写入第 0 步）',
+  step: '当前步放置（仅本步及之后生效）',
+};
+
+/** 延迟放置的补丁条数上限：避免长时间编辑把配置撑得过大 */
+export const MAX_TIMED_PATCHES = 2000;
+
+/** 规则集 / 环境模板的导入导出数据标识（导入时据此判断文件类型） */
+export const CA_RULESET_KIND = 'gridsneaker:ca-rules';
+export const ENV_TEMPLATE_KIND = 'gridsneaker:env-template';
 
 export const END_PRIORITY_DEFAULT = [
   'wall',
@@ -518,6 +537,13 @@ export function defaultConfig() {
       scatterDensity: 0.15,
       /** 已绘制的格子（初始环境补丁） */
       painted: [],
+      /**
+       * 放置生效时机：'initial' 写入 painted（第 0 步生效，默认）；
+       * 'step' 写入 timedPatches（只在该步推进前写入世界，不回溯历史）。
+       */
+      placeMode: 'initial',
+      /** 延迟放置的补丁（[{ tick, col, row, state }]），按 tick 在对应步生效 */
+      timedPatches: [],
     },
     endConditions: {
       wall: true,
@@ -888,7 +914,12 @@ function normAdvancedRules(raw) {
   }));
 }
 
-function normCaRules(raw) {
+/**
+ * 状态转移规则表规范化（元胞自动机）。
+ * 同时供「导入规则集」复用：导入的规则与配置内的规则走同一条规范化路径，
+ * 因此二者结构永远一致，不存在「导入的规则字段缺失」这类偏差。
+ */
+export function normalizeCaRules(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map((r, i) => {
     const counts = Array.isArray(r.counts)
@@ -1234,6 +1265,20 @@ function normCellEditor(raw, states, grid) {
   }
   const pool = Array.isArray(src.randomPool) ? src.randomPool.map(String) : [];
   /**
+   * 延迟放置补丁：坐标须落在网格内、状态名须真实存在且非 empty，
+   * 同一 (步数, 坐标) 只保留最后一次录入，因此同一份配置反复规范化结果恒定（幂等）。
+   */
+  const timedMap = new Map();
+  for (const item of Array.isArray(src.timedPatches) ? src.timedPatches : []) {
+    const tick = Math.round(num(item?.tick, -1));
+    const col = Math.round(num(item?.col, -1));
+    const row = Math.round(num(item?.row, -1));
+    const state = String(item?.state ?? '');
+    if (tick < 0 || col < 0 || row < 0 || col >= grid.width || row >= grid.height) continue;
+    if (!names.has(state) || state === 'empty') continue;
+    timedMap.set(`${tick},${col},${row}`, { tick, col, row, state });
+  }
+  /**
    * 「元胞自动机状态」工具的目标状态：必须是真实存在且非 empty 的状态，
    * 否则回退为空（面板显示为「自动」），由 paintStateForCell 取首个非空状态，
    * 与旧版「标记物工具落到 alive」的兜底语义保持一致。
@@ -1255,6 +1300,8 @@ function normCellEditor(raw, states, grid) {
     historyLimit: clamp(Math.round(num(src.historyLimit, d.historyLimit)), 0, 1000),
     scatterDensity: clamp(num(src.scatterDensity, d.scatterDensity), 0, 1),
     painted: [...map.values()],
+    placeMode: CELL_PLACE_MODES.includes(src.placeMode) ? src.placeMode : d.placeMode,
+    timedPatches: [...timedMap.values()].slice(0, MAX_TIMED_PATCHES),
   };
 }
 
@@ -1536,7 +1583,7 @@ export function normalizeConfig(rawInput = {}) {
     radius: clamp(Math.round(num(caRaw.radius, 1)), 1, 4),
     boundary: ['fixed', 'wrap', 'reflect'].includes(caRaw.boundary) ? caRaw.boundary : 'wrap',
     update: ['synchronous', 'asynchronous', 'random'].includes(caRaw.update) ? caRaw.update : 'synchronous',
-    rules: normCaRules(caRaw.rules),
+    rules: normalizeCaRules(caRaw.rules),
     initial: {
       mode: ['empty', 'random', 'pattern'].includes(caRaw.initial?.mode) ? caRaw.initial.mode : 'empty',
       density: clamp(num(caRaw.initial?.density, 0.3), 0, 1),
@@ -1663,6 +1710,143 @@ function versionLessThan(a, b) {
     if (x !== y) return x < y;
   }
   return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* 规则集 / 环境模板：导入导出（纯函数，便于离线回归）                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 导出元胞自动机的「状态转移规则表」为可读 JSON 文本。
+ * 只导出规则表本身（附带状态名清单供对方核对），不夹带界面 / 外观配置，
+ * 因此同一份规则集可在不同用户、不同场景之间直接传递。
+ */
+export function exportCaRuleset(caMode) {
+  const ca = caMode && typeof caMode === 'object' ? caMode : {};
+  return JSON.stringify({
+    kind: CA_RULESET_KIND,
+    version: 1,
+    states: (Array.isArray(ca.states) ? ca.states : []).map((s) => (typeof s === 'string' ? s : s && s.name)).filter(Boolean),
+    rules: Array.isArray(ca.rules) ? ca.rules : [],
+  }, null, 2);
+}
+
+/**
+ * 解析并规范化导入的规则集。
+ * 接受两种形态：规则数组本身，或含 rules 数组的对象（本项目导出的 JSON）。
+ * 结构不合法时抛出带中文说明的 Error；成功时返回 { rules, warnings }，
+ * 其中 warnings 用于提示「规则引用了当前环境状态集合中不存在的状态」。
+ */
+export function parseCaRuleset(text, states = []) {
+  let obj = text;
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj);
+    } catch (e) {
+      throw new Error(`JSON 解析失败：${e.message}`);
+    }
+  }
+  const rawList = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.rules) ? obj.rules : null);
+  if (!rawList) throw new Error('未找到规则表：应为规则数组，或包含 rules 数组的对象');
+  if (!rawList.length) throw new Error('规则表为空，没有可导入的规则');
+  const rules = normalizeCaRules(rawList);
+  const names = new Set((Array.isArray(states) ? states : [])
+    .map((s) => (typeof s === 'string' ? s : s && s.name))
+    .filter(Boolean));
+  const warnings = [];
+  if (names.size) {
+    const missing = new Set();
+    for (const r of rules) {
+      const froms = Array.isArray(r.from) ? r.from : [];
+      for (const f of froms) if (!names.has(f)) missing.add(f);
+      if (!names.has(r.to)) missing.add(r.to);
+      for (const c of r.counts) if (!names.has(c.state)) missing.add(c.state);
+    }
+    if (missing.size) {
+      warnings.push(`规则引用了当前环境状态集合中不存在的状态：${[...missing].join('、')}（这些引用会被当作「空格」处理）`);
+    }
+  }
+  return { rules, warnings };
+}
+
+/**
+ * 把当前配置中的「初始环境」打包为可保存 / 分享的环境模板。
+ * 模板只包含环境本身——状态集合、初始状态与手工绘制的格子，
+ * 不包含移动体、规则与外观配置，因此可跨场景复用。
+ */
+export function buildEnvironmentTemplate(cfg, name) {
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+  const ca = c.caMode || {};
+  const ce = c.cellEditor || {};
+  const grid = c.grid || {};
+  return {
+    kind: ENV_TEMPLATE_KIND,
+    version: 1,
+    name: String(name || '').trim() || '未命名环境',
+    states: JSON.parse(JSON.stringify(Array.isArray(ca.states) ? ca.states : [])),
+    initial: JSON.parse(JSON.stringify(ca.initial || { mode: 'empty', density: 0.3, state: '', pattern: '' })),
+    painted: JSON.parse(JSON.stringify(Array.isArray(ce.painted) ? ce.painted : [])),
+    grid: {
+      type: grid.type === 'hex' ? 'hex' : 'square',
+      width: Math.max(0, Math.round(Number(grid.width) || 0)),
+      height: Math.max(0, Math.round(Number(grid.height) || 0)),
+    },
+  };
+}
+
+/**
+ * 解析并规范化环境模板（接受 JSON 文本或已解析对象）。
+ * 状态集合走 normalizeStates（empty 恒定在首位），初始状态与手绘格子逐项校验，
+ * 与配置内的同名数据使用同一套规则，因此套用后可无缝参与规范化。
+ */
+export function parseEnvironmentTemplate(textOrObj) {
+  let obj = textOrObj;
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj);
+    } catch (e) {
+      throw new Error(`JSON 解析失败：${e.message}`);
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new Error('环境模板格式不正确（应为对象或模板 JSON 文本）');
+  }
+  const states = normalizeStates(obj.states);
+  if (states.length < 2) throw new Error('环境模板缺少有效的状态集合（至少需要一个非空状态）');
+  const names = new Set(states.map((s) => s.name));
+  const initRaw = obj.initial && typeof obj.initial === 'object' ? obj.initial : {};
+  const initial = {
+    mode: ['empty', 'random', 'pattern'].includes(initRaw.mode) ? initRaw.mode : 'empty',
+    density: clamp(num(initRaw.density, 0.3), 0, 1),
+    state: names.has(initRaw.state) ? String(initRaw.state) : (states[1] ? states[1].name : ''),
+    pattern: str(initRaw.pattern, ''),
+  };
+  const painted = [];
+  const seen = new Set();
+  for (const item of Array.isArray(obj.painted) ? obj.painted : []) {
+    const col = Math.round(num(item?.col, -1));
+    const row = Math.round(num(item?.row, -1));
+    const state = String(item?.state ?? '');
+    if (col < 0 || row < 0 || !names.has(state) || state === 'empty') continue;
+    const key = `${col},${row}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    painted.push({ col, row, state });
+  }
+  const g = obj.grid && typeof obj.grid === 'object' ? obj.grid : {};
+  return {
+    kind: ENV_TEMPLATE_KIND,
+    version: 1,
+    name: String(obj.name || '').trim() || '未命名环境',
+    states,
+    initial,
+    painted,
+    grid: {
+      type: g.type === 'hex' ? 'hex' : 'square',
+      width: clamp(Math.round(num(g.width, 0)), 0, 400),
+      height: clamp(Math.round(num(g.height, 0)), 0, 400),
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */

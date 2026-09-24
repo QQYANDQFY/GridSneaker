@@ -172,6 +172,19 @@ export class Simulation {
     for (const p of (cfg.cellEditor && Array.isArray(cfg.cellEditor.painted) ? cfg.cellEditor.painted : [])) {
       world.set(p, p.state);
     }
+    /**
+     * 「延迟放置」补丁（cellEditor.timedPatches）：按步号索引，
+     * 只在该步「推进之前」写入世界——早于该步的历史帧保持原样，
+     * 因此不会回溯改变已完成的模拟进程。步号 ≤ 0 的补丁等价于初始环境，
+     * 与手工绘制一并在主循环之前写入。
+     */
+    const timedByTick = new Map();
+    for (const p of (cfg.cellEditor && Array.isArray(cfg.cellEditor.timedPatches) ? cfg.cellEditor.timedPatches : [])) {
+      const t = Math.max(0, Math.round(Number(p.tick)) || 0);
+      if (!timedByTick.has(t)) timedByTick.set(t, []);
+      timedByTick.get(t).push(p);
+    }
+    for (const p of timedByTick.get(0) || []) world.set(p, p.state);
     this.runtimeDiagnostics = [];
     this.diagCodes.clear();
     // 蛇形实体总开关：body.enabled=false 或 initialLength=0 时不生成任何初始蛇
@@ -291,6 +304,30 @@ export class Simulation {
         break;
       }
       tick++;
+      /**
+       * 本步的「延迟放置」补丁：在世界推进之前就地写入，
+       * 只影响本步及之后的帧快照；cellsDirty 置真以刷新环境计数与帧数据。
+       */
+      const timedHits = timedByTick.get(tick);
+      let timedDirty = false;
+      if (timedHits) {
+        for (const p of timedHits) {
+          world.set(p, p.state);
+          timedDirty = true;
+        }
+        pushLog({
+          tick,
+          ruleId: 'cellEditor',
+          ruleName: '画布格子编辑器',
+          trigger: 'timedPlace',
+          subject: '延迟放置',
+          coord: { col: timedHits[0].col, row: timedHits[0].row },
+          priority: 0,
+          condition: `在第 ${tick} 步（当前步）放置环境`,
+          actions: `就地写入 ${timedHits.length} 格`,
+          text: `第 ${tick} 步延迟放置：就地改写 ${timedHits.length} 格环境，此前帧不受影响`,
+        });
+      }
       const ctx = {
         grid,
         world,
@@ -305,7 +342,7 @@ export class Simulation {
         log: pushLog,
         highlights: [],
         events: [],
-        cellsDirty: false,
+        cellsDirty: timedDirty,
         ca,
         spawnCtl,
       };

@@ -9,7 +9,9 @@
  *  - 克制：仅比对普通对象与原始值，数组（规则表 / 状态表等）按整体内容变化报告一条，
  *    不递归展开，避免一条规则改动产生成百上千条噪声差异。
  */
-import { INTERACTION_LABELS, SPAWN_LABELS, CELL_TOOL_LABELS, SAFETY_ON_AVOID_LABELS } from './config.js';
+import {
+  INTERACTION_LABELS, SPAWN_LABELS, CELL_TOOL_LABELS, SAFETY_ON_AVOID_LABELS, CELL_PLACE_MODE_LABELS,
+} from './config.js';
 import { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } from './ca.js';
 import { DIR_LABEL_CN } from './grid.js';
 
@@ -91,6 +93,7 @@ export const CONFIG_FIELD_LABELS = {
   randomObstacle: '随机放置障碍物', randomPool: '随机池', randomProbability: '随机放置概率',
   brushSize: '画笔尺寸', drag: '拖拽连画', rightClickErase: '右键擦除',
   historyLimit: '撤销历史上限', scatterDensity: '散布密度', painted: '已绘制格子',
+  placeMode: '放置方式', timedPatches: '延迟放置补丁',
 };
 
 /** 按「完整路径」覆盖的枚举文案（优先于按字段名匹配） */
@@ -121,6 +124,7 @@ const VALUE_LABELS_BY_PATH = {
   'style.trailJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
   'style.bodyJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
   'cellEditor.tool': CELL_TOOL_LABELS,
+  'cellEditor.placeMode': CELL_PLACE_MODE_LABELS,
   'safety.onAvoid': SAFETY_ON_AVOID_LABELS,
 };
 
