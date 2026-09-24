@@ -47,12 +47,21 @@ export const STYLE_DEFAULTS = {
 const EFFECT_LOOKBACK = 6;
 
 /** 交互特效类型（由模拟层写入 frame.highlights） */
-const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap', 'transform', 'warning']);
+const EFFECT_TYPES = new Set([
+  'merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap', 'transform', 'warning',
+  // 生命机制：拾取增益 / 陷阱扣命 / 低生命预警 / 生命耗尽 / 原地重生
+  'lifeGain', 'lifeLoss', 'lifeWarning', 'lifeDepleted', 'respawn',
+]);
 
 /** 蛇死亡转化特效的主色调（转化的收束圆环），与目标状态填充色叠加形成过渡 */
 const TRANSFORM_ACCENT = '#7cf5d0';
 /** 碰撞预警特效色（危险格脉冲提示） */
 const WARNING_ACCENT = '#ffb020';
+/** 生命机制：增益 / 扣命 / 重生 / 生命耗尽的主色调 */
+const LIFE_GAIN_ACCENT = '#63e6be';
+const LIFE_LOSS_ACCENT = '#ff6b6b';
+const LIFE_RESPAWN_ACCENT = '#7cc4ff';
+const LIFE_WARN_ACCENT = '#ffb020';
 
 /** 自定义皮肤的两个可上传部位：head 绘制在蛇头，body 绘制在其余体节 */
 const SKIN_KEYS = ['head', 'body'];
@@ -1255,7 +1264,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0', transform: TRANSFORM_ACCENT, warning: WARNING_ACCENT };
+    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0', transform: TRANSFORM_ACCENT, warning: WARNING_ACCENT, lifeGain: LIFE_GAIN_ACCENT, lifeLoss: LIFE_LOSS_ACCENT, lifeWarning: LIFE_WARN_ACCENT, lifeDepleted: LIFE_LOSS_ACCENT, respawn: LIFE_RESPAWN_ACCENT };
     for (let fi = start; fi <= frameIndex; fi++) {
       const f = frames[fi];
       if (!f || !f.highlights) continue;
@@ -1269,6 +1278,16 @@ export class Renderer {
         // 比通用波纹更能表达「身体节点并入元胞自动机」的过程
         if (h.type === 'transform') {
           this.drawTransformEffect(p, t, cellSize, h.state ? this.stateColor(h.state) : null);
+          continue;
+        }
+        // 重生：以蛇头为中心向外扩散的同心环，表达「原地重生」的扩散感
+        if (h.type === 'respawn') {
+          this.drawRespawnEffect(p, t, cellSize);
+          continue;
+        }
+        // 低生命预警：危险格脉冲 + 警示环
+        if (h.type === 'lifeWarning') {
+          this.drawLifeWarningEffect(p, t, cellSize);
           continue;
         }
         const color = h.color || (h.state ? (this.stateColor(h.state) || colors[h.type]) : colors[h.type]) || '#e5e9f0';
@@ -1318,6 +1337,56 @@ export class Renderer {
     ctx.strokeStyle = TRANSFORM_ACCENT;
     ctx.lineWidth = Math.max(1.5, cellSize * 0.09);
     const ring = half * (0.5 + 1.2 * (1 - t));
+    if (hex) pathHex(ctx, p.x, p.y, ring);
+    else roundRect(ctx, p.x - ring, p.y - ring, ring * 2, ring * 2, cellSize * 0.24);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * 生命机制 · 原地重生：蛇头格淡入 + 两圈向外扩散的同心环。
+   * 时间轴 t 由 1 衰减到 0，环半径随 (1-t) 增大，形成「重生波」的扩散感。
+   */
+  drawRespawnEffect(p, t, cellSize) {
+    const ctx = this.ctx;
+    const half = cellSize / 2;
+    const hex = this.grid.type === 'hex';
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.5 * t;
+    ctx.fillStyle = LIFE_RESPAWN_ACCENT;
+    const grow = half * (0.35 + 0.3 * t);
+    if (hex) pathHex(ctx, p.x, p.y, grow);
+    else roundRect(ctx, p.x - grow, p.y - grow, grow * 2, grow * 2, cellSize * 0.2);
+    ctx.fill();
+    for (let k = 0; k < 2; k++) {
+      const phase = (1 - t) + k * 0.35;
+      const ring = half * (0.7 + 2.1 * phase);
+      ctx.globalAlpha = Math.max(0, (0.75 - k * 0.3) * t);
+      ctx.strokeStyle = k ? '#ffffff' : LIFE_RESPAWN_ACCENT;
+      ctx.lineWidth = Math.max(1.2, cellSize * (0.09 - k * 0.03));
+      if (hex) pathHex(ctx, p.x, p.y, ring);
+      else roundRect(ctx, p.x - ring, p.y - ring, ring * 2, ring * 2, cellSize * 0.24);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 生命机制 · 低生命预警：危险格脉冲填充 + 警示环 */
+  drawLifeWarningEffect(p, t, cellSize) {
+    const ctx = this.ctx;
+    const half = cellSize / 2;
+    const hex = this.grid.type === 'hex';
+    ctx.save();
+    const pulse = 0.5 + 0.5 * Math.sin((1 - t) * Math.PI * 3);
+    ctx.globalAlpha = (0.18 + 0.5 * pulse) * t;
+    ctx.fillStyle = LIFE_WARN_ACCENT;
+    if (hex) pathHex(ctx, p.x, p.y, half * 0.92);
+    else roundRect(ctx, p.x - half * 0.92, p.y - half * 0.92, half * 1.84, half * 1.84, cellSize * 0.2);
+    ctx.fill();
+    ctx.globalAlpha = 0.35 + 0.55 * t;
+    ctx.strokeStyle = LIFE_WARN_ACCENT;
+    ctx.lineWidth = Math.max(1.4, cellSize * 0.1);
+    const ring = half * (0.6 + 0.5 * (1 - t));
     if (hex) pathHex(ctx, p.x, p.y, ring);
     else roundRect(ctx, p.x - ring, p.y - ring, ring * 2, ring * 2, cellSize * 0.24);
     ctx.stroke();

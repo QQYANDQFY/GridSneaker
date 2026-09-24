@@ -9,6 +9,7 @@ import {
   normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
   buildShareUrl, isBodyEnabled, isSkinImage, stripSkinAssets,
   JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
+  LIFE_MIN, LIFE_MAX,
 } from '../src/core/config.js';
 import {
   buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -2534,6 +2535,251 @@ section('自碰撞死亡与转化为元胞自动机');
     ok(noEff.some((d) => d.code === 'transformNoEffect'), '诊断：概率为 0 时提示转化不会产生节点');
     const override = diagnoseConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } });
     ok(override.some((d) => d.code === 'transformOverridesSelfCollisionEnd'), '诊断：「撞到自身」结束规则在转化模式下让位');
+  }
+}
+
+/* ---------- 生命机制（多生命系统）与「死亡即停」 ---------- */
+section('生命机制：多生命 / 扣命重生 / 生命耗尽 / 死亡即停 / 自撞互斥');
+{
+  /**
+   * 必自撞 + 生命机制场景：只允许左转的蛇在 2×2 小循环上绕圈，
+   * 身体长度 6 > 循环周长 4，第 3 步必然压到自身身体。
+   * 重生长度同样设为 6、无敌步数设为 0，保证每次重生后下一步必定再次致命——
+   * 这样「扣命 → 重生 → 生命耗尽」的整条链路在少数几步内可完整验证。
+   */
+  const loopLife = (patch = {}) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 20, height: 20, boundary: 'wrap' };
+    cfg.start = { col: 10, row: 10, direction: 'up' };
+    cfg.body.initialLength = 6;
+    cfg.moveRules = { left: 1, straight: 0, right: 0 };
+    cfg.endConditions = { ...cfg.endConditions, maxSteps: 30, wall: false, outOfBounds: false, noMove: false, ruleEnd: false };
+    cfg.life = {
+      ...cfg.life, enabled: true, initialLives: 3,
+      respawn: { ...cfg.life.respawn, length: 6, invincibleTicks: 0 },
+    };
+    return applyPatch(cfg, patch);
+  };
+
+  /**
+   * 环境增减生命场景：10×10 网格、图案居中放置（居中行 = 第 4 行，列 2~6），
+   * 蛇从 (1,4) 只向右直行，第 1~5 步依次踏入第 2~6 列。
+   */
+  const itemLife = (pattern, patch = {}) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+    cfg.start = { col: 1, row: 4, direction: 'right' };
+    cfg.body.initialLength = 3;
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.endConditions = { ...cfg.endConditions, maxSteps: 8, wall: false, outOfBounds: false, selfCollision: false, noMove: false, ruleEnd: false };
+    cfg.caMode = {
+      ...cfg.caMode,
+      enabled: true,
+      states: [
+        { name: 'empty', color: null, symbol: '.', blocking: false },
+        { name: 'marker', color: '#ffd166', symbol: 'M', blocking: false },
+        { name: 'spike', color: '#ff6b6b', symbol: 'X', blocking: false },
+      ],
+      initial: { mode: 'pattern', pattern },
+      rules: [],
+    };
+    cfg.life = { ...cfg.life, enabled: true };
+    return applyPatch(cfg, patch);
+  };
+
+  // 1) 规范化：初始生命夹取到 [1,9]，「死亡后仍可移动」默认关闭
+  {
+    eq(defaultConfig().life.enabled, false, '生命机制默认关闭（旧场景零变化）');
+    eq(defaultConfig().life.keepMovingAfterDeath, false, '「死亡后仍可移动」默认关闭');
+    eq(defaultConfig().life.initialLives, 3, '初始生命默认 3 条');
+    eq(LIFE_MIN, 1, '初始生命下限为 1');
+    eq(LIFE_MAX, 9, '初始生命上限为 9');
+    eq(normalizeConfig({ life: { initialLives: 99 } }).life.initialLives, LIFE_MAX, '初始生命上溢夹取到上限');
+    eq(normalizeConfig({ life: { initialLives: 0 } }).life.initialLives, LIFE_MIN, '初始生命下溢夹取到下限');
+    eq(normalizeConfig({ life: { initialLives: -5 } }).life.initialLives, LIFE_MIN, '负初始生命夹取到下限');
+    eq(normalizeConfig({ life: { initialLives: 4.6 } }).life.initialLives, 5, '初始生命取整');
+    eq(normalizeConfig({ life: { warnThreshold: 99 } }).life.warnThreshold, LIFE_MAX, '预警阈值夹取到上限');
+    eq(normalizeConfig({ life: { warnThreshold: -1 } }).life.warnThreshold, 0, '预警阈值可为 0（表示不预警）');
+    eq(normalizeConfig({ life: { respawn: { length: 0 } } }).life.respawn.length, 1, '重生长度至少 1 节');
+    eq(normalizeConfig({ life: { items: { lossAmount: 0 } } }).life.items.lossAmount, 1, '每次扣除生命至少 1 条');
+    eq(normalizeConfig({ life: { items: { gainAmount: 99 } } }).life.items.gainAmount, LIFE_MAX, '每次增加生命不超过上限');
+    eq(normalizeConfig({ life: { items: { gainStates: ['marker', 'nope', 'empty'] } } }).life.items.gainStates.join(','), 'marker',
+      '增减生命的状态名过滤：未定义状态与 empty 被丢弃');
+    ok(END_LABELS.lifeDepleted && END_LABELS.lifeDepleted.length > 0, '结束原因表包含「生命耗尽」标签');
+  }
+
+  // 2) 配置诊断：数值越界 / 无增减来源 / 开启「死亡后仍可移动」
+  {
+    ok(diagnoseConfig({ life: { initialLives: 99 } }).some((d) => d.code === 'lifeInitialClamped'), '诊断：初始生命越界被提示');
+    eq(diagnoseConfig({ life: { initialLives: 5 } }).some((d) => d.code === 'lifeInitialClamped'), false, '诊断：合法初始生命不提示');
+    ok(diagnoseConfig({ life: { enabled: true, keepMovingAfterDeath: true } }).some((d) => d.code === 'lifeKeepMovingAfterDeath'),
+      '诊断：开启「死亡后仍可移动」时提示可能出现的异常表现');
+    ok(diagnoseConfig({ life: { enabled: true, items: { gainStates: [], lossStates: [] } } }).some((d) => d.code === 'lifeNoItemSource'),
+      '诊断：生命机制没有任何增减来源时提示');
+    eq(diagnoseConfig({ life: { enabled: false, items: { gainStates: [], lossStates: [] } } }).some((d) => d.code === 'lifeNoItemSource'), false,
+      '诊断：未启用生命机制时不提示增减来源缺失');
+  }
+
+  // 3) 自撞规则互斥绑定：开启「自撞即判定死亡」时「撞到自身」自动锁定且原值不被改写
+  {
+    eq(defaultConfig().endConditions.selfCollisionLocked, undefined, '互斥锁定字段是派生值，不写入默认配置');
+    const on = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } });
+    eq(on.endConditions.selfCollisionLocked, true, '开启「自撞即判定死亡」时「撞到自身」被锁定');
+    eq(on.endConditions.selfCollision, true, '互斥绑定不改写「撞到自身」的原始值（关闭后原样恢复）');
+    const off = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: false }, endConditions: { selfCollision: true } });
+    eq(off.endConditions.selfCollisionLocked, false, '关闭「自撞即判定死亡」后锁定解除');
+    eq(off.endConditions.selfCollision, true, '解锁后「撞到自身」恢复可编辑且原值保留');
+    eq(normalizeConfig({ transform: { enabled: false, dieOnSelfCollision: true }, endConditions: { selfCollision: true } }).endConditions.selfCollisionLocked,
+      false, '未启用「蛇死亡转化」时不锁定');
+    const notChecked = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: false } });
+    eq(notChecked.endConditions.selfCollision, false, '锁定态不会把未勾选的规则自动打开');
+    ok(diagnoseConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } })
+      .some((d) => d.code === 'transformOverridesSelfCollisionEnd'), '诊断：互斥绑定有对应提示');
+
+    // 行为验证：互斥绑定下自撞按生命机制扣命，而不是以「撞到自身」收尾
+    const r = new Simulation(loopLife({
+      transform: { enabled: true, dieOnSelfCollision: true, globalProbability: 0, segmentProbability: 0 },
+      life: { initialLives: 2 },
+    })).run();
+    eq(r.stats.lifeLosses, 2, '互斥绑定下自撞按生命机制逐次扣命');
+    eq(r.stats.respawns, 1, '还有剩余生命时原地重生');
+    eq(r.stats.finalDeaths, 1, '生命耗尽才记录最终死亡');
+    ok(r.endReason.code !== 'selfCollision', '互斥绑定下自撞不以「撞到自身」收尾', `实际 ${r.endReason.code}`);
+    eq(r.stats.transformDeaths, 1, '生命耗尽后转入「蛇死亡转化」流程');
+  }
+
+  // 4) 扣命重生：保留蛇头位置与进度，仅重置蛇身长度并播放重生动画
+  {
+    const r = new Simulation(loopLife({ life: { initialLives: 3 } })).run();
+    eq(r.stats.lifeLosses, 3, '每次致命判定扣 1 条命');
+    eq(r.stats.respawns, 2, '还有剩余生命时原地重生');
+    eq(r.stats.finalDeaths, 1, '生命耗尽才记录最终死亡');
+    eq(r.endReason.code, 'selfCollision', '生命耗尽后按原有结束规则收尾');
+    eq(r.stats.lifeWarnings, 1, '剩余生命降至预警阈值时给出一次预警');
+    eq(r.summary.lifeLosses, 3, '运行摘要同步生命扣减统计');
+    eq(r.summary.respawns, 2, '运行摘要同步重生统计');
+    eq(r.summary.finalDeaths, 1, '运行摘要同步最终死亡统计');
+
+    const respawnFrames = r.frames.filter((f) => (f.events || []).some((e) => e.type === 'lifeRespawn'));
+    eq(respawnFrames.length, 2, '每次重生所在帧都写入 lifeRespawn 事件');
+    const first = respawnFrames[0];
+    const ev = first.events.find((e) => e.type === 'lifeRespawn');
+    eq(ev.lives, 2, '重生事件携带扣除后的剩余生命');
+    eq(first.agents[0].alive, true, '重生后移动体仍然存活');
+    eq(first.agents[0].length, 6, '重生后蛇身长度重置为「重生长度」配置值');
+    eq(first.agents[0].segments[0][0], ev.coord.col, '重生保留蛇头列坐标（核心位置不丢失）');
+    eq(first.agents[0].segments[0][1], ev.coord.row, '重生保留蛇头行坐标（核心位置不丢失）');
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'respawn')), '重生写入 respawn 高亮（渲染层据此播放重生动画）');
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'lifeWarning')), '低生命预警写入 lifeWarning 高亮');
+    ok(r.frames.flatMap((f) => f.events).some((e) => e.type === 'lifeLoss' && e.lives === 2), '扣命事件携带剩余生命与致命原因');
+    ok(r.logs.some((l) => l.ruleName === '生命机制'), '重生写入「生命机制」规则日志');
+  }
+
+  // 5) 死亡即停：默认关闭「死亡后仍可移动」时，死亡帧起蛇头蛇身被删去、不再推进
+  {
+    const dead = new Simulation(loopLife({
+      transform: { enabled: true, dieOnSelfCollision: true, globalProbability: 0, segmentProbability: 0 },
+      caMode: { enabled: true },
+      life: { initialLives: 1, keepMovingAfterDeath: false },
+    })).run();
+    const deathFrame = dead.frames.find((f) => (f.events || []).some((e) => e.type === 'lifeDepleted'));
+    ok(!!deathFrame, '生命耗尽写入 lifeDepleted 事件');
+    eq(dead.stats.finalDeaths, 1, '生命耗尽记录最终死亡');
+    eq(dead.stats.respawns, 0, '生命耗尽时不再重生');
+    eq(deathFrame.agents.length, 0, '死亡所在帧已删去蛇头与蛇身');
+    ok(dead.frames.filter((f) => f.tick >= deathFrame.tick).every((f) => f.agents.length === 0),
+      '死亡后所有帧都不再出现该移动体（移动逻辑立即停止）');
+    ok(dead.frames.some((f) => f.tick < deathFrame.tick && f.agents[0] && f.agents[0].segments.length > 0), '死亡前正常推进');
+    eq(dead.stats.steps, 30, '死亡不会误终止整轮运行：元胞自动机继续运行到步数上限');
+
+    const zombie = new Simulation(loopLife({
+      transform: { enabled: true, dieOnSelfCollision: true, globalProbability: 0, segmentProbability: 0 },
+      life: { initialLives: 1, keepMovingAfterDeath: true },
+    })).run();
+    const zLast = zombie.frames[zombie.frames.length - 1];
+    eq(zLast.agents.length, 1, '开启「死亡后仍可移动」时移动体保留在场上');
+    eq(zLast.agents[0].zombie, true, '以僵尸态保留的移动体带 zombie 标记');
+    eq(zLast.agents[0].alive, false, '僵尸态的存活标记为 false');
+    ok(zLast.agents[0].segments.length > 0, '僵尸态保留蛇头与蛇身（与默认关闭形成对比）');
+    eq(zombie.stats.lifeLosses, 0, '「死亡后仍可移动」时致命判定整体不生效');
+    eq(zombie.stats.finalDeaths, 0, '「死亡后仍可移动」时不会真正扣命 / 最终死亡');
+  }
+
+  // 6) 环境动态增减生命：拾取道具 +1 条命、触发陷阱 -1 条命
+  {
+    const gain = new Simulation(itemLife('MMMMM', { life: { initialLives: 2, items: { gainAmount: 1 } } })).run();
+    eq(gain.stats.lifeGains, 5, '5 个增益格子各增加 1 条命');
+    eq(gain.frames[gain.frames.length - 1].stats.lives, 7, '剩余生命 = 初始 2 条 + 拾取 5 条');
+    eq(gain.stats.maxLives, 7, '峰值生命同步更新');
+    eq(gain.stats.markerCount, 0, '默认拾取后清除该格');
+    ok(gain.frames.some((f) => f.highlights.some((h) => h.type === 'lifeGain')), '拾取写入 lifeGain 高亮');
+    ok(gain.frames.flatMap((f) => f.events).some((e) => e.type === 'lifeGain' && e.lives === 3), '拾取事件携带增加后的剩余生命');
+
+    const cap = new Simulation(itemLife('MMMMM', { life: { initialLives: LIFE_MAX, items: { gainAmount: 2 } } })).run();
+    eq(cap.stats.maxLives, LIFE_MAX, '生命不会超过上限');
+    eq(cap.stats.lifeGains, 0, '已在上限时拾取不再累计');
+    // 增益格子本身仍会被长度策略的「吃到即增长」逻辑消耗（与生命机制无关），
+    // 因此这里只断言生命机制未生效，而不去断言格子是否被消耗。
+    ok(!cap.frames.flatMap((f) => f.events).some((e) => e.type === 'lifeGain'),
+      '已在上限时不写入 lifeGain 事件（生命机制未消耗增益格子）');
+
+    const gainOff = new Simulation(itemLife('MMMMM', { life: { enabled: false } })).run();
+    eq(gainOff.stats.lifeGains, 0, '未启用生命机制时增益格子不生效');
+
+    const trap = new Simulation(itemLife('XXXXX', {
+      life: { initialLives: 2, items: { lossStates: ['spike'], lossAmount: 1 } },
+    })).run();
+    eq(trap.stats.lifeLosses, 2, '踏入陷阱各扣 1 条命');
+    eq(trap.stats.finalDeaths, 1, '扣到 0 条触发最终死亡');
+    eq(trap.stats.respawns, 0, '陷阱扣命不触发重生');
+    eq(trap.stats.lifeWarnings, 1, '剩余 1 条命时给出一次低生命预警');
+    eq(trap.endReason.code, 'lifeDepleted', '生命耗尽以「生命耗尽」收尾');
+    eq(trap.endReason.label, END_LABELS.lifeDepleted, '结束原因标签为「生命耗尽」');
+    eq(trap.stats.steps, 2, '生命耗尽后立即停止推进');
+    eq(trap.frames[trap.frames.length - 1].agents[0].lives, 0, '最终帧的剩余生命为 0');
+    ok(trap.frames.flatMap((f) => f.events).some((e) => e.type === 'trapHit' && e.state === 'spike'), '陷阱命中事件携带触发状态名');
+    ok(trap.frames.some((f) => f.highlights.some((h) => h.type === 'lifeLoss')), '陷阱命中写入 lifeLoss 高亮');
+
+    const trapOff = new Simulation(itemLife('XXXXX', { life: { enabled: false, items: { lossStates: ['spike'] } } })).run();
+    eq(trapOff.stats.lifeLosses, 0, '未启用生命机制时陷阱格子不生效');
+    eq(trapOff.endReason.code, 'maxSteps', '未启用生命机制时蛇正常走完全程');
+  }
+
+  // 7) 回归：未启用生命机制时，致命判定的旧行为与统计数据完全不变
+  {
+    const r = new Simulation(loopLife({ life: { enabled: false } })).run();
+    eq(r.stats.lifeLosses, 0, '未启用生命机制时不自撞扣命');
+    eq(r.stats.respawns, 0, '未启用生命机制时不重生');
+    eq(r.stats.finalDeaths, 0, '未启用生命机制时不记录最终死亡');
+    eq(r.endReason.code, 'selfCollision', '未启用生命机制时自撞仍按原有结束规则收尾');
+    eq(r.frames[r.frames.length - 1].agents[0].lives, 0, '未启用生命机制时移动体不携带生命');
+    eq(r.stats.transformDeaths, 0, '未启用生命机制时也不会进入转化流程');
+  }
+
+  // 8) 致命事件吸收：撞墙扣命重生后不再触发「撞墙」结束规则（生命耗尽才收尾）
+  {
+    const wallLife = (patch) => {
+      const c = defaultConfig();
+      c.grid = { type: 'square', width: 6, height: 6, boundary: 'fixed' };
+      c.start = { col: 1, row: 1, direction: 'up' };
+      c.body.initialLength = 1;
+      c.moveRules = { left: 0, straight: 1, right: 0 };
+      c.endConditions = { ...c.endConditions, maxSteps: 50, wall: true, noMove: false, ruleEnd: false };
+      c.life = { ...c.life, enabled: true, initialLives: 2, respawn: { length: 1, invincibleTicks: 0 } };
+      return applyPatch(c, patch);
+    };
+
+    const r = new Simulation(wallLife({})).run();
+    eq(r.stats.lifeLosses, 2, '两次撞墙各扣 1 条命');
+    eq(r.stats.respawns, 1, '第 1 次撞墙后原地重生');
+    eq(r.stats.finalDeaths, 1, '第 2 次撞墙耗尽生命，记录最终死亡');
+    eq(r.endReason.code, 'wall', '生命耗尽后才按「撞墙」收尾');
+    ok(r.stats.steps > 2, '扣命重生所在帧不会因「撞墙」结束规则误终止整轮运行');
+
+    const r0 = new Simulation(wallLife({ life: { enabled: false } })).run();
+    eq(r0.stats.lifeLosses, 0, '未启用生命机制时不扣命');
+    eq(r0.stats.steps, 2, '未启用生命机制时第 1 次撞墙即结束运行（对照）');
+    eq(r0.endReason.code, 'wall', '未启用生命机制时按「撞墙」结束');
   }
 }
 

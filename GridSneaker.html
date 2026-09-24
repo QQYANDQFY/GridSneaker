@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
   <style>
-:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:transparent;color:var(--muted);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:#1c3b5a;color:#d7ecff}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}
+:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}.end-row.locked{opacity:0.6;border-color:var(--line);border-style:dashed}.end-row.locked>.check-wrap,.end-row.locked .checkbox{cursor:not-allowed}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap}.cfg-tab-nav .btn.tab-btn.on{background:#1c3b5a;color:#d7ecff;border-color:var(--accent)}.cfg-tab-panel{padding-top:2px}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:transparent;color:var(--muted);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:#1c3b5a;color:#d7ecff}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}
   </style>
 </head>
 <body>
@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.5.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.6.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -197,6 +197,10 @@ this.state=opts.state||'normal';
 this.tag=opts.tag||null;
 this.isMain=opts.isMain!==undefined? !!opts.isMain:true;
 this.spawnTick=Math.max(0,Math.round(Number(opts.spawnTick)||0));
+this.lives=Math.max(0,Math.round(Number(opts.lives)||0));
+this.zombie=false;
+this.invincibleUntil= -1;
+this.respawnTick= -1;
 }
 get head(){
 return this.segments[0];
@@ -215,12 +219,16 @@ state:this.state,
 tag:this.tag,
 isMain:this.isMain,
 spawnTick:this.spawnTick,
+lives:this.lives,
 });
 a.alive=this.alive;
 a.pendingForcedStraights=this.pendingForcedStraights;
 a.forcedNextTurn=this.forcedNextTurn;
 a.endReason=this.endReason;
 a.speedMul=this.speedMul;
+a.zombie=this.zombie;
+a.invincibleUntil=this.invincibleUntil;
+a.respawnTick=this.respawnTick;
 return a;
 }
 bodyIndices(grid){
@@ -806,6 +814,8 @@ const{Grid,parseDir,DIR_LABEL_CN}=__MODULES["src/core/grid.js"];
 const{patternStateNameAt,clearPatternCell,parsePatternText}=__MODULES["src/core/ca.js"];
 const CONFIG_VERSION='1.2';
 const MAX_STEPS_LIMIT=1e15;
+const LIFE_MIN=1;
+const LIFE_MAX=9;
 const END_PRIORITY_DEFAULT=[
 'wall',
 'outOfBounds',
@@ -839,6 +849,7 @@ frameLimit:'达到安全步数上限',
 caStable:'元胞自动机稳定',
 allAgentsGone:'所有移动体均已消失',
 transformDone:'蛇已全部转化为环境',
+lifeDepleted:'生命耗尽',
 manual:'手动结束',
 };
 const INTERACTION_MODES=['collide','merge','repel','pass'];
@@ -1029,6 +1040,23 @@ dieOnSelfCollision:true,
 globalProbability:0.6,
 segmentProbability:0.5,
 state:'obstacle',
+},
+life:{
+enabled:false,
+initialLives:3,
+keepMovingAfterDeath:false,
+warnThreshold:1,
+respawn:{
+length:3,
+invincibleTicks:2,
+},
+items:{
+gainStates:['marker'],
+gainAmount:1,
+consumeGain:true,
+lossStates:[],
+lossAmount:1,
+},
 },
 environmentRules:[],
 caMode:{
@@ -1462,6 +1490,40 @@ segmentProbability:clamp(num(t.segmentProbability,d.segmentProbability),0,1),
 state:names.includes(want)&&want!=='empty'?want:fallback,
 };
 }
+function normLife(rawL,states){
+const d=defaultConfig().life;
+const l=rawL&&typeof rawL==='object'?rawL:{};
+const names=new Set(states.map((s)=>s.name));
+const pickStates=(v,fb)=>{
+const src=Array.isArray(v)?v:fb;
+const out=[];
+for(const item of src){
+const n=String(item);
+if(!names.has(n)||n==='empty'||out.includes(n))continue;
+out.push(n);
+}
+return out;
+};
+const r=l.respawn&&typeof l.respawn==='object'?l.respawn:{};
+const it=l.items&&typeof l.items==='object'?l.items:{};
+return{
+enabled:bool(l.enabled,d.enabled),
+initialLives:clamp(Math.round(num(l.initialLives,d.initialLives)),LIFE_MIN,LIFE_MAX),
+keepMovingAfterDeath:bool(l.keepMovingAfterDeath,d.keepMovingAfterDeath),
+warnThreshold:clamp(Math.round(num(l.warnThreshold,d.warnThreshold)),0,LIFE_MAX),
+respawn:{
+length:clamp(Math.round(num(r.length,d.respawn.length)),1,100000),
+invincibleTicks:clamp(Math.round(num(r.invincibleTicks,d.respawn.invincibleTicks)),0,100000),
+},
+items:{
+gainStates:pickStates(it.gainStates,d.items.gainStates),
+gainAmount:clamp(Math.round(num(it.gainAmount,d.items.gainAmount)),0,LIFE_MAX),
+consumeGain:bool(it.consumeGain,d.items.consumeGain),
+lossStates:pickStates(it.lossStates,d.items.lossStates),
+lossAmount:clamp(Math.round(num(it.lossAmount,d.items.lossAmount)),1,LIFE_MAX),
+},
+};
+}
 function normMultiSnake(raw={}){
 const d=defaultConfig().multiSnake;
 const sp=raw.spawn||{};
@@ -1608,6 +1670,8 @@ style:normalizeStyle(raw.style),
 };
 ensureCoreStates(cfg);
 cfg.transform=normTransform(raw.transform,cfg.caMode.states);
+cfg.life=normLife(raw.life,cfg.caMode.states);
+cfg.endConditions.selfCollisionLocked= !!(cfg.transform.enabled&&cfg.transform.dieOnSelfCollision);
 return cfg;
 }
 function ensureCoreStates(cfg){
@@ -1934,11 +1998,49 @@ if(cfg.transform.enabled&&cfg.transform.dieOnSelfCollision&&cfg.endConditions.se
 out.push({
 level:'info',
 code:'transformOverridesSelfCollisionEnd',
-title:'「撞到自身」结束规则在转化模式下不触发',
-message:'已开启「自撞即判定死亡」：自撞只会让该移动体消失并把身体节点并入环境，主循环会继续运行，因此结束规则「撞到自身」不会收尾。',
+title:'「撞到自身」结束规则已因互斥绑定自动禁用',
+message:'已开启「自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发结束规则「撞到自身」，因此该规则被自动禁用且不可手动修改；关闭「自撞即判定死亡」即可恢复编辑。',
 suggestions:[
 {label:'关闭「自撞即判定死亡」以恢复该结束规则',patch:{transform:{dieOnSelfCollision:false}}},
 {label:'改用「所有移动体均已消失」收尾',patch:{endConditions:{allAgentsGone:true}}},
+],
+});
+}
+const lifeRaw=(raw.life&&typeof raw.life==='object')?raw.life:{};
+const rawLives=Number(lifeRaw.initialLives);
+if(Number.isFinite(rawLives)&&(rawLives<LIFE_MIN||rawLives>LIFE_MAX)){
+out.push({
+level:'warning',
+code:'lifeInitialClamped',
+title:'初始生命数值超出合理区间',
+message:`初始生命 ${Math.round(rawLives)} 超出允许区间 [${LIFE_MIN}, ${LIFE_MAX}]，已收敛为 ${cfg.life.initialLives}。`,
+suggestions:[
+{label:`改为 ${LIFE_MAX}（上限）`,patch:{life:{initialLives:LIFE_MAX}}},
+{label:`改为 ${LIFE_MIN}（下限）`,patch:{life:{initialLives:LIFE_MIN}}},
+],
+});
+}
+if(cfg.life.enabled&&bodyOn
+&& !cfg.life.items.gainStates.length&& !cfg.life.items.lossStates.length
+&& !cfg.transform.enabled){
+out.push({
+level:'info',
+code:'lifeNoItemSource',
+title:'生命机制没有任何增减来源',
+message:'已启用生命机制，但既没有配置「增加生命的格子状态」也没有配置「扣除生命的格子状态」，生命值只会在致命判定时递减。',
+suggestions:[
+{label:'把「标记物」设为增加生命的格子',patch:{life:{items:{gainStates:['marker']}}}},
+],
+});
+}
+if(cfg.life.enabled&&cfg.life.keepMovingAfterDeath){
+out.push({
+level:'info',
+code:'lifeKeepMovingAfterDeath',
+title:'已开启「死亡后仍可移动」',
+message:'该开关开启后蛇在判定死亡时不会立即停止与移除，可能出现「死亡后仍在移动」的表现；正式游玩建议保持关闭。',
+suggestions:[
+{label:'关闭「死亡后仍可移动」',patch:{life:{keepMovingAfterDeath:false}}},
 ],
 });
 }
@@ -2009,7 +2111,7 @@ console.warn('分享链接解析失败',e);
 return null;
 }
 }
-return{defaultConfig,defaultRule,defaultClause,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets};
+return{defaultConfig,defaultRule,defaultClause,normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX,INTERACTION_LABELS,SPAWN_LABELS,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,MAX_STEPS_LIMIT,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN};
 })();
 __MODULES["src/core/trail.js"]=(function(){
 function colOf(grid,index){
@@ -3999,7 +4101,7 @@ const{RNG}=__MODULES["src/core/rng.js"];
 const{World,Agent}=__MODULES["src/core/world.js"];
 const{CAEngine}=__MODULES["src/core/ca.js"];
 const{RuleEngine}=__MODULES["src/core/rules.js"];
-const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled}=__MODULES["src/core/config.js"];
+const{normalizeConfig,END_LABELS,centerCoord,gridSizeFor,isBodyEnabled,LIFE_MAX}=__MODULES["src/core/config.js"];
 const{resolveTurn,occupiedByAgent,findSpawnCoord}=__MODULES["src/core/actions.js"];
 const{evaluateCondition}=__MODULES["src/core/conditions.js"];
 const{computeScore}=__MODULES["src/core/score.js"];
@@ -4098,7 +4200,12 @@ if(wrap)cur=grid.wrap(cur);
 else if(!grid.inBounds(cur))break;
 segments.push({...cur});
 }
-return new Agent('main',segments,dir,{label:'主移动体',isMain:true,spawnTick:0});
+return new Agent('main',segments,dir,{
+label:'主移动体',
+isMain:true,
+spawnTick:0,
+lives:cfg.life.enabled?cfg.life.initialLives:0,
+});
 }
 run(){
 const cfg=this.config;
@@ -4151,6 +4258,13 @@ forcedStraights:0,
 transformDeaths:0,
 transformedCells:0,
 transformTriggers:0,
+lives:mainAgent?mainAgent.lives:0,
+maxLives:mainAgent?mainAgent.lives:0,
+lifeGains:0,
+lifeLosses:0,
+respawns:0,
+lifeWarnings:0,
+finalDeaths:0,
 collisionWarnings:0,
 turnHistory:[],
 lengthOverTime:[mainAgent?mainAgent.length:0],
@@ -4215,11 +4329,15 @@ const outcome=this.stepOnce(ctx,engine,ca,tickEvents);
 stats.steps=tick;
 stats.agents=agents.filter((a)=>a.alive).length;
 stats.peakAgents=Math.max(stats.peakAgents,stats.agents);
-const primary=mainAgent&&mainAgent.alive?mainAgent:agents.find((a)=>a.alive)||null;
+const primary=mainAgent&&(mainAgent.alive||mainAgent.zombie)
+?mainAgent
+:agents.find((a)=>a.alive||a.zombie)||null;
 stats.length=primary?primary.length:0;
 if(primary){
 stats.maxLength=Math.max(stats.maxLength,primary.length);
 stats.minLength=Math.min(stats.minLength,primary.length);
+stats.lives=mainAgent?mainAgent.lives:0;
+stats.maxLives=Math.max(stats.maxLives,primary.lives||0);
 }
 stats.obstacleCount=world.countState('obstacle');
 stats.markerCount=world.countState('marker');
@@ -4289,6 +4407,13 @@ merges:stats.merges,
 transformDeaths:stats.transformDeaths,
 transformedCells:stats.transformedCells,
 collisionWarnings:stats.collisionWarnings,
+lives:stats.lives,
+maxLives:stats.maxLives,
+lifeGains:stats.lifeGains,
+lifeLosses:stats.lifeLosses,
+respawns:stats.respawns,
+lifeWarnings:stats.lifeWarnings,
+finalDeaths:stats.finalDeaths,
 endReason:endReason?endReason.label:'未结束（达到帧上限）',
 finalLength:frameStats.length??stats.length,
 score:computeScore(stats,grid,endReason),
@@ -4302,6 +4427,7 @@ const agents=ctx.agents;
 const sync=cfg.ruleExecution==='sync';
 const main=agents.find((a)=>a.isMain&&a.alive)
 ||agents.find((a)=>a.alive)
+||agents.find((a)=>a.zombie)
 ||agents[0]
 ||null;
 ctx.agent=main;
@@ -4310,7 +4436,7 @@ stats.ruleTriggers+=engine.run('beforeStep',ctx,{sync});
 if(ctx.pending.end)return{ended:true,reason:this.ruleEndReason(ctx)};
 let fatal=null;
 for(const agent of agents.slice()){
-if(!agent.alive)continue;
+if(!agent.alive&& !agent.zombie)continue;
 agent.prevState={
 segments:agent.segments.map((s)=>({col:s.col,row:s.row})),
 dir:agent.dir,
@@ -4335,14 +4461,14 @@ if(ca&&cfg.caMode.syncWithAgent==='everyN'&&ctx.tick%cfg.caMode.every===0)this.r
 const endCheck=this.checkEndConditions(ctx,tickEvents);
 if(endCheck)return{ended:true,reason:endCheck,turn:main?main.lastTurn:null};
 if(cfg.transform.enabled&& !ca&&(stats.agentDeaths||0)>0
-&& !agents.some((a)=>a.alive)){
+&& !agents.some((a)=>a.alive||a.zombie)){
 return{
 ended:true,
 reason:{code:'transformDone',label:END_LABELS.transformDone,tick:ctx.tick,coord:null},
 };
 }
 for(let i=agents.length-1;i>=0;i--){
-if(!agents[i].alive)agents.splice(i,1);
+if(!agents[i].alive&& !agents[i].zombie)agents.splice(i,1);
 }
 return{ended:false,turn:main?main.lastTurn:null};
 }
@@ -4352,7 +4478,11 @@ const grid=ctx.grid;
 const rng=ctx.rng;
 const stats=ctx.stats;
 const sync=cfg.ruleExecution==='sync';
-if(!agent.alive)return{ended:false};
+if(!agent.alive&& !agent.zombie)return{ended:false};
+const life=cfg.life;
+const immortal=life.enabled&&life.keepMovingAfterDeath;
+const invincible=agent.invincibleUntil>=ctx.tick;
+const protectedAgent=immortal||invincible|| !!agent.zombie;
 const decision=this.decideDirection(ctx,engine,agent);
 let dir=decision.dir;
 const turnKey=decision.turnKey;
@@ -4429,7 +4559,19 @@ ctx.highlights.push({col:agent.head.col,row:agent.head.row,type:'wall',tick:ctx.
 stats.selfCollisionsConsecutive=0;
 const cfgEnd=cfg.endConditions;
 const hitCode=cfgEnd.priority.find((c)=>(c==='wall'||c==='outOfBounds')&&cfgEnd[c]);
-if(hitCode){
+if(hitCode&& !protectedAgent){
+if(life.enabled){
+const r=this.consumeLifeOnDeath(ctx,agent,{
+code:hitCode,
+label:END_LABELS[hitCode],
+tick:ctx.tick,
+coord:{...agent.head},
+},tickEvents);
+if(r==='alive'){
+this.absorbFatalEvent(tickEvents,'wall');
+return{ended:false,turn:turnKey};
+}
+}
 return this.agentEnd(ctx,agent,{
 code:hitCode,
 label:END_LABELS[hitCode],
@@ -4437,6 +4579,7 @@ tick:ctx.tick,
 coord:{...agent.head},
 },tickEvents);
 }
+if(hitCode&&life.enabled)this.absorbFatalEvent(tickEvents,'wall');
 return{ended:false,turn:turnKey};
 }
 if(ctx.world.isBlocking(target)){
@@ -4467,14 +4610,37 @@ stats.collisionsConsecutive++;
 stats.selfCollisionsConsecutive=0;
 tickEvents.push({type:'obstacle',coord:{...target}});
 ctx.highlights.push({col:target.col,row:target.row,type:'collision',tick:ctx.tick});
-if(cfg.endConditions.obstacle){
+if(cfg.endConditions.obstacle&& !protectedAgent){
+if(life.enabled){
+const r=this.consumeLifeOnDeath(ctx,agent,{
+code:'obstacle',
+label:END_LABELS.obstacle,
+tick:ctx.tick,
+coord:{...target},
+},tickEvents);
+if(r==='alive'){
+this.absorbFatalEvent(tickEvents,'obstacle');
+return{ended:false,turn:turnKey};
+}
+}
 return this.agentEnd(ctx,agent,{code:'obstacle',label:END_LABELS.obstacle,tick:ctx.tick,coord:{...target}},tickEvents);
 }
+if(cfg.endConditions.obstacle&&life.enabled)this.absorbFatalEvent(tickEvents,'obstacle');
 return{ended:false,turn:turnKey};
 }
 }
 const ateCell=ctx.world.get(target)==='marker';
 this.applyMarkerInteraction(ctx,agent,target,tickEvents);
+const lifeHit=this.applyLifeItemInteraction(ctx,agent,target,tickEvents);
+if(lifeHit==='loss'&&life.enabled&& !protectedAgent&&(agent.lives||0)<=0){
+this.markLifeDepleted(ctx,target,'lifeDepleted',tickEvents);
+return this.agentEnd(ctx,agent,{
+code:'lifeDepleted',
+label:END_LABELS.lifeDepleted,
+tick:ctx.tick,
+coord:{...target},
+},tickEvents);
+}
 const lengthPlan=this.planLength(ctx,agent,target,tickEvents,ateCell);
 const willGrow=lengthPlan.desired>agent.length;
 const collision=this.detectCollision(ctx,agent,target,willGrow);
@@ -4495,6 +4661,21 @@ stats.selfCollisionsConsecutive=0;
 tickEvents.push({type:'selfCollision',coord:{...target},kind:collision,transformed:transformDeath});
 ctx.highlights.push({col:target.col,row:target.row,type:'collision',tick:ctx.tick});
 stats.ruleTriggers+=engine.run('onCollision',ctx,{sync});
+if(collision==='self'&&life.enabled&& !protectedAgent){
+const r=this.consumeLifeOnDeath(ctx,agent,{
+code:'selfCollision',
+label:END_LABELS.selfCollision,
+tick:ctx.tick,
+coord:{...target},
+},tickEvents);
+if(r==='alive'){
+this.absorbFatalEvent(tickEvents,'selfCollision');
+return{ended:false,turn:turnKey};
+}
+}
+if(collision==='self'&&life.enabled&&(agent.lives||0)>0){
+this.absorbFatalEvent(tickEvents,'selfCollision');
+}
 if(transformDeath){
 this.transformAgent(ctx,agent,tickEvents);
 return{ended:false,turn:turnKey};
@@ -4571,14 +4752,143 @@ this.killAgent(ctx,agent,reason,tickEvents);
 return{ended:false};
 }
 killAgent(ctx,agent,reason,tickEvents){
+if(!agent.alive&& !agent.zombie)return;
+const head=agent.head?{...agent.head}:null;
+const life=ctx.config.life;
+if(life.enabled&&life.keepMovingAfterDeath&& !agent.zombie){
+agent.alive=false;
+agent.zombie=true;
+agent.endReason={...reason,tick:ctx.tick};
+ctx.stats.agentDeaths=(ctx.stats.agentDeaths||0)+1;
+if(tickEvents)tickEvents.push({type:'agentDeath',coord:head,highlight:true,reason:reason.code,zombie:true});
+if(head)ctx.highlights.push({col:head.col,row:head.row,type:'agentDeath',tick:ctx.tick});
+return;
+}
 if(!agent.alive)return;
 agent.alive=false;
 agent.endReason={...reason,tick:ctx.tick};
 ctx.stats.agentDeaths=(ctx.stats.agentDeaths||0)+1;
 if(tickEvents){
-tickEvents.push({type:'agentDeath',coord:{...agent.head},highlight:true,reason:reason.code});
+tickEvents.push({type:'agentDeath',coord:head,highlight:true,reason:reason.code});
 }
-ctx.highlights.push({col:agent.head.col,row:agent.head.row,type:'agentDeath',tick:ctx.tick});
+if(head)ctx.highlights.push({col:head.col,row:head.row,type:'agentDeath',tick:ctx.tick});
+}
+consumeLifeOnDeath(ctx,agent,reason,tickEvents){
+const life=ctx.config.life;
+if(!life.enabled)return'dead';
+const lives=Number(agent.lives)||0;
+if(lives<=0)return'dead';
+const head=agent.head?{...agent.head}:null;
+agent.lives=lives-1;
+ctx.stats.lifeLosses=(ctx.stats.lifeLosses||0)+1;
+tickEvents.push({type:'lifeLoss',coord:head,lives:agent.lives,reason:reason.code});
+if(agent.lives>0){
+this.respawnAgent(ctx,agent,reason,tickEvents);
+return'alive';
+}
+this.markLifeDepleted(ctx,agent.head,reason.code,tickEvents);
+return'dead';
+}
+markLifeDepleted(ctx,coord,reasonCode,tickEvents){
+ctx.stats.finalDeaths=(ctx.stats.finalDeaths||0)+1;
+if(tickEvents)tickEvents.push({type:'lifeDepleted',coord:coord?{...coord}:null,reason:reasonCode});
+if(coord)ctx.highlights.push({col:coord.col,row:coord.row,type:'lifeDepleted',tick:ctx.tick});
+}
+absorbFatalEvent(tickEvents,type){
+if(!tickEvents)return;
+for(let i=tickEvents.length-1;i>=0;i--){
+if(tickEvents[i].type===type){
+tickEvents[i].absorbed=true;
+return;
+}
+}
+}
+respawnAgent(ctx,agent,reason,tickEvents){
+const life=ctx.config.life;
+const grid=ctx.grid;
+const head={...agent.head};
+const dir=agent.dir;
+const wrap=ctx.config.grid.boundary==='wrap';
+const requested=Math.max(1,Math.round(life.respawn.length));
+const limit=wrap?Math.min(requested,grid.size):requested;
+const segments=[{...head}];
+let cur={...head};
+for(let i=1;i<limit;i++){
+cur=grid.step(cur,grid.opposite(dir));
+if(wrap)cur=grid.wrap(cur);
+else if(!grid.inBounds(cur))break;
+segments.push({...cur});
+}
+agent.segments=segments;
+agent.invincibleUntil=ctx.tick+Math.max(0,life.respawn.invincibleTicks);
+agent.respawnTick=ctx.tick;
+const options=[];
+for(let d=0;d<grid.dirCount;d++){
+const c=this.resolveCandidate(ctx,grid.step(head,d));
+if(!c.ok)continue;
+if(this.isBlocked(ctx,c.coord))continue;
+if(this.detectCollision(ctx,agent,c.coord,false))continue;
+options.push(d);
+}
+agent.dir=options.length?options[ctx.rng.int(options.length)]:grid.opposite(dir);
+ctx.stats.respawns=(ctx.stats.respawns||0)+1;
+tickEvents.push({type:'lifeRespawn',coord:{...head},lives:agent.lives,reason:reason.code});
+ctx.highlights.push({col:head.col,row:head.row,type:'respawn',tick:ctx.tick,lives:agent.lives});
+ctx.log({
+tick:ctx.tick,
+ruleId:'life',
+ruleName:'生命机制',
+trigger:reason.code,
+subject:'移动体',
+coord:{...head},
+priority:0,
+condition:`剩余生命 ${agent.lives}`,
+actions:`原地重生（蛇身重置为 ${segments.length} 节）`,
+text:`「${agent.label}」${reason.label||reason.code}，消耗 1 条生命后原地重生（剩余 ${agent.lives}）`,
+});
+this.noteLifeWarning(ctx,agent,tickEvents);
+}
+noteLifeWarning(ctx,agent,tickEvents){
+const life=ctx.config.life;
+if(!life.enabled||life.warnThreshold<=0)return;
+const lives=Number(agent.lives)||0;
+if(lives<=0||lives>life.warnThreshold)return;
+if(agent.warnedAtLives===lives)return;
+agent.warnedAtLives=lives;
+ctx.stats.lifeWarnings=(ctx.stats.lifeWarnings||0)+1;
+const head=agent.head;
+if(head)ctx.highlights.push({col:head.col,row:head.row,type:'lifeWarning',tick:ctx.tick,lives});
+if(tickEvents)tickEvents.push({type:'lifeWarning',coord:head?{...head}:null,lives});
+}
+applyLifeItemInteraction(ctx,agent,target,tickEvents){
+const life=ctx.config.life;
+if(!life.enabled)return null;
+const stateName=ctx.world.get(target);
+if(stateName===null||stateName==='empty')return null;
+const it=life.items;
+if(it.gainStates.includes(stateName)&&it.gainAmount>0){
+const before=Number(agent.lives)||0;
+agent.lives=Math.min(LIFE_MAX,before+it.gainAmount);
+if(agent.lives!==before){
+ctx.stats.lifeGains=(ctx.stats.lifeGains||0)+1;
+tickEvents.push({type:'lifeGain',coord:{...target},lives:agent.lives});
+ctx.highlights.push({col:target.col,row:target.row,type:'lifeGain',tick:ctx.tick});
+if(it.consumeGain){
+ctx.world.set(target,'empty');
+ctx.cellsDirty=true;
+}
+}
+return'gain';
+}
+if(it.lossStates.includes(stateName)&&it.lossAmount>0){
+agent.lives=Math.max(0,(Number(agent.lives)||0)-it.lossAmount);
+ctx.stats.lifeLosses=(ctx.stats.lifeLosses||0)+1;
+tickEvents.push({type:'trapHit',coord:{...target},lives:agent.lives,state:stateName});
+ctx.highlights.push({col:target.col,row:target.row,type:'lifeLoss',tick:ctx.tick});
+if(agent.lives>0)this.noteLifeWarning(ctx,agent,tickEvents);
+return'loss';
+}
+return null;
 }
 transformAgent(ctx,agent,tickEvents){
 const cfg=ctx.config;
@@ -5044,19 +5354,20 @@ const agent=ctx.agent;
 const grid=ctx.grid;
 const coord=()=>(agent&&agent.head?{...agent.head}:null);
 const triggered={
-wall:()=>tickEvents.some((e)=>e.type==='wall'),
-outOfBounds:()=>tickEvents.some((e)=>e.type==='wall'&&e.outOfBounds),
-selfCollision:()=>tickEvents.some((e)=>e.type==='selfCollision'&&e.kind!=='other'&& !e.transformed),
+wall:()=>tickEvents.some((e)=>e.type==='wall'&& !e.absorbed),
+outOfBounds:()=>tickEvents.some((e)=>e.type==='wall'&&e.outOfBounds&& !e.absorbed),
+selfCollision:()=> !ec.selfCollisionLocked
+&&tickEvents.some((e)=>e.type==='selfCollision'&&e.kind!=='other'&& !e.transformed&& !e.absorbed),
 selfCollisionTotal:()=>stats.selfCollisions>=ec.selfCollisionTotalN,
 selfCollisionConsecutive:()=>stats.selfCollisionsConsecutive>=ec.selfCollisionConsecutiveN,
-obstacle:()=>tickEvents.some((e)=>e.type==='obstacle'),
+obstacle:()=>tickEvents.some((e)=>e.type==='obstacle'&& !e.absorbed),
 maxSteps:()=>ctx.tick>=ec.maxSteps,
 lengthReached:()=> !!agent&&agent.length>=ec.lengthTarget,
 coverage:()=>stats.coverage>=ec.coveragePercent,
 caStable:()=> !!cfg.caMode.enabled&&(stats.caStableCount||0)>=Math.max(1,cfg.caMode.stableSteps),
 allAgentsGone:()=>ctx.agents.filter((a)=>a.alive).length===0&&(stats.agentDeaths||0)>0,
 noMove:()=>{
-if(!agent)return false;
+if(!agent|| !agent.segments.length)return false;
 for(let d=0;d<grid.dirCount;d++){
 const c=this.resolveCandidate(ctx,grid.step(agent.head,d));
 if(!c.ok)continue;
@@ -5089,16 +5400,21 @@ return null;
 captureFrame(tick,agents,cells,highlights,stats,logs,logFrom,logTo,turn=null,events=[]){
 return{
 tick,
-agents:agents.map((a)=>({
+agents:agents.map((a)=>{
+const visible=a.alive||a.zombie;
+return{
 id:a.id,
 label:a.label,
-segments:a.segments.map((s)=>[s.col,s.row]),
+segments:visible?a.segments.map((s)=>[s.col,s.row]):[],
 dir:a.dir,
 alive:a.alive,
 color:a.color,
 isMain:!!a.isMain,
-length:a.segments.length,
-})),
+length:visible?a.segments.length:0,
+lives:a.lives||0,
+zombie:!!a.zombie,
+};
+}),
 cells,
 highlights:highlights.map((h)=>({
 col:h.col??h.coord?.col,
@@ -5137,6 +5453,12 @@ turnsLeft:stats.turnsLeft||0,
 turnsStraight:stats.turnsStraight||0,
 turnsRight:stats.turnsRight||0,
 turnsReverse:stats.turnsReverse||0,
+lives:stats.lives||0,
+lifeGains:stats.lifeGains||0,
+lifeLosses:stats.lifeLosses||0,
+respawns:stats.respawns||0,
+lifeWarnings:stats.lifeWarnings||0,
+finalDeaths:stats.finalDeaths||0,
 },
 logFrom:logFrom===null?0:logFrom,
 logTo:logTo===null?0:logTo,
@@ -5393,9 +5715,16 @@ smoothTrail:true,
 smoothBody:true,
 };
 const EFFECT_LOOKBACK=6;
-const EFFECT_TYPES=new Set(['merge','repel','spawn','markerEffect','agentDeath','wrap','transform','warning']);
+const EFFECT_TYPES=new Set([
+'merge','repel','spawn','markerEffect','agentDeath','wrap','transform','warning',
+'lifeGain','lifeLoss','lifeWarning','lifeDepleted','respawn',
+]);
 const TRANSFORM_ACCENT='#7cf5d0';
 const WARNING_ACCENT='#ffb020';
+const LIFE_GAIN_ACCENT='#63e6be';
+const LIFE_LOSS_ACCENT='#ff6b6b';
+const LIFE_RESPAWN_ACCENT='#7cc4ff';
+const LIFE_WARN_ACCENT='#ffb020';
 const SKIN_KEYS=['head','body'];
 const FADE_BUCKETS=16;
 const RUN_GAP_CELLS=1.7;
@@ -6350,7 +6679,7 @@ const start=Math.max(0,frameIndex-EFFECT_LOOKBACK);
 const ctx=this.ctx;
 const{cellSize}=this.style;
 const half=cellSize/2;
-const colors={merge:'#c084fc',repel:'#ffd166',spawn:'#63e6be',markerEffect:'#ffd166',agentDeath:'#ff5d5d',wrap:'#4cc9f0',transform:TRANSFORM_ACCENT,warning:WARNING_ACCENT};
+const colors={merge:'#c084fc',repel:'#ffd166',spawn:'#63e6be',markerEffect:'#ffd166',agentDeath:'#ff5d5d',wrap:'#4cc9f0',transform:TRANSFORM_ACCENT,warning:WARNING_ACCENT,lifeGain:LIFE_GAIN_ACCENT,lifeLoss:LIFE_LOSS_ACCENT,lifeWarning:LIFE_WARN_ACCENT,lifeDepleted:LIFE_LOSS_ACCENT,respawn:LIFE_RESPAWN_ACCENT};
 for(let fi=start;fi<=frameIndex;fi++){
 const f=frames[fi];
 if(!f|| !f.highlights)continue;
@@ -6362,6 +6691,14 @@ if(h.col===undefined||h.row===undefined)continue;
 const p=this.center({col:h.col,row:h.row});
 if(h.type==='transform'){
 this.drawTransformEffect(p,t,cellSize,h.state?this.stateColor(h.state):null);
+continue;
+}
+if(h.type==='respawn'){
+this.drawRespawnEffect(p,t,cellSize);
+continue;
+}
+if(h.type==='lifeWarning'){
+this.drawLifeWarningEffect(p,t,cellSize);
 continue;
 }
 const color=h.color||(h.state?(this.stateColor(h.state)||colors[h.type]):colors[h.type])||'#e5e9f0';
@@ -6393,6 +6730,49 @@ ctx.globalAlpha=0.25+0.65*t;
 ctx.strokeStyle=TRANSFORM_ACCENT;
 ctx.lineWidth=Math.max(1.5,cellSize*0.09);
 const ring=half*(0.5+1.2*(1-t));
+if(hex)pathHex(ctx,p.x,p.y,ring);
+else roundRect(ctx,p.x-ring,p.y-ring,ring*2,ring*2,cellSize*0.24);
+ctx.stroke();
+ctx.restore();
+}
+drawRespawnEffect(p,t,cellSize){
+const ctx=this.ctx;
+const half=cellSize/2;
+const hex=this.grid.type==='hex';
+ctx.save();
+ctx.globalAlpha=0.35+0.5*t;
+ctx.fillStyle=LIFE_RESPAWN_ACCENT;
+const grow=half*(0.35+0.3*t);
+if(hex)pathHex(ctx,p.x,p.y,grow);
+else roundRect(ctx,p.x-grow,p.y-grow,grow*2,grow*2,cellSize*0.2);
+ctx.fill();
+for(let k=0;k<2;k++){
+const phase=(1-t)+k*0.35;
+const ring=half*(0.7+2.1*phase);
+ctx.globalAlpha=Math.max(0,(0.75-k*0.3)*t);
+ctx.strokeStyle=k?'#ffffff':LIFE_RESPAWN_ACCENT;
+ctx.lineWidth=Math.max(1.2,cellSize*(0.09-k*0.03));
+if(hex)pathHex(ctx,p.x,p.y,ring);
+else roundRect(ctx,p.x-ring,p.y-ring,ring*2,ring*2,cellSize*0.24);
+ctx.stroke();
+}
+ctx.restore();
+}
+drawLifeWarningEffect(p,t,cellSize){
+const ctx=this.ctx;
+const half=cellSize/2;
+const hex=this.grid.type==='hex';
+ctx.save();
+const pulse=0.5+0.5*Math.sin((1-t)*Math.PI*3);
+ctx.globalAlpha=(0.18+0.5*pulse)*t;
+ctx.fillStyle=LIFE_WARN_ACCENT;
+if(hex)pathHex(ctx,p.x,p.y,half*0.92);
+else roundRect(ctx,p.x-half*0.92,p.y-half*0.92,half*1.84,half*1.84,cellSize*0.2);
+ctx.fill();
+ctx.globalAlpha=0.35+0.55*t;
+ctx.strokeStyle=LIFE_WARN_ACCENT;
+ctx.lineWidth=Math.max(1.4,cellSize*0.1);
+const ring=half*(0.6+0.5*(1-t));
 if(hex)pathHex(ctx,p.x,p.y,ring);
 else roundRect(ctx,p.x-ring,p.y-ring,ring*2,ring*2,cellSize*0.24);
 ctx.stroke();
@@ -7353,7 +7733,7 @@ return openDialog({...opts,alert:true});
 return{h,clear,group,field,row,button,numberInput,textInput,textArea,select,checkbox,range,colorInput,numBind,selBind,chkBind,textBind,rangeBind,colorBind,toast,formatNumber,confirmDialog,alertDialog,dialogOpen};
 })();
 __MODULES["src/ui/app.js"]=(function(){
-const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets}=__MODULES["src/core/config.js"];
+const{defaultConfig,normalizeConfig,defaultRule,defaultClause,defaultAction,validateConfig,diagnoseConfig,buildShareUrl,readConfigFromLocation,END_LABELS,MAX_STEPS_LIMIT,isBodyEnabled,INTERACTION_LABELS,SPAWN_LABELS,SPAWN_EVENTS,SPAWN_EVENT_LABELS,FADE_LENGTH_LIMIT,SKIN_MIME_TYPES,stripSkinAssets,LIFE_MIN,LIFE_MAX}=__MODULES["src/core/config.js"];
 const{defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText}=__MODULES["src/core/trail.js"];
 const{PRESETS,buildPresetConfig,matchPreset}=__MODULES["src/core/presets.js"];
 const{Simulation,DEFAULT_FRAME_CAP,MAX_FRAME_CAP,MAX_STORED_FRAMES}=__MODULES["src/core/simulation.js"];
@@ -7443,6 +7823,7 @@ showScore:false,
 cfgBaseline:null,
 cfgHistory:[],
 cfgSearch:'',
+cfgTab:'core',
 };
 const els={};
 let renderer=null;
@@ -7482,6 +7863,7 @@ renderConfigPanel();
 renderSidePanel();
 notifyStartupDiagnostics();
 recompute({immediate:true});
+if(restoreAutoSave())toast(`已按自动存档回到上次进度：第 ${state.frameIndex+1} 帧`,'info');
 const legacyHint=document.getElementById('legacy-hint');
 if(legacyHint)legacyHint.className='hidden';
 }
@@ -7731,6 +8113,167 @@ renderSaveList();
 },'ghost'),
 ),
 h('div',{class:'hint'},`存档保存在浏览器本地（最多 ${SAVE_LIMIT} 条）：记录配置、播放位置与统计口径，读取后立即重算并跳回同一帧；自定义皮肤图片体积过大时会被省略。`),
+host,
+],{open:false});
+}
+const AUTO_SAVE_KEY='gridsneaker:autosave';
+let autoSaveTimer=null;
+let renderAutosaveList=()=>{};
+let renderScoreboardList=()=>{};
+function writeAutoSave(){
+if(autoSaveTimer)clearTimeout(autoSaveTimer);
+autoSaveTimer=setTimeout(()=>{
+autoSaveTimer=null;
+const payload={
+config:snapshotConfig(state.cfg),
+frameIndex:state.frameIndex,
+statMode:state.statMode,
+savedAt:Date.now(),
+};
+try{
+localStorage.setItem(AUTO_SAVE_KEY,JSON.stringify(payload));
+}catch(e){
+try{
+localStorage.setItem(AUTO_SAVE_KEY,JSON.stringify({...payload,config:stripSkinAssets(state.cfg)}));
+}catch(e2){
+}
+}
+renderAutosaveList();
+},1200);
+}
+function readAutoSave(){
+try{
+const raw=localStorage.getItem(AUTO_SAVE_KEY);
+if(!raw)return null;
+const obj=JSON.parse(raw);
+return obj&&obj.config?obj:null;
+}catch(e){
+return null;
+}
+}
+function clearAutoSave(){
+try{
+localStorage.removeItem(AUTO_SAVE_KEY);
+}catch(e){
+}
+}
+function restoreAutoSave(){
+const entry=readAutoSave();
+if(!entry|| !state.result)return false;
+let same=false;
+try{
+same=JSON.stringify(snapshotConfig(state.cfg))===JSON.stringify(entry.config);
+}catch(e){
+same=false;
+}
+if(!same)return false;
+const last=state.result.frames.length-1;
+const idx=Math.max(0,Math.min(Math.round(Number(entry.frameIndex)||0),last));
+if(idx<=0)return false;
+if(entry.statMode==='realtime'||entry.statMode==='total')state.statMode=entry.statMode;
+syncStatModeUI();
+gotoFrame(idx);
+return true;
+}
+function autosaveGroup(){
+const host=h('div',{class:'save-list'});
+const sync=()=>{
+clear(host);
+const entry=readAutoSave();
+if(!entry){
+host.appendChild(h('div',{class:'hint'},'暂无自动存档。运行或跳帧后会每 1.2 秒自动记录一次进度。'));
+return;
+}
+host.appendChild(h('div',{class:'save-row'},
+h('span',{class:'save-name'},'最近进度'),
+h('span',{class:'mini-label'},`第 ${Math.round(Number(entry.frameIndex)||0)+1} 帧 · ${formatSaveTime(entry.savedAt)}`),
+button('恢复',()=>{
+if(!restoreAutoSave())toast('自动存档的配置与当前配置不一致，未恢复播放位置','warn');
+sync();
+},'primary small'),
+button('清除',()=>{
+clearAutoSave();
+toast('已清除自动存档','info');
+sync();
+},'ghost small')));
+};
+sync();
+renderAutosaveList=sync;
+return group('游戏进度自动存档',[
+h('div',{class:'hint'},'自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「游戏状态存档」。'),
+host,
+],{open:false});
+}
+const SCOREBOARD_KEY='gridsneaker:scoreboard';
+const SCOREBOARD_LIMIT=20;
+function readScoreboard(){
+try{
+const raw=localStorage.getItem(SCOREBOARD_KEY);
+const list=raw?JSON.parse(raw):[];
+return Array.isArray(list)?list.filter((r)=>r&&Number.isFinite(Number(r.total))):[];
+}catch(e){
+return[];
+}
+}
+function writeScoreboard(list){
+try{
+localStorage.setItem(SCOREBOARD_KEY,JSON.stringify(list.slice(0,SCOREBOARD_LIMIT)));
+}catch(e){
+}
+}
+function scoreSignature(entry){
+return`${entry.seed}|${entry.steps}|${entry.total}|${entry.map}`;
+}
+function recordScore(result){
+const sc=result&&result.summary&&result.summary.score;
+if(!sc|| !Number.isFinite(Number(sc.total)))return 0;
+const entry={
+total:Math.round(Number(sc.total)),
+grade:sc.gradeLabel||'-',
+map:`${result.grid.type==='hex'?'六边形':'方格'} ${result.grid.width}×${result.grid.height}`,
+steps:Math.round(Number(result.summary.steps)||0),
+length:Math.round(Number(result.summary.maxLength)||0),
+seed:Number(result.seed)||0,
+at:Date.now(),
+};
+const list=readScoreboard();
+const sig=scoreSignature(entry);
+if(list.some((r)=>scoreSignature(r)===sig))return 0;
+list.push(entry);
+list.sort((a,b)=>Number(b.total)-Number(a.total)||Number(b.at)-Number(a.at));
+const rank=list.indexOf(entry)+1;
+writeScoreboard(list);
+return rank;
+}
+function scoreboardGroup(){
+const host=h('div',{class:'save-list'});
+const sync=()=>{
+clear(host);
+const list=readScoreboard();
+if(!list.length){
+host.appendChild(h('div',{class:'hint'},'暂无成绩记录。每轮运行结束后会自动把成绩写入本地排行榜。'));
+return;
+}
+list.forEach((r,i)=>{
+host.appendChild(h('div',{class:'save-row'},
+h('span',{class:'rank-no'},`${i+1}`),
+h('span',{class:'save-name',title:`种子 ${r.seed} · 步数 ${r.steps}`},`${formatScore(r.total)} · ${r.grade}`),
+h('span',{class:'mini-label'},`${r.map} · ${r.steps} 步 · 最长 ${r.length}`)));
+});
+};
+sync();
+renderScoreboardList=sync;
+return group('本地得分排行榜',[
+row(
+button('刷新',()=>sync(),'ghost small'),
+button('清空排行榜',()=>{
+if(!readScoreboard().length){toast('暂无成绩记录','info');return;}
+writeScoreboard([]);
+toast('已清空本地得分排行榜','info');
+sync();
+},'ghost small'),
+),
+h('div',{class:'hint'},`成绩保存在浏览器本地（最多 ${SCOREBOARD_LIMIT} 条，按总分降序）；同一轮运行反复重算不会重复入榜。`),
 host,
 ],{open:false});
 }
@@ -8011,8 +8554,11 @@ let brokeRecord=false;
 if(state.score){
 brokeRecord=saveHighScore(result.grid,state.score.total);
 if(brokeRecord)state.highScore=state.score.total;
+const rank=recordScore(result);
+if(rank===1)toast('本轮成绩进入本地排行榜第 1 名','success');
 }
 saveLocalConfig(cfg);
+writeAutoSave();
 renderer.setResult(result);
 renderer.setStyle(cfg.style,cfg.body);
 liveTrailCache={tick:-1,at:0,trail:null};
@@ -8024,6 +8570,7 @@ syncStatModeUI();
 refreshTrailFilter();
 refreshCompare();
 refreshDiagnostics();
+renderScoreboardList();
 if(brokeRecord&&state.score&&state.showScore)toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`,'success');
 }
 function syncDerived(normalized){
@@ -8081,6 +8628,7 @@ if(rafId)cancelAnimationFrame(rafId);
 rafId=null;
 updateControls();
 draw();
+writeAutoSave();
 maybeRefreshLiveFilter();
 }
 function loopTick(ts){
@@ -8216,9 +8764,8 @@ toast(`步数上限已提升至 ${next} 步并继续运行`,'success');
 }
 function focusEndReason(){
 const reason=state.result?.endReason;
-const details=document.querySelector('#config-panel details[data-group-key="结束规则（按优先级）"]');
+const details=revealConfigGroup('结束规则（按优先级）');
 if(!details){toast('未找到结束规则面板','warn');return;}
-details.open=true;
 details.scrollIntoView({block:'start',behavior:'smooth'});
 if(!reason)return;
 const row=details.querySelector(`[data-end-code="${reason.code}"]`);
@@ -8299,6 +8846,14 @@ top=Math.max(pad,Math.min(top,Math.max(pad,window.innerHeight-pad-h)));
 tip.style.left=`${Math.round(left)}px`;
 tip.style.top=`${Math.round(top)}px`;
 }
+function jumpToCellFirstPass(c){
+if(!c|| !state.result)return;
+const info=renderer.trailInfo.get(state.result.grid.idx(c.col,c.row));
+if(!info)return;
+pause();
+gotoFrame(frameIndexForTick(info.first));
+toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`,'info');
+}
 function bindCanvasEvents(){
 els.canvas.addEventListener('mousemove',(e)=>{
 if(!state.result)return;
@@ -8321,15 +8876,46 @@ draw();
 window.addEventListener('scroll',()=>{if(els.tooltip?.classList.contains('show'))hideTooltip();},true);
 window.addEventListener('resize',()=>hideTooltip());
 els.canvas.addEventListener('click',(e)=>{
-if(!state.result)return;
-const c=renderer.hitTest(e.clientX,e.clientY);
-if(!c)return;
-const info=renderer.trailInfo.get(state.result.grid.idx(c.col,c.row));
-if(!info)return;
-pause();
-gotoFrame(frameIndexForTick(info.first));
-toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`,'info');
+jumpToCellFirstPass(renderer.hitTest(e.clientX,e.clientY));
 });
+let touchStart=null;
+els.canvas.addEventListener('touchstart',(e)=>{
+if(!state.result||e.touches.length!==1){touchStart=null;return;}
+const t=e.touches[0];
+touchStart={x:t.clientX,y:t.clientY,moved:false};
+const c=renderer.hitTest(t.clientX,t.clientY);
+renderer.hover=c;
+draw();
+if(!c){hideTooltip();return;}
+els.tooltip.textContent=renderer.describe(state.frameIndex,c);
+els.tooltip.classList.add('show');
+placeTooltip(t.clientX,t.clientY);
+},{passive:true});
+els.canvas.addEventListener('touchmove',(e)=>{
+if(!touchStart||e.touches.length!==1)return;
+const t=e.touches[0];
+if(Math.abs(t.clientX-touchStart.x)>8||Math.abs(t.clientY-touchStart.y)>8){
+touchStart.moved=true;
+hideTooltip();
+}
+},{passive:true});
+els.canvas.addEventListener('touchend',(e)=>{
+const started=touchStart;
+touchStart=null;
+renderer.hover=null;
+draw();
+const t=e.changedTouches&&e.changedTouches[0];
+if(!started||started.moved|| !t){hideTooltip();return;}
+const c=renderer.hitTest(t.clientX,t.clientY);
+hideTooltip();
+jumpToCellFirstPass(c);
+},{passive:true});
+els.canvas.addEventListener('touchcancel',()=>{
+touchStart=null;
+renderer.hover=null;
+hideTooltip();
+draw();
+},{passive:true});
 }
 const STAT_KEYS=[
 ['steps','步数'],['framePos','当前帧 / 总帧数'],['frames','缓存帧数'],['elapsed','运行耗时'],
@@ -8341,6 +8927,8 @@ const STAT_KEYS=[
 ['transformDeaths','自撞死亡'],['transformedCells','转化节点'],['collisionWarnings','碰撞预警'],
 ['caSteps','CA 演进次数'],['obstacleCount','障碍物'],['markerCount','标记物'],['seed','随机种子'],
 ['rngCalls','随机调用次数'],
+['lives','剩余生命'],['maxLives','峰值生命'],['lifeGains','获得生命'],['lifeLosses','失去生命'],
+['respawns','重生次数'],['lifeWarnings','低生命预警'],['finalDeaths','最终死亡'],
 ];
 function formatDuration(ms){
 const v=Number(ms);
@@ -8412,6 +9000,13 @@ collisionWarnings:pick(st.collisionWarnings,s.collisionWarnings||0),
 caSteps:pick(st.caSteps,s.caSteps),
 obstacleCount:pick(st.obstacleCount,s.obstacleCount),
 markerCount:pick(st.markerCount,s.markerCount),
+lives:pick(st.lives??0,s.lives??0),
+maxLives:pick(st.lives??0,s.maxLives??0),
+lifeGains:pick(st.lifeGains??0,s.lifeGains??0),
+lifeLosses:pick(st.lifeLosses??0,s.lifeLosses??0),
+respawns:pick(st.respawns??0,s.respawns??0),
+lifeWarnings:pick(st.lifeWarnings??0,s.lifeWarnings??0),
+finalDeaths:pick(st.finalDeaths??0,s.finalDeaths??0),
 seed:r.seed,
 rngCalls:pick(st.rngCalls,r.rngCalls),
 },
@@ -8455,6 +9050,27 @@ function updateFrameStats(){
 if(!state.result)return;
 if(state.statMode==='realtime')fillStageStats();
 if(!state.playing)syncStatModeHint();
+notifyLifeEvents();
+}
+const lifeWarnedEvents=new Set();
+function notifyLifeEvents(){
+const life=state.cfg&&state.cfg.life;
+const r=state.result;
+if(!life|| !life.enabled|| !r)return;
+const frame=r.frames[state.frameIndex];
+if(!frame|| !Array.isArray(frame.events))return;
+for(const e of frame.events){
+if(e.type!=='lifeWarning'&&e.type!=='lifeDepleted')continue;
+const key=`${e.type}:${frame.tick}`;
+if(lifeWarnedEvents.has(key))continue;
+if(lifeWarnedEvents.size>400)lifeWarnedEvents.clear();
+lifeWarnedEvents.add(key);
+if(e.type==='lifeWarning'){
+toast(`低生命预警：仅剩 ${e.lives} 条生命（第 ${frame.tick} 步）`,'warn');
+}else{
+toast(`生命耗尽：第 ${frame.tick} 步触发最终死亡`,'error');
+}
+}
 }
 function eventLabel(e){
 const map={
@@ -8463,12 +9079,16 @@ selfCollision:'撞到自身',grow:'增长',shrink:'缩短',eat:'吃到标记物'
 merge:'蛇融合',repel:'蛇排斥',agentCollision:'移动体相撞',agentDeath:'移动体消失',
 agentRemoved:'移动体被移除',markerInteraction:'交互标记物',
 transform:'身体转化入环境',transformDeath:'自撞死亡',transformSkipped:'转化未触发',
+lifeGain:'获得生命',lifeLoss:'失去生命',lifeWarning:'低生命预警',
+lifeDepleted:'生命耗尽',lifeRespawn:'原地重生',trapHit:'触发陷阱',
 };
 const pos=e.coord?`(${e.coord.col},${e.coord.row})`:'';
 const extra=e.type==='markerInteraction'&&e.delta?` ${e.delta>0?'+':''}${e.delta}`:'';
+const life=e.lives!==undefined&&LIFELINE_EVENTS.has(e.type)?` → 剩余 ${e.lives} 条`:'';
 const count=e.type==='transform'&&e.count!==undefined?` ×${e.count}`:'';
-return`${map[e.type]||e.type}${extra}${count}${pos}`;
+return`${map[e.type]||e.type}${extra}${life}${count}${pos}`;
 }
+const LIFELINE_EVENTS=new Set(['lifeGain','lifeLoss','lifeWarning','lifeDepleted','lifeRespawn','trapHit']);
 function drawSparkline(canvas,history){
 if(!canvas)return;
 const w=canvas.width;
@@ -8609,7 +9229,9 @@ button('撤销上次变更',undoConfigReplace,'ghost'),
 ),
 h('div',{class:'hint'},'载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
 ],{open:false}));
+side.appendChild(autosaveGroup());
 side.appendChild(savesGroup());
+side.appendChild(scoreboardGroup());
 side.appendChild(group('配置导入导出',[
 row(
 button('复制 JSON',()=>copyText(configToJSON(state.cfg),'配置 JSON 已复制')),
@@ -9267,24 +9889,80 @@ if(els.speedNum)els.speedNum.value=String(state.cfg.speed);
 if(els.followInput)els.followInput.checked= !!state.cfg.style.followAgent;
 updateSpeedLabel();
 }
+const CONFIG_TABS=[
+{key:'core',label:'游戏核心规则',hint:'网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则'},
+{key:'visual',label:'视觉显示',hint:'格子绘制、轨迹与蛇身样式、特效开关'},
+{key:'scene',label:'场景与运行',hint:'场景名称与描述、随机种子、规则执行方式'},
+{key:'extend',label:'扩展机制',hint:'多蛇与交互、蛇死亡转化、生命机制、元胞自动机'},
+];
+let activateCfgTab=()=>{};
 function renderConfigPanel(){
 const root=els.config;
 clear(root);
 endConditionSyncers.clear();
 const cfg=state.cfg;
-root.appendChild(configSearchBar());
-root.appendChild(sceneGroup(cfg));
-root.appendChild(gridGroup(cfg));
-root.appendChild(bodyGroup(cfg));
-root.appendChild(moveRulesGroup(cfg));
-root.appendChild(collisionGroup(cfg));
-root.appendChild(multiSnakeGroup(cfg));
-root.appendChild(envRulesGroup(cfg));
-root.appendChild(caGroup(cfg));
-root.appendChild(transformGroup(cfg));
-root.appendChild(endGroup(cfg));
-root.appendChild(styleGroup(cfg));
+const searchBar=configSearchBar();
+root.appendChild(searchBar);
+const tabs=h('div',{class:'cfg-tabs'});
+const nav=h('div',{class:'cfg-tab-nav',role:'tablist'});
+const panels=new Map();
+const buttons=new Map();
+activateCfgTab=(key)=>{
+const target=CONFIG_TABS.some((t)=>t.key===key)?key:CONFIG_TABS[0].key;
+state.cfgTab=target;
+for(const t of CONFIG_TABS){
+buttons.get(t.key).classList.toggle('on',t.key===target);
+buttons.get(t.key).setAttribute('aria-selected',t.key===target?'true':'false');
+panels.get(t.key).classList.toggle('hidden',t.key!==target);
+}
+};
+for(const t of CONFIG_TABS){
+const b=button(t.label,()=>activateCfgTab(t.key),'tab-btn');
+b.title=t.hint;
+b.setAttribute('role','tab');
+b.dataset.tabKey=t.key;
+buttons.set(t.key,b);
+nav.appendChild(b);
+const panel=h('div',{class:'cfg-tab-panel',role:'tabpanel',dataset:{tabKey:t.key,tabLabel:t.label}});
+panels.set(t.key,panel);
+}
+panels.get('core').append(
+gridGroup(cfg),
+bodyGroup(cfg),
+moveRulesGroup(cfg),
+collisionGroup(cfg),
+envRulesGroup(cfg),
+endGroup(cfg),
+);
+panels.get('extend').append(
+multiSnakeGroup(cfg),
+transformGroup(cfg),
+lifeGroup(cfg),
+caGroup(cfg),
+);
+panels.get('visual').append(styleGroup(cfg));
+panels.get('scene').append(sceneGroup(cfg));
+tabs.appendChild(nav);
+for(const t of CONFIG_TABS)tabs.appendChild(panels.get(t.key));
+root.appendChild(tabs);
+searchBar.appendChild(nav);
+activateCfgTab(state.cfgTab);
 applyConfigSearch(state.cfgSearch);
+}
+function resetCfgTabPanels(){
+const tabs=els.config&&els.config.querySelector('.cfg-tabs');
+if(!tabs)return;
+for(const p of tabs.querySelectorAll('.cfg-tab-panel')){
+p.classList.toggle('hidden',p.dataset.tabKey!==state.cfgTab);
+}
+}
+function revealConfigGroup(groupKey){
+const details=els.config&&els.config.querySelector(`details[data-group-key="${groupKey}"]`);
+if(!details)return null;
+const panel=details.closest('.cfg-tab-panel');
+if(panel&&panel.dataset.tabKey!==state.cfgTab)activateCfgTab(panel.dataset.tabKey);
+details.open=true;
+return details;
 }
 const cfgSearchOpened=new Set();
 function configSearchBar(){
@@ -9309,15 +9987,21 @@ const root=els.config;
 if(!root)return;
 const groups=[...root.querySelectorAll('details.group')];
 const q=String(query||'').trim().toLowerCase();
+const tabs=root.querySelector('.cfg-tabs');
+const navBtns=[...root.querySelectorAll('.cfg-tab-nav .tab-btn')];
 if(!q){
+if(tabs)tabs.classList.remove('searching');
+for(const b of navBtns)b.classList.remove('has-hits','no-hits');
 for(const g of groups){
 g.classList.remove('hidden');
 if(cfgSearchOpened.has(g.dataset.groupKey))g.open=false;
 }
 cfgSearchOpened.clear();
 if(els.cfgSearchHint)els.cfgSearchHint.textContent='';
+resetCfgTabPanels();
 return;
 }
+if(tabs)tabs.classList.add('searching');
 let matched=0;
 for(const g of groups){
 const hit=String(g.textContent||'').toLowerCase().includes(q);
@@ -9328,6 +10012,12 @@ if(!g.open){
 g.open=true;
 cfgSearchOpened.add(g.dataset.groupKey);
 }
+}
+for(const b of navBtns){
+const panel=tabs.querySelector(`.cfg-tab-panel[data-tab-key="${b.dataset.tabKey}"]`);
+const hits=panel?[...panel.querySelectorAll('details.group')].filter((g)=> !g.classList.contains('hidden')).length:0;
+b.classList.toggle('has-hits',hits>0);
+b.classList.toggle('no-hits',hits===0);
 }
 if(els.cfgSearchHint){
 els.cfgSearchHint.textContent=matched?`${matched} 个分组匹配`:'未找到匹配设置';
@@ -9686,7 +10376,7 @@ maxConsecutiveInput.disabled= !on;
 maxConsecutiveInput.title=on?'':'需先勾选「结束规则 → 撞到自身」，该项才会生效';
 };
 bindEndConditionSync('selfCollision',syncMaxConsecutive);
-syncMaxConsecutive(!!cfg.endConditions.selfCollision);
+syncMaxConsecutive(!!cfg.endConditions.selfCollision&& !(cfg.transform.enabled&&cfg.transform.dieOnSelfCollision));
 return group('碰撞与自撞处理',[
 field('视为碰撞',h('div',{class:'chips-line'},
 chkBind(c,'headIntoBody',()=>onSimChange(),'头撞身体'),
@@ -10448,6 +11138,7 @@ const expected=t.globalProbability*t.segmentProbability*segs;
 estimate.textContent=`按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`;
 };
 syncEstimate();
+const syncSelfCollisionLock=()=>rebuildAll();
 const onProbChange=()=>{syncEstimate();onSimChange();};
 const runSample=()=>{
 const rng=new RNG(cfg.seed||1);
@@ -10468,9 +11159,10 @@ const stateSelect=selBind(t,'state',()=>{onSimChange();},cfg.caMode.states
 .map((s)=>({value:s.name,label:stateLabelWithKey(s.name)})));
 return group('蛇死亡转化',[
 field('启用',h('div',{class:'chips-line'},
-chkBind(t,'enabled',()=>{onSimChange();},'自撞致死后按概率并入环境')),
+chkBind(t,'enabled',()=>syncSelfCollisionLock(),'自撞致死后按概率并入环境')),
 '关闭时自撞完全沿用「碰撞与自撞处理 → 自撞处理」的原有策略'),
-field('自撞即判定死亡',chkBind(t,'dieOnSelfCollision',()=>onSimChange(),'自撞即判定死亡（不结束运行）')),
+field('自撞即判定死亡',chkBind(t,'dieOnSelfCollision',()=>syncSelfCollisionLock(),'自撞即判定死亡（不结束运行）'),
+'开启后「结束规则 → 撞到自身」会被自动禁用且不可手动修改（互斥绑定），关闭本项即恢复编辑'),
 field('全局触发概率',rangeBind(t,'globalProbability',onProbChange,{min:0,max:1,step:0.01,number:true}),
 '蛇死亡后是否启动转化流程的总概率'),
 field('分段转化概率',rangeBind(t,'segmentProbability',onProbChange,{min:0,max:1,step:0.01,number:true}),
@@ -10481,6 +11173,51 @@ field('期望试算',h('div',{class:'row'},
 button('抽样试算',runSample,'ghost small'),estimate)),
 h('div',{class:'hint'},'自撞死亡只让该移动体从场上消失，主循环与元胞自动机继续运行；身体节点在几步内以过渡动画连续并入环境。'),
 ],{open:false,badge:t.enabled?'已启用':''});
+}
+function lifeGroup(cfg){
+const life=cfg.life;
+const statePicker=(arr)=>{
+const wrap=h('div',{class:'chips-line'});
+const options=cfg.caMode.states.filter((s)=>s.name!=='empty');
+if(!options.length)return h('div',{class:'hint'},'当前状态集合中暂无可选状态');
+for(const s of options){
+wrap.appendChild(checkbox(arr.includes(s.name),(v)=>{
+const i=arr.indexOf(s.name);
+if(v&&i<0)arr.push(s.name);
+else if(!v&&i>=0)arr.splice(i,1);
+onSimChange();
+},stateLabelWithKey(s.name)));
+}
+return wrap;
+};
+return group('生命机制（多生命）',[
+field('启用',h('div',{class:'chips-line'},
+chkBind(life,'enabled',()=>rebuildAll(),'启用多生命系统')),
+'关闭时沿用「单条命」的原有行为：致命判定立即结束（或按「蛇死亡转化」处理）。启用后生命耗尽才触发最终死亡'),
+field('初始生命',rangeBind(life,'initialLives',()=>rebuildAll(),{
+min:LIFE_MIN,max:LIFE_MAX,step:1,number:true,
+}),`取值区间 ${LIFE_MIN} ~ ${LIFE_MAX}：单条生命耗尽时保留蛇头位置与得分，仅重置蛇身长度并播放重生动画`),
+field('死亡后仍可移动',chkBind(life,'keepMovingAfterDeath',()=>rebuildAll(),'死亡后仍可移动'),
+'默认关闭（推荐）：致命判定后立即停止移动并移除蛇头与蛇身。开启后死亡的蛇会以「僵尸态」保留在场上继续移动，仅用于观察'),
+field('低生命预警阈值',rangeBind(life,'warnThreshold',()=>onSimChange(),{
+min:0,max:LIFE_MAX,step:1,number:true,
+}),'剩余生命降至该数值时给出高亮与提示；设为 0 表示不预警'),
+h('div',{class:'sub-title'},'重生参数'),
+row(
+field('重生长度',numBind(life.respawn,'length',()=>onSimChange(),{min:1,max:100000})),
+field('重生无敌步数',numBind(life.respawn,'invincibleTicks',()=>onSimChange(),{min:0,max:100000})),
+),
+field('增加生命的格子',statePicker(life.items.gainStates),
+'蛇头踏入这些状态时获得生命（上限 9）；未启用本机制时这些状态不产生效果'),
+row(
+field('每次增加',numBind(life.items,'gainAmount',()=>onSimChange(),{min:0,max:LIFE_MAX})),
+field('拾取后清除该格',chkBind(life.items,'consumeGain',()=>onSimChange(),'吃掉后变空')),
+),
+field('扣除生命的格子',statePicker(life.items.lossStates),
+'蛇头踏入这些状态时扣除生命（非致命）；扣到 0 条才触发最终死亡'),
+field('每次扣除',numBind(life.items,'lossAmount',()=>onSimChange(),{min:1,max:LIFE_MAX})),
+h('div',{class:'hint'},'增减生命的状态取自「元胞自动机 → 状态集合」；未配置任何增减来源时，生命只会在致命判定时递减。'),
+],{open:false,badge:life.enabled?`初始 ${life.initialLives} 条`:''});
 }
 function endGroup(cfg){
 const ec=cfg.endConditions;
@@ -10516,15 +11253,24 @@ continue;
 paramFields.push(field(label,numBind(ec,key,()=>onSimChange(),opts)));
 }
 const isOn=numericKeys.includes('maxSteps')?typeof ec.maxSteps==='number':!!ec[code];
-const rowChildren=[
-h('span',{class:'priority-no'},`${i+1}`),
-checkbox(isOn,(v)=>{
+const locked=code==='selfCollision'&& !!(cfg.transform.enabled&&cfg.transform.dieOnSelfCollision);
+const cbLabel=(END_LABELS[code]||code)+(locked?'（已因「自撞即判定死亡」互斥禁用）':'');
+const cb=checkbox(locked?false:isOn,(v)=>{
 if(numericKeys.includes('maxSteps'))ec.maxSteps=v?endParamMemory.maxSteps:false;
 else ec[code]=v;
 syncDisabled.forEach((fn)=>fn(v));
 notifyEndConditionSync(code,v);
 onSimChange();
-},END_LABELS[code]||code),
+},cbLabel);
+if(locked){
+const input=cb.querySelector('input');
+if(input)input.disabled=true;
+cb.title='已开启「蛇死亡转化 → 自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发本规则；关闭前者即可恢复编辑';
+}
+const rowOn=locked?false:isOn;
+const rowChildren=[
+h('span',{class:'priority-no'},`${i+1}`),
+cb,
 ...paramFields,
 orderActions(
 button('↑',()=>{swap(ec.priority,i,i-1);rebuildAll();},'icon small'),
@@ -10532,7 +11278,7 @@ button('↓',()=>{swap(ec.priority,i,i+1);rebuildAll();},'icon small'),
 ),
 ];
 rows.push(h('div',{
-class:`end-row${isOn?' on':''}`,
+class:`end-row${rowOn?' on':''}${locked?' locked':''}`,
 'data-end-code':code,
 },rowChildren));
 });

@@ -189,6 +189,14 @@ export class Agent {
     this.isMain = opts.isMain !== undefined ? !!opts.isMain : true;
     /** 生成时刻（步数），用于「最老/最新」排序与运行日志 */
     this.spawnTick = Math.max(0, Math.round(Number(opts.spawnTick) || 0));
+    /** 生命机制：剩余生命条数（0 表示未启用生命机制或生命已耗尽） */
+    this.lives = Math.max(0, Math.round(Number(opts.lives) || 0));
+    /** 死亡后仍可移动（僵尸态）：仅由 life.keepMovingAfterDeath 开启时使用 */
+    this.zombie = false;
+    /** 重生无敌截止步数（该步数之前不再触发致命判定） */
+    this.invincibleUntil = -1;
+    /** 最近一次重生所在步数 */
+    this.respawnTick = -1;
   }
 
   /** 头部坐标 */
@@ -212,12 +220,16 @@ export class Agent {
       tag: this.tag,
       isMain: this.isMain,
       spawnTick: this.spawnTick,
+      lives: this.lives,
     });
     a.alive = this.alive;
     a.pendingForcedStraights = this.pendingForcedStraights;
     a.forcedNextTurn = this.forcedNextTurn;
     a.endReason = this.endReason;
     a.speedMul = this.speedMul;
+    a.zombie = this.zombie;
+    a.invincibleUntil = this.invincibleUntil;
+    a.respawnTick = this.respawnTick;
     return a;
   }
 

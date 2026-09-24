@@ -310,6 +310,15 @@ html, body {
   background: var(--panel-2);
 }
 .save-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 本地得分排行榜的名次序号 */
+.rank-no {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
 
 .condition {
   border-left: 2px solid var(--line);
@@ -375,6 +384,10 @@ html, body {
   from { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0); }
   to { box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.32); }
 }
+/* 互斥禁用行：与「蛇死亡转化 → 自撞即判定死亡」冲突的结束规则不可手动修改 */
+.end-row.locked { opacity: 0.6; border-color: var(--line); border-style: dashed; }
+.end-row.locked > .check-wrap,
+.end-row.locked .checkbox { cursor: not-allowed; }
 .end-row .field { margin: 0; flex: 0 1 118px; min-width: 54px; }
 .end-row .field-label { margin-bottom: 1px; }
 /* 优先级行：勾选项可收缩，按钮簇不换行（详见 .row-actions） */
@@ -411,10 +424,11 @@ html, body {
 /* 可点击的统计项（如「得分」→ 弹出分项明细） */
 .stat.clickable { cursor: pointer; }
 .stat.clickable:hover { border-color: var(--accent); }
-/* 配置面板设置搜索 */
+/* 配置面板设置搜索（与下方选项卡导航共用一个吸顶容器） */
 .cfg-search {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   position: sticky;
   top: 0;
@@ -424,6 +438,46 @@ html, body {
 }
 .cfg-search .input { flex: 1 1 auto; }
 .cfg-search .mini-label { flex: 0 0 auto; }
+
+/* ---------------- 配置面板四大类选项卡 ---------------- */
+/*
+ * 原先十余个分组平铺成一列，界面很长、视觉负担重；
+ * 这里按「游戏核心规则 / 视觉显示 / 场景与运行 / 扩展机制」收敛为选项卡，
+ * 每个选项卡内部仍是原来的折叠分组，功能与可访问性完全保留。
+ */
+.cfg-tab-nav {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+.cfg-tab-nav .btn.tab-btn {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.cfg-tab-nav .btn.tab-btn.on { background: #1c3b5a; color: #d7ecff; border-color: var(--accent); }
+.cfg-tab-panel { padding-top: 2px; }
+/* 搜索时同时展开全部分类，命中项不会藏在别的选项卡里 */
+.cfg-tabs.searching .cfg-tab-panel { display: block !important; }
+.cfg-tabs.searching .cfg-tab-panel + .cfg-tab-panel {
+  border-top: 1px dashed var(--line);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.cfg-tabs.searching .cfg-tab-panel::before {
+  content: attr(data-tab-label);
+  display: block;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  margin: 2px 0 4px;
+}
+/* 搜索命中标注：无命中的分类淡出，有命中的分类加亮 */
+.cfg-tab-nav .btn.tab-btn.no-hits { opacity: 0.42; }
+.cfg-tab-nav .btn.tab-btn.has-hits:not(.on) { color: #d7ecff; }
 .stat-label { display: block; color: var(--muted); font-size: 10.5px; }
 .stat-value { font-size: 13px; font-weight: 600; }
 /* 统计口径切换：数值在原节点上更新，只用一次淡入过渡提示「数据已重算」 */
@@ -747,3 +801,27 @@ html, body {
 #legacy-hint h2 { font-size: 20px; margin: 0 0 12px; }
 #legacy-hint p { font-size: 14px; line-height: 1.8; margin: 0 0 6px; }
 #legacy-hint.hidden { display: none; }
+
+/* ---------------- 移动端触控优化 ---------------- */
+
+/*
+ * 画布保留单指滚动与双指缩放手势（不接管默认行为），
+ * 仅去掉移动端点击高亮与双击缩放带来的 300ms 延迟。
+ */
+#canvas {
+  touch-action: pan-x pan-y pinch-zoom;
+  -webkit-tap-highlight-color: transparent;
+}
+#tooltip { pointer-events: none; }
+
+@media (max-width: 860px) {
+  /* 触控目标放大到便于手指点按的尺寸 */
+  .btn { padding: 8px 12px; }
+  .btn.small { padding: 7px 10px; }
+  .btn.icon { min-width: 32px; padding: 7px 8px; }
+  .checkbox { width: 15px; height: 15px; }
+  .check-wrap { padding: 3px 0; }
+  .field { margin: 9px 0; }
+  .cfg-tab-nav .btn.tab-btn { font-size: 12px; padding: 8px 10px; }
+  .save-row { padding: 6px 8px; }
+}

@@ -10,6 +10,10 @@ export const CONFIG_VERSION = '1.2';
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
 
+/** 生命机制：初始生命数值的合法区间（含端点），界面上以滑动条呈现 */
+export const LIFE_MIN = 1;
+export const LIFE_MAX = 9;
+
 export const END_PRIORITY_DEFAULT = [
   'wall',
   'outOfBounds',
@@ -44,6 +48,8 @@ export const END_LABELS = {
   caStable: '元胞自动机稳定',
   allAgentsGone: '所有移动体均已消失',
   transformDone: '蛇已全部转化为环境',
+  /** 生命机制：生命耗尽后的最终死亡 */
+  lifeDepleted: '生命耗尽',
   manual: '手动结束',
 };
 
@@ -271,6 +277,45 @@ export function defaultConfig() {
       segmentProbability: 0.5,
       /** 转化目标状态名（必须是 caMode.states 中真实存在且非 empty 的状态） */
       state: 'obstacle',
+    },
+    /**
+     * 生命机制（多生命系统）。
+     *
+     * 默认关闭，旧场景零变化。开启后：
+     *  - 主移动体携带 initialLives 条生命（1~9），致命判定（自撞 / 撞墙 / 越界 / 撞障碍物）
+     *    先扣 1 条命并原地重生（保留头部位置、得分等进度，只重置蛇身长度 + 播放重生动画）；
+     *  - 生命耗尽才触发最终死亡（沿用 transform / 结束规则的原有收尾方式）；
+     *  - 触碰 items.gainStates 中的格子 +gainAmount 条命，触碰 items.lossStates 中的格子 -lossAmount 条命。
+     *
+     * keepMovingAfterDeath：死亡后是否仍可移动。
+     * **默认关闭**——关闭时蛇一旦判定死亡立即停止所有移动逻辑，并从画面上删去蛇头与蛇身。
+     */
+    life: {
+      enabled: false,
+      /** 初始生命（1~9） */
+      initialLives: 3,
+      /** 死亡后仍可移动（默认关闭，保证死亡即刻停止并移除蛇头蛇身） */
+      keepMovingAfterDeath: false,
+      /** 生命低至该值时给出预警提示（0 表示不预警） */
+      warnThreshold: 1,
+      /** 单条生命耗尽后的重生参数 */
+      respawn: {
+        /** 重生后的蛇身长度 */
+        length: 3,
+        /** 重生后的无敌步数（该步数内不再触发致命判定） */
+        invincibleTicks: 2,
+      },
+      /** 环境中的增 / 减生命来源 */
+      items: {
+        /** 触碰后增加生命的格子状态 */
+        gainStates: ['marker'],
+        gainAmount: 1,
+        /** 增益格子是否在拾取后被清空 */
+        consumeGain: true,
+        /** 触碰后扣除生命的格子状态（非致命陷阱） */
+        lossStates: [],
+        lossAmount: 1,
+      },
     },
     environmentRules: [],
     caMode: {
@@ -772,6 +817,47 @@ function normTransform(rawT, states) {
   };
 }
 
+/**
+ * 「生命机制」参数规范化。
+ *  - initialLives / warnThreshold 等数值全部夹取到合法区间；
+ *  - 增 / 减生命的状态名必须真实存在于状态集合中（empty 除外），否则会被静默丢弃，
+ *    避免配置里写了一个不存在的「陷阱状态」后机制永不生效却毫无提示。
+ */
+function normLife(rawL, states) {
+  const d = defaultConfig().life;
+  const l = rawL && typeof rawL === 'object' ? rawL : {};
+  const names = new Set(states.map((s) => s.name));
+  const pickStates = (v, fb) => {
+    const src = Array.isArray(v) ? v : fb;
+    const out = [];
+    for (const item of src) {
+      const n = String(item);
+      if (!names.has(n) || n === 'empty' || out.includes(n)) continue;
+      out.push(n);
+    }
+    return out;
+  };
+  const r = l.respawn && typeof l.respawn === 'object' ? l.respawn : {};
+  const it = l.items && typeof l.items === 'object' ? l.items : {};
+  return {
+    enabled: bool(l.enabled, d.enabled),
+    initialLives: clamp(Math.round(num(l.initialLives, d.initialLives)), LIFE_MIN, LIFE_MAX),
+    keepMovingAfterDeath: bool(l.keepMovingAfterDeath, d.keepMovingAfterDeath),
+    warnThreshold: clamp(Math.round(num(l.warnThreshold, d.warnThreshold)), 0, LIFE_MAX),
+    respawn: {
+      length: clamp(Math.round(num(r.length, d.respawn.length)), 1, 100000),
+      invincibleTicks: clamp(Math.round(num(r.invincibleTicks, d.respawn.invincibleTicks)), 0, 100000),
+    },
+    items: {
+      gainStates: pickStates(it.gainStates, d.items.gainStates),
+      gainAmount: clamp(Math.round(num(it.gainAmount, d.items.gainAmount)), 0, LIFE_MAX),
+      consumeGain: bool(it.consumeGain, d.items.consumeGain),
+      lossStates: pickStates(it.lossStates, d.items.lossStates),
+      lossAmount: clamp(Math.round(num(it.lossAmount, d.items.lossAmount)), 1, LIFE_MAX),
+    },
+  };
+}
+
 function normMultiSnake(raw = {}) {
   const d = defaultConfig().multiSnake;
   const sp = raw.spawn || {};
@@ -941,6 +1027,11 @@ export function normalizeConfig(rawInput = {}) {
   ensureCoreStates(cfg);
   // 转化目标状态依赖最终的状态集合，因此在 ensureCoreStates 之后再解析
   cfg.transform = normTransform(raw.transform, cfg.caMode.states);
+  // 生命机制的增减生命状态同样依赖最终状态集合
+  cfg.life = normLife(raw.life, cfg.caMode.states);
+  // 自撞规则互斥绑定：开启「自撞即判定死亡」时，「撞到自身」结束规则被自动禁用（只读）。
+  // 这里刻意不改写 endConditions.selfCollision 的原始值——关闭前者后该规则原样恢复。
+  cfg.endConditions.selfCollisionLocked = !!(cfg.transform.enabled && cfg.transform.dieOnSelfCollision);
   return cfg;
 }
 
@@ -1332,11 +1423,50 @@ export function diagnoseConfig(rawInput = {}) {
     out.push({
       level: 'info',
       code: 'transformOverridesSelfCollisionEnd',
-      title: '「撞到自身」结束规则在转化模式下不触发',
-      message: '已开启「自撞即判定死亡」：自撞只会让该移动体消失并把身体节点并入环境，主循环会继续运行，因此结束规则「撞到自身」不会收尾。',
+      title: '「撞到自身」结束规则已因互斥绑定自动禁用',
+      message: '已开启「自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发结束规则「撞到自身」，因此该规则被自动禁用且不可手动修改；关闭「自撞即判定死亡」即可恢复编辑。',
       suggestions: [
         { label: '关闭「自撞即判定死亡」以恢复该结束规则', patch: { transform: { dieOnSelfCollision: false } } },
         { label: '改用「所有移动体均已消失」收尾', patch: { endConditions: { allAgentsGone: true } } },
+      ],
+    });
+  }
+  // 生命机制：数值越界钳制提示 / 无任何增减来源提示
+  const lifeRaw = (raw.life && typeof raw.life === 'object') ? raw.life : {};
+  const rawLives = Number(lifeRaw.initialLives);
+  if (Number.isFinite(rawLives) && (rawLives < LIFE_MIN || rawLives > LIFE_MAX)) {
+    out.push({
+      level: 'warning',
+      code: 'lifeInitialClamped',
+      title: '初始生命数值超出合理区间',
+      message: `初始生命 ${Math.round(rawLives)} 超出允许区间 [${LIFE_MIN}, ${LIFE_MAX}]，已收敛为 ${cfg.life.initialLives}。`,
+      suggestions: [
+        { label: `改为 ${LIFE_MAX}（上限）`, patch: { life: { initialLives: LIFE_MAX } } },
+        { label: `改为 ${LIFE_MIN}（下限）`, patch: { life: { initialLives: LIFE_MIN } } },
+      ],
+    });
+  }
+  if (cfg.life.enabled && bodyOn
+    && !cfg.life.items.gainStates.length && !cfg.life.items.lossStates.length
+    && !cfg.transform.enabled) {
+    out.push({
+      level: 'info',
+      code: 'lifeNoItemSource',
+      title: '生命机制没有任何增减来源',
+      message: '已启用生命机制，但既没有配置「增加生命的格子状态」也没有配置「扣除生命的格子状态」，生命值只会在致命判定时递减。',
+      suggestions: [
+        { label: '把「标记物」设为增加生命的格子', patch: { life: { items: { gainStates: ['marker'] } } } },
+      ],
+    });
+  }
+  if (cfg.life.enabled && cfg.life.keepMovingAfterDeath) {
+    out.push({
+      level: 'info',
+      code: 'lifeKeepMovingAfterDeath',
+      title: '已开启「死亡后仍可移动」',
+      message: '该开关开启后蛇在判定死亡时不会立即停止与移除，可能出现「死亡后仍在移动」的表现；正式游玩建议保持关闭。',
+      suggestions: [
+        { label: '关闭「死亡后仍可移动」', patch: { life: { keepMovingAfterDeath: false } } },
       ],
     });
   }

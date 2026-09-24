@@ -1,5 +1,50 @@
 # 迭代记录
 
+## v2.6.0
+
+### 新增
+
+- **生命机制（多生命系统）**：移动体新增 `life` 配置组，把「一次致命即结束」改为「扣命 → 原地重生 → 生命耗尽才最终死亡」：
+  - **初始生命可自定义**：设置面板提供「初始生命」滑杆（`initialLives`，夹取到 `[LIFE_MIN, LIFE_MAX] = [1, 9]`），越界数值会被规范化收敛并在配置诊断中给出提示（`lifeInitialClamped`）。
+  - **环境动态增减生命**：`life.items.gainStates` 指定的格子（默认「交互标记物」）踏入即 +`gainAmount` 条命（可选 `consumeGain` 拾取后清空该格）；`items.lossStates` 指定的格子作为非致命陷阱，踏入即 -`lossAmount` 条命。生命上限受 `LIFE_MAX` 保护。
+  - **单条生命耗尽即原地重生**：`consumeLifeOnDeath` → `respawnAgent` 保留蛇头位置、朝向与得分 / 步数等关键进度，仅把蛇身长度重置为 `life.respawn.length`，并给出 `invincibleTicks` 步无敌窗口与 `lifeRespawn` / `respawn` 高亮（渲染层播放重生动画）；重生后自动改选一个「不撞墙、不撞自身」的安全方向，避免下一帧原地反复丢命。
+  - **生命耗尽才最终死亡**：生命归零时经统一入口 `markLifeDepleted` 计入 `finalDeaths`、写入 `lifeDepleted` 事件与高亮，再按原有「蛇死亡转化」或结束规则收尾。
+  - **低生命预警**：`life.warnThreshold` 设定预警阈值，剩余生命降至阈值时写入一次 `lifeWarning` 高亮与事件；界面在播放到该帧时弹出提示（`notifyLifeEvents`）。
+- **死亡即停（默认关闭「死亡后仍可移动」）**：`life.keepMovingAfterDeath` 默认 `false`——蛇触发死亡判定后立即停止所有移动逻辑，死亡帧起 `captureFrame` 不再输出蛇头与蛇身（`segments: []` / `length: 0`）。仍保留开启后的旧表现（僵尸态 `agent.zombie`，保留蛇头蛇身继续推进）。
+- **自撞判定与自撞结束规则互斥绑定**：新增派生锁定字段 `endConditions.selfCollisionLocked`——「自撞即判定死亡」（`transform.dieOnSelfCollision`）开启时，「撞到自身」结束规则自动禁用且面板置灰不可手动修改；关闭后恢复可编辑。该字段为派生值，不写入默认配置、也不改写「撞到自身」的原始值，因此关闭后原样恢复。对应诊断项 `transformOverridesSelfCollisionEnd`。
+- **设置面板四大类选项卡**：按「游戏核心规则 / 视觉显示 / 操作控制 / 难度参数」（`CONFIG_TABS`）归类合并，删除冗余的独立选项卡；原分组整体迁移、不做拆分，保证所有功能可访问性不变，并支持从「查看结束规则」等入口直接跳到目标分类。
+- **游戏进度自动存档**：`AUTO_SAVE_KEY = 'gridsneaker:autosave'`，播放 / 跳帧时按 1.2 秒防抖写入「配置 + 播放位置 + 统计口径」；刷新后配置由本地自动恢复，若存档配置与当前配置一致则自动跳回上次进度。
+- **本地得分排行榜**：每轮运行结束自动把成绩写入本地（按总分降序、限额保留、去重指纹避免重算重复入榜），侧栏支持查看与一键清空。
+- **移动端触控优化**：画布不拦截 `touchstart` / `touchmove` 默认行为，保留滚动与双指缩放（由 CSS `touch-action` 约束），并放大触控目标。
+- **统计与事件**：新增 `lifeLosses` / `lifeGains` / `respawns` / `lifeWarnings` / `finalDeaths` / `maxLives` 运行期统计与摘要字段；帧事件新增 `lifeGain` / `lifeLoss` / `trapHit` / `lifeRespawn` / `lifeWarning` / `lifeDepleted` 标签与对应特效（`lifeGain` / `lifeLoss` / `lifeWarning` / `lifeDepleted` / `respawn`）。
+
+### 修复
+
+- **扣命重生被结束规则提前终止**：生命机制启用时，扣命重生所在帧已写入的 `selfCollision` / `wall` / `obstacle` 事件仍会命中 `checkEndConditions` 的对应结束规则，导致整轮运行在第一处致命点就结束（只扣 1 条命）。现新增 `absorbFatalEvent`，把「已被生命机制吸收」的致命事件标记为 `absorbed`，`checkEndConditions` 的 `wall` / `outOfBounds` / `obstacle` / `selfCollision` 判定跳过该标记，使生命耗尽才是唯一的最终死亡。
+- **陷阱耗尽生命未计入最终死亡**：陷阱扣光最后一条命时走的是 `stepAgent` 的直通分支，此前只累加 `lifeLosses` 就直接 `agentEnd`，缺少 `finalDeaths` 统计与 `lifeDepleted` 事件 / 高亮。现统一改由 `markLifeDepleted` 收尾，五条致命路径（自撞 / 撞墙 / 越界 / 障碍 / 陷阱）统计口径一致。
+
+### 变更
+
+- **自撞结束规则语义收敛**：生命机制启用且仍有剩余生命（含无敌窗口）时，自撞只作碰撞记录，不再触发「撞到自身」结束规则。
+- **设置面板选项卡重命名（消除误导性命名）**：原「操作控制」「难度参数」两个选项卡名与面板实际内容不符——
+  面板中并不存在「操作控制」类选项；而真正的「难度」是运行期的拥挤度难度评估（`src/core/difficulty.js`，
+  读数位于控制条与统计面板），与这两个选项卡的内容无关。现按实际内容重命名，并同步内部 key 以保持命名一致：
+
+  | 原命名 | 新命名 | 内部 key | 面板实际内容 |
+  | --- | --- | --- | --- |
+  | 操作控制 | 场景与运行 | `control` → `scene` | 场景名称与描述、随机种子（可复现）、规则执行方式 |
+  | 难度参数 | 扩展机制 | `difficulty` → `extend` | 多蛇与交互、蛇死亡转化、生命机制、元胞自动机 |
+
+  涉及文件：`src/ui/app.js`（`CONFIG_TABS` 的 label / key、选项卡面板归属、注释）、`styles.css`（选项卡注释）、
+  `CHANGELOG.md`（本记录）、`GridSneaker.html`（构建产物重新生成）。分组与控件未做任何迁移或删改，功能可访问性不变。
+
+### 测试
+
+- `tests/core.test.mjs` 新增「生命机制：多生命 / 扣命重生 / 生命耗尽 / 死亡即停 / 自撞互斥」测试块：
+  配置规范化与夹取、配置诊断、自撞互斥绑定的正向 / 反向 / 行为验证、扣命重生（保留蛇头与进度 + 重生动画事件）、死亡即停与僵尸态对照、
+  环境增减生命（增益 / 上限 / 陷阱 / 关闭对照）、未启用生命机制时的旧行为回归，以及「致命事件吸收」（撞墙扣命重生后不误终止整轮运行）。
+  当前共 **812 项断言全部通过**。
+
 ## v2.5.0
 
 ### 新增

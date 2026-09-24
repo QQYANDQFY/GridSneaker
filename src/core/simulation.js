@@ -10,7 +10,7 @@ import { RNG } from './rng.js';
 import { World, Agent } from './world.js';
 import { CAEngine } from './ca.js';
 import { RuleEngine } from './rules.js';
-import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled } from './config.js';
+import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, LIFE_MAX } from './config.js';
 import { resolveTurn, occupiedByAgent, findSpawnCoord } from './actions.js';
 import { evaluateCondition } from './conditions.js';
 import { computeScore } from './score.js';
@@ -143,7 +143,13 @@ export class Simulation {
       else if (!grid.inBounds(cur)) break;
       segments.push({ ...cur });
     }
-    return new Agent('main', segments, dir, { label: '主移动体', isMain: true, spawnTick: 0 });
+    return new Agent('main', segments, dir, {
+      label: '主移动体',
+      isMain: true,
+      spawnTick: 0,
+      // 生命机制：主移动体携带初始生命；未启用时为 0，致命判定的旧行为不变
+      lives: cfg.life.enabled ? cfg.life.initialLives : 0,
+    });
   }
 
   run() {
@@ -205,6 +211,14 @@ export class Simulation {
       transformDeaths: 0,
       transformedCells: 0,
       transformTriggers: 0,
+      // 「生命机制」专属统计
+      lives: mainAgent ? mainAgent.lives : 0,
+      maxLives: mainAgent ? mainAgent.lives : 0,
+      lifeGains: 0,
+      lifeLosses: 0,
+      respawns: 0,
+      lifeWarnings: 0,
+      finalDeaths: 0,
       /** 碰撞预警：下一步会撞到自身身体的「危险朝向」计数（仅在开启预警时累计） */
       collisionWarnings: 0,
       turnHistory: [],
@@ -281,11 +295,15 @@ export class Simulation {
       stats.steps = tick;
       stats.agents = agents.filter((a) => a.alive).length;
       stats.peakAgents = Math.max(stats.peakAgents, stats.agents);
-      const primary = mainAgent && mainAgent.alive ? mainAgent : agents.find((a) => a.alive) || null;
+      const primary = mainAgent && (mainAgent.alive || mainAgent.zombie)
+        ? mainAgent
+        : agents.find((a) => a.alive || a.zombie) || null;
       stats.length = primary ? primary.length : 0;
       if (primary) {
         stats.maxLength = Math.max(stats.maxLength, primary.length);
         stats.minLength = Math.min(stats.minLength, primary.length);
+        stats.lives = mainAgent ? mainAgent.lives : 0;
+        stats.maxLives = Math.max(stats.maxLives, primary.lives || 0);
       }
       stats.obstacleCount = world.countState('obstacle');
       stats.markerCount = world.countState('marker');
@@ -360,6 +378,14 @@ export class Simulation {
         transformDeaths: stats.transformDeaths,
         transformedCells: stats.transformedCells,
         collisionWarnings: stats.collisionWarnings,
+        // 生命机制：剩余 / 生命增减 / 重生 / 生命耗尽最终死亡 / 低生命预警
+        lives: stats.lives,
+        maxLives: stats.maxLives,
+        lifeGains: stats.lifeGains,
+        lifeLosses: stats.lifeLosses,
+        respawns: stats.respawns,
+        lifeWarnings: stats.lifeWarnings,
+        finalDeaths: stats.finalDeaths,
         endReason: endReason ? endReason.label : '未结束（达到帧上限）',
         finalLength: frameStats.length ?? stats.length,
         /** 得分系统：总分 / 等级 / 分项，由 core/score.js 纯函数折算 */
@@ -384,6 +410,7 @@ export class Simulation {
     // 保证「撞到自身」不再终止运行后，规则主体与结束条件判定仍然有可用对象。
     const main = agents.find((a) => a.isMain && a.alive)
       || agents.find((a) => a.alive)
+      || agents.find((a) => a.zombie)
       || agents[0]
       || null;
     ctx.agent = main;
@@ -398,7 +425,9 @@ export class Simulation {
     // 3. 逐个移动体推进（单蛇运行时与旧行为完全一致）
     let fatal = null;
     for (const agent of agents.slice()) {
-      if (!agent.alive) continue;
+      // 死亡（含生命耗尽）的移动体立即停止一切移动逻辑；
+      // 仅「死亡后仍可移动」开启时以僵尸态继续参与推进。
+      if (!agent.alive && !agent.zombie) continue;
       // 记录移动前状态：排斥模式下发生重叠时用于回退
       agent.prevState = {
         segments: agent.segments.map((s) => ({ col: s.col, row: s.row })),
@@ -440,16 +469,16 @@ export class Simulation {
     // 需要继续演化时，没有必要空转到帧上限——给出明确的收尾原因；
     // 启用 CA 时则保持运行，让转化后的节点继续按 CA 规则演化（这正是「无缝接入」的语义）。
     if (cfg.transform.enabled && !ca && (stats.agentDeaths || 0) > 0
-      && !agents.some((a) => a.alive)) {
+      && !agents.some((a) => a.alive || a.zombie)) {
       return {
         ended: true,
         reason: { code: 'transformDone', label: END_LABELS.transformDone, tick: ctx.tick, coord: null },
       };
     }
 
-    // 清理已消失的移动体（保留死亡信息于统计与事件中）
+    // 清理已消失的移动体（保留死亡信息于统计与事件中）；僵尸态保留在场上
     for (let i = agents.length - 1; i >= 0; i--) {
-      if (!agents[i].alive) agents.splice(i, 1);
+      if (!agents[i].alive && !agents[i].zombie) agents.splice(i, 1);
     }
 
     return { ended: false, turn: main ? main.lastTurn : null };
@@ -466,7 +495,14 @@ export class Simulation {
     const stats = ctx.stats;
     const sync = cfg.ruleExecution === 'sync';
 
-    if (!agent.alive) return { ended: false };
+    if (!agent.alive && !agent.zombie) return { ended: false };
+
+    const life = cfg.life;
+    // 「死亡后仍可移动」开启时致命判定整体不生效（保留旧的可移动表现）；
+    // 重生无敌窗口内同样不触发致命判定，避免重生后立刻再次丢命。
+    const immortal = life.enabled && life.keepMovingAfterDeath;
+    const invincible = agent.invincibleUntil >= ctx.tick;
+    const protectedAgent = immortal || invincible || !!agent.zombie;
 
     // 1. 决定方向
     const decision = this.decideDirection(ctx, engine, agent);
@@ -555,7 +591,20 @@ export class Simulation {
       stats.selfCollisionsConsecutive = 0; // 撞墙不是自撞，打断连续自撞计数
       const cfgEnd = cfg.endConditions;
       const hitCode = cfgEnd.priority.find((c) => (c === 'wall' || c === 'outOfBounds') && cfgEnd[c]);
-      if (hitCode) {
+      if (hitCode && !protectedAgent) {
+        // 生命机制：撞墙 / 越界先扣 1 条命并原地重生，生命耗尽才收尾
+        if (life.enabled) {
+          const r = this.consumeLifeOnDeath(ctx, agent, {
+            code: hitCode,
+            label: END_LABELS[hitCode],
+            tick: ctx.tick,
+            coord: { ...agent.head },
+          }, tickEvents);
+          if (r === 'alive') {
+            this.absorbFatalEvent(tickEvents, 'wall');
+            return { ended: false, turn: turnKey };
+          }
+        }
         return this.agentEnd(ctx, agent, {
           code: hitCode,
           label: END_LABELS[hitCode],
@@ -563,6 +612,8 @@ export class Simulation {
           coord: { ...agent.head },
         }, tickEvents);
       }
+      // 无敌窗口 / 「死亡后仍可移动」下撞墙只作碰撞记录，不触发结束规则
+      if (hitCode && life.enabled) this.absorbFatalEvent(tickEvents, 'wall');
       return { ended: false, turn: turnKey };
     }
 
@@ -595,9 +646,23 @@ export class Simulation {
         stats.selfCollisionsConsecutive = 0; // 撞障碍物不是自撞，打断连续自撞计数
         tickEvents.push({ type: 'obstacle', coord: { ...target } });
         ctx.highlights.push({ col: target.col, row: target.row, type: 'collision', tick: ctx.tick });
-        if (cfg.endConditions.obstacle) {
+        if (cfg.endConditions.obstacle && !protectedAgent) {
+          if (life.enabled) {
+            const r = this.consumeLifeOnDeath(ctx, agent, {
+              code: 'obstacle',
+              label: END_LABELS.obstacle,
+              tick: ctx.tick,
+              coord: { ...target },
+            }, tickEvents);
+            if (r === 'alive') {
+              this.absorbFatalEvent(tickEvents, 'obstacle');
+              return { ended: false, turn: turnKey };
+            }
+          }
           return this.agentEnd(ctx, agent, { code: 'obstacle', label: END_LABELS.obstacle, tick: ctx.tick, coord: { ...target } }, tickEvents);
         }
+        // 无敌窗口 / 「死亡后仍可移动」下撞障碍物只作碰撞记录，不触发结束规则
+        if (cfg.endConditions.obstacle && life.enabled) this.absorbFatalEvent(tickEvents, 'obstacle');
         return { ended: false, turn: turnKey };
       }
     }
@@ -605,6 +670,19 @@ export class Simulation {
     // 5. 交互标记物反馈（在长度策略之前结算，长度变化通过 ctx.pending 注入）
     const ateCell = ctx.world.get(target) === 'marker';
     this.applyMarkerInteraction(ctx, agent, target, tickEvents);
+
+    // 5.5 生命机制的环境增减生命：拾取增益格子 +1 条命，踏入陷阱格子 -1 条命（非致命）
+    const lifeHit = this.applyLifeItemInteraction(ctx, agent, target, tickEvents);
+    if (lifeHit === 'loss' && life.enabled && !protectedAgent && (agent.lives || 0) <= 0) {
+      // 陷阱扣完最后一条命 → 计入最终死亡并触发死亡判定（与其它致命判定口径一致）
+      this.markLifeDepleted(ctx, target, 'lifeDepleted', tickEvents);
+      return this.agentEnd(ctx, agent, {
+        code: 'lifeDepleted',
+        label: END_LABELS.lifeDepleted,
+        tick: ctx.tick,
+        coord: { ...target },
+      }, tickEvents);
+    }
 
     // 6. 长度变化需求（先算，决定尾巴是否腾出）
     const lengthPlan = this.planLength(ctx, agent, target, tickEvents, ateCell);
@@ -634,6 +712,26 @@ export class Simulation {
       tickEvents.push({ type: 'selfCollision', coord: { ...target }, kind: collision, transformed: transformDeath });
       ctx.highlights.push({ col: target.col, row: target.row, type: 'collision', tick: ctx.tick });
       stats.ruleTriggers += engine.run('onCollision', ctx, { sync });
+
+      // 生命机制：自撞先扣 1 条命并原地重生（保留头部位置与得分，仅重置蛇身长度），
+      // 生命耗尽才进入转化 / 结束流程。
+      if (collision === 'self' && life.enabled && !protectedAgent) {
+        const r = this.consumeLifeOnDeath(ctx, agent, {
+          code: 'selfCollision',
+          label: END_LABELS.selfCollision,
+          tick: ctx.tick,
+          coord: { ...target },
+        }, tickEvents);
+        if (r === 'alive') {
+          this.absorbFatalEvent(tickEvents, 'selfCollision');
+          return { ended: false, turn: turnKey };
+        }
+      }
+      // 仍有剩余生命时（重生无敌窗口 / 「死亡后仍可移动」），自撞只作碰撞记录，
+      // 不触发「撞到自身」结束规则——生命耗尽才是最终死亡。
+      if (collision === 'self' && life.enabled && (agent.lives || 0) > 0) {
+        this.absorbFatalEvent(tickEvents, 'selfCollision');
+      }
 
       if (transformDeath) {
         this.transformAgent(ctx, agent, tickEvents);
@@ -725,15 +823,178 @@ export class Simulation {
 
   /** 让某个移动体消失（死亡 / 被移除 / 被融合） */
   killAgent(ctx, agent, reason, tickEvents) {
+    if (!agent.alive && !agent.zombie) return;
+    const head = agent.head ? { ...agent.head } : null;
+    const life = ctx.config.life;
+    // 「死亡后仍可移动」：保留蛇头与蛇身，仅标记为已死亡（僵尸态），继续参与后续推进
+    if (life.enabled && life.keepMovingAfterDeath && !agent.zombie) {
+      agent.alive = false;
+      agent.zombie = true;
+      agent.endReason = { ...reason, tick: ctx.tick };
+      ctx.stats.agentDeaths = (ctx.stats.agentDeaths || 0) + 1;
+      if (tickEvents) tickEvents.push({ type: 'agentDeath', coord: head, highlight: true, reason: reason.code, zombie: true });
+      if (head) ctx.highlights.push({ col: head.col, row: head.row, type: 'agentDeath', tick: ctx.tick });
+      return;
+    }
     if (!agent.alive) return;
     agent.alive = false;
     agent.endReason = { ...reason, tick: ctx.tick };
     ctx.stats.agentDeaths = (ctx.stats.agentDeaths || 0) + 1;
     if (tickEvents) {
-      tickEvents.push({ type: 'agentDeath', coord: { ...agent.head }, highlight: true, reason: reason.code });
+      tickEvents.push({ type: 'agentDeath', coord: head, highlight: true, reason: reason.code });
     }
     // 高亮补齐：此前只写了 tickEvents，渲染层的 agentDeath 特效分支因此永远不会触发
-    ctx.highlights.push({ col: agent.head.col, row: agent.head.row, type: 'agentDeath', tick: ctx.tick });
+    if (head) ctx.highlights.push({ col: head.col, row: head.row, type: 'agentDeath', tick: ctx.tick });
+  }
+
+  /**
+   * 生命机制下的致命判定：扣除 1 条生命并判断是否原地重生。
+   *
+   * @returns {'alive'|'dead'} 'alive' 表示消耗 1 条命后已原地重生（调用方应立即结束本步、不再移动）；
+   *          'dead' 表示生命耗尽，调用方按原有死亡流程收尾。
+   */
+  consumeLifeOnDeath(ctx, agent, reason, tickEvents) {
+    const life = ctx.config.life;
+    if (!life.enabled) return 'dead';
+    const lives = Number(agent.lives) || 0;
+    if (lives <= 0) return 'dead';
+    const head = agent.head ? { ...agent.head } : null;
+    agent.lives = lives - 1;
+    ctx.stats.lifeLosses = (ctx.stats.lifeLosses || 0) + 1;
+    tickEvents.push({ type: 'lifeLoss', coord: head, lives: agent.lives, reason: reason.code });
+    if (agent.lives > 0) {
+      this.respawnAgent(ctx, agent, reason, tickEvents);
+      return 'alive';
+    }
+    this.markLifeDepleted(ctx, agent.head, reason.code, tickEvents);
+    return 'dead';
+  }
+
+  /**
+   * 生命耗尽的统一收尾：计入最终死亡统计，并写入 lifeDepleted 事件与高亮，
+   * 让「自撞 / 撞墙 / 越界 / 障碍 / 陷阱」五条致命路径的统计口径保持一致。
+   */
+  markLifeDepleted(ctx, coord, reasonCode, tickEvents) {
+    ctx.stats.finalDeaths = (ctx.stats.finalDeaths || 0) + 1;
+    if (tickEvents) tickEvents.push({ type: 'lifeDepleted', coord: coord ? { ...coord } : null, reason: reasonCode });
+    if (coord) ctx.highlights.push({ col: coord.col, row: coord.row, type: 'lifeDepleted', tick: ctx.tick });
+  }
+
+  /**
+   * 生命机制下把本帧最新的一条致命事件标记为「已被生命机制吸收」：
+   * 扣命重生（或处于无敌窗口 / 「死亡后仍可移动」）时，该事件只作碰撞记录，
+   * 不再触发对应的结束规则——生命耗尽才是最终死亡。
+   */
+  absorbFatalEvent(tickEvents, type) {
+    if (!tickEvents) return;
+    for (let i = tickEvents.length - 1; i >= 0; i--) {
+      if (tickEvents[i].type === type) {
+        tickEvents[i].absorbed = true;
+        return;
+      }
+    }
+  }
+
+  /**
+   * 单条生命耗尽后的原地重生：
+   * 保留蛇头位置、朝向与得分 / 步数等关键进度，仅把蛇身长度重置为 life.respawn.length，
+   * 并给出重生高亮（渲染层据此播放重生动画）与一段无敌窗口，避免重生后立刻再次丢命。
+   */
+  respawnAgent(ctx, agent, reason, tickEvents) {
+    const life = ctx.config.life;
+    const grid = ctx.grid;
+    const head = { ...agent.head };
+    const dir = agent.dir;
+    const wrap = ctx.config.grid.boundary === 'wrap';
+    const requested = Math.max(1, Math.round(life.respawn.length));
+    const limit = wrap ? Math.min(requested, grid.size) : requested;
+    const segments = [{ ...head }];
+    let cur = { ...head };
+    for (let i = 1; i < limit; i++) {
+      cur = grid.step(cur, grid.opposite(dir));
+      if (wrap) cur = grid.wrap(cur);
+      else if (!grid.inBounds(cur)) break;
+      segments.push({ ...cur });
+    }
+    agent.segments = segments;
+    agent.invincibleUntil = ctx.tick + Math.max(0, life.respawn.invincibleTicks);
+    agent.respawnTick = ctx.tick;
+    // 朝向改为一个安全方向，避免下一帧仍朝原致命方向前进而反复丢命
+    const options = [];
+    for (let d = 0; d < grid.dirCount; d++) {
+      const c = this.resolveCandidate(ctx, grid.step(head, d));
+      if (!c.ok) continue;
+      if (this.isBlocked(ctx, c.coord)) continue;
+      if (this.detectCollision(ctx, agent, c.coord, false)) continue;
+      options.push(d);
+    }
+    agent.dir = options.length ? options[ctx.rng.int(options.length)] : grid.opposite(dir);
+    ctx.stats.respawns = (ctx.stats.respawns || 0) + 1;
+    tickEvents.push({ type: 'lifeRespawn', coord: { ...head }, lives: agent.lives, reason: reason.code });
+    ctx.highlights.push({ col: head.col, row: head.row, type: 'respawn', tick: ctx.tick, lives: agent.lives });
+    ctx.log({
+      tick: ctx.tick,
+      ruleId: 'life',
+      ruleName: '生命机制',
+      trigger: reason.code,
+      subject: '移动体',
+      coord: { ...head },
+      priority: 0,
+      condition: `剩余生命 ${agent.lives}`,
+      actions: `原地重生（蛇身重置为 ${segments.length} 节）`,
+      text: `「${agent.label}」${reason.label || reason.code}，消耗 1 条生命后原地重生（剩余 ${agent.lives}）`,
+    });
+    this.noteLifeWarning(ctx, agent, tickEvents);
+  }
+
+  /** 低生命预警：剩余生命降至阈值时写入一次高亮与事件，供界面提示 */
+  noteLifeWarning(ctx, agent, tickEvents) {
+    const life = ctx.config.life;
+    if (!life.enabled || life.warnThreshold <= 0) return;
+    const lives = Number(agent.lives) || 0;
+    if (lives <= 0 || lives > life.warnThreshold) return;
+    if (agent.warnedAtLives === lives) return;
+    agent.warnedAtLives = lives;
+    ctx.stats.lifeWarnings = (ctx.stats.lifeWarnings || 0) + 1;
+    const head = agent.head;
+    if (head) ctx.highlights.push({ col: head.col, row: head.row, type: 'lifeWarning', tick: ctx.tick, lives });
+    if (tickEvents) tickEvents.push({ type: 'lifeWarning', coord: head ? { ...head } : null, lives });
+  }
+
+  /**
+   * 生命机制的环境增减生命：踏入 gainStates 格子增加生命（可选消耗该格），
+   * 踏入 lossStates 格子扣除生命（非致命陷阱，扣到 0 时由调用方触发最终死亡）。
+   * @returns {'gain'|'loss'|null}
+   */
+  applyLifeItemInteraction(ctx, agent, target, tickEvents) {
+    const life = ctx.config.life;
+    if (!life.enabled) return null;
+    const stateName = ctx.world.get(target);
+    if (stateName === null || stateName === 'empty') return null;
+    const it = life.items;
+    if (it.gainStates.includes(stateName) && it.gainAmount > 0) {
+      const before = Number(agent.lives) || 0;
+      agent.lives = Math.min(LIFE_MAX, before + it.gainAmount);
+      if (agent.lives !== before) {
+        ctx.stats.lifeGains = (ctx.stats.lifeGains || 0) + 1;
+        tickEvents.push({ type: 'lifeGain', coord: { ...target }, lives: agent.lives });
+        ctx.highlights.push({ col: target.col, row: target.row, type: 'lifeGain', tick: ctx.tick });
+        if (it.consumeGain) {
+          ctx.world.set(target, 'empty');
+          ctx.cellsDirty = true;
+        }
+      }
+      return 'gain';
+    }
+    if (it.lossStates.includes(stateName) && it.lossAmount > 0) {
+      agent.lives = Math.max(0, (Number(agent.lives) || 0) - it.lossAmount);
+      ctx.stats.lifeLosses = (ctx.stats.lifeLosses || 0) + 1;
+      tickEvents.push({ type: 'trapHit', coord: { ...target }, lives: agent.lives, state: stateName });
+      ctx.highlights.push({ col: target.col, row: target.row, type: 'lifeLoss', tick: ctx.tick });
+      if (agent.lives > 0) this.noteLifeWarning(ctx, agent, tickEvents);
+      return 'loss';
+    }
+    return null;
   }
 
   /**
@@ -1311,21 +1572,25 @@ export class Simulation {
     const coord = () => (agent && agent.head ? { ...agent.head } : null);
 
     const triggered = {
-      wall: () => tickEvents.some((e) => e.type === 'wall'),
-      outOfBounds: () => tickEvents.some((e) => e.type === 'wall' && e.outOfBounds),
+      // absorbed：被生命机制吸收的致命事件（扣命重生 / 无敌窗口内）只作碰撞记录，
+      // 不计入结束判定——生命耗尽时调用方已直接给出结束原因。
+      wall: () => tickEvents.some((e) => e.type === 'wall' && !e.absorbed),
+      outOfBounds: () => tickEvents.some((e) => e.type === 'wall' && e.outOfBounds && !e.absorbed),
       // 转化模式下的自撞属于「蛇死亡」而非「结束运行」：带 transformed 标志的事件不计入结束判定，
       // 否则一旦启用转化，主移动体自撞仍会按「撞到自身」结束规则终止整轮运行。
-      selfCollision: () => tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other' && !e.transformed),
+      // 互斥绑定：开启「自撞即判定死亡」时该规则被自动锁定禁用（selfCollisionLocked）。
+      selfCollision: () => !ec.selfCollisionLocked
+        && tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other' && !e.transformed && !e.absorbed),
       selfCollisionTotal: () => stats.selfCollisions >= ec.selfCollisionTotalN,
       selfCollisionConsecutive: () => stats.selfCollisionsConsecutive >= ec.selfCollisionConsecutiveN,
-      obstacle: () => tickEvents.some((e) => e.type === 'obstacle'),
+      obstacle: () => tickEvents.some((e) => e.type === 'obstacle' && !e.absorbed),
       maxSteps: () => ctx.tick >= ec.maxSteps,
       lengthReached: () => !!agent && agent.length >= ec.lengthTarget,
       coverage: () => stats.coverage >= ec.coveragePercent,
       caStable: () => !!cfg.caMode.enabled && (stats.caStableCount || 0) >= Math.max(1, cfg.caMode.stableSteps),
       allAgentsGone: () => ctx.agents.filter((a) => a.alive).length === 0 && (stats.agentDeaths || 0) > 0,
       noMove: () => {
-        if (!agent) return false;
+        if (!agent || !agent.segments.length) return false;
         // 必须兼容边界穿越：越界邻居在 wrap 下应环绕回网格另一侧再判定，
         // 否则蛇头位于画布四角时所有方向都被跳过，会误判「无路可走」。
         for (let d = 0; d < grid.dirCount; d++) {
@@ -1362,16 +1627,22 @@ export class Simulation {
   captureFrame(tick, agents, cells, highlights, stats, logs, logFrom, logTo, turn = null, events = []) {
     return {
       tick,
-      agents: agents.map((a) => ({
-        id: a.id,
-        label: a.label,
-        segments: a.segments.map((s) => [s.col, s.row]),
-        dir: a.dir,
-        alive: a.alive,
-        color: a.color,
-        isMain: !!a.isMain,
-        length: a.segments.length,
-      })),
+      agents: agents.map((a) => {
+        // 死亡（且非「死亡后仍可移动」）的移动体立即从画面数据中删去蛇头与蛇身
+        const visible = a.alive || a.zombie;
+        return {
+          id: a.id,
+          label: a.label,
+          segments: visible ? a.segments.map((s) => [s.col, s.row]) : [],
+          dir: a.dir,
+          alive: a.alive,
+          color: a.color,
+          isMain: !!a.isMain,
+          length: visible ? a.segments.length : 0,
+          lives: a.lives || 0,
+          zombie: !!a.zombie,
+        };
+      }),
       cells,
       highlights: highlights.map((h) => ({
         col: h.col ?? h.coord?.col,
@@ -1412,6 +1683,13 @@ export class Simulation {
         turnsStraight: stats.turnsStraight || 0,
         turnsRight: stats.turnsRight || 0,
         turnsReverse: stats.turnsReverse || 0,
+        // 生命机制：帧级快照（剩余生命 / 增减 / 重生 / 预警 / 最终死亡）
+        lives: stats.lives || 0,
+        lifeGains: stats.lifeGains || 0,
+        lifeLosses: stats.lifeLosses || 0,
+        respawns: stats.respawns || 0,
+        lifeWarnings: stats.lifeWarnings || 0,
+        finalDeaths: stats.finalDeaths || 0,
       },
       logFrom: logFrom === null ? 0 : logFrom,
       logTo: logTo === null ? 0 : logTo,

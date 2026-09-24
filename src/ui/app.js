@@ -5,7 +5,7 @@ import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
-  SKIN_MIME_TYPES, stripSkinAssets,
+  SKIN_MIME_TYPES, stripSkinAssets, LIFE_MIN, LIFE_MAX,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -142,6 +142,8 @@ const state = {
   cfgHistory: [],
   /** 配置面板设置搜索关键词 */
   cfgSearch: '',
+  /** 配置面板当前选项卡（四大类之一）：面板重建后保持用户所选类别 */
+  cfgTab: 'core',
 };
 
 const els = {};
@@ -200,6 +202,8 @@ function init() {
   renderSidePanel();
   notifyStartupDiagnostics();
   recompute({ immediate: true });
+  // 自动存档：配置与上次一致时回到上次的播放位置（不一致则保持从头播放）
+  if (restoreAutoSave()) toast(`已按自动存档回到上次进度：第 ${state.frameIndex + 1} 帧`, 'info');
   // 启动成功后再撤掉兜底提示（init 全同步，不会出现闪烁）
   const legacyHint = document.getElementById('legacy-hint');
   if (legacyHint) legacyHint.className = 'hidden';
@@ -492,6 +496,202 @@ function savesGroup() {
       }, 'ghost'),
     ),
     h('div', { class: 'hint' }, `存档保存在浏览器本地（最多 ${SAVE_LIMIT} 条）：记录配置、播放位置与统计口径，读取后立即重算并跳回同一帧；自定义皮肤图片体积过大时会被省略。`),
+    host,
+  ], { open: false });
+}
+
+/* ---------------- 游戏进度自动存档 ---------------- */
+
+const AUTO_SAVE_KEY = 'gridsneaker:autosave';
+/** 自动存档落盘防抖：播放 / 跳帧时不必每一帧都写盘 */
+let autoSaveTimer = null;
+/** 自动存档 / 排行榜的局部刷新入口：重算后只更新列表，避免整块侧栏重建 */
+let renderAutosaveList = () => {};
+let renderScoreboardList = () => {};
+
+/**
+ * 自动记录最近一次游戏进度：配置 + 播放位置 + 统计口径。
+ * 与手动存档同构，但不占用存档条数；写入失败（配额不足）时退一步去掉自定义皮肤图片重存。
+ */
+function writeAutoSave() {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null;
+    const payload = {
+      config: snapshotConfig(state.cfg),
+      frameIndex: state.frameIndex,
+      statMode: state.statMode,
+      savedAt: Date.now(),
+    };
+    try {
+      localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(payload));
+    } catch (e) {
+      try {
+        localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify({ ...payload, config: stripSkinAssets(state.cfg) }));
+      } catch (e2) {
+        /* 隐私模式或仍超配额时静默忽略 */
+      }
+    }
+    renderAutosaveList(); // 落盘后刷新「最近进度」一行
+  }, 1200);
+}
+
+function readAutoSave() {
+  try {
+    const raw = localStorage.getItem(AUTO_SAVE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj && obj.config ? obj : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearAutoSave() {
+  try {
+    localStorage.removeItem(AUTO_SAVE_KEY);
+  } catch (e) {
+    /* 静默忽略 */
+  }
+}
+
+/**
+ * 按自动存档跳回上次的播放位置。
+ * 仅当自动存档中的配置与当前配置完全一致时才恢复——配置已被改动时跳回旧位置没有意义。
+ */
+function restoreAutoSave() {
+  const entry = readAutoSave();
+  if (!entry || !state.result) return false;
+  let same = false;
+  try {
+    same = JSON.stringify(snapshotConfig(state.cfg)) === JSON.stringify(entry.config);
+  } catch (e) {
+    same = false;
+  }
+  if (!same) return false;
+  const last = state.result.frames.length - 1;
+  const idx = Math.max(0, Math.min(Math.round(Number(entry.frameIndex) || 0), last));
+  if (idx <= 0) return false;
+  if (entry.statMode === 'realtime' || entry.statMode === 'total') state.statMode = entry.statMode;
+  syncStatModeUI();
+  gotoFrame(idx);
+  return true;
+}
+
+function autosaveGroup() {
+  const host = h('div', { class: 'save-list' });
+  const sync = () => {
+    clear(host);
+    const entry = readAutoSave();
+    if (!entry) {
+      host.appendChild(h('div', { class: 'hint' }, '暂无自动存档。运行或跳帧后会每 1.2 秒自动记录一次进度。'));
+      return;
+    }
+    host.appendChild(h('div', { class: 'save-row' },
+      h('span', { class: 'save-name' }, '最近进度'),
+      h('span', { class: 'mini-label' }, `第 ${Math.round(Number(entry.frameIndex) || 0) + 1} 帧 · ${formatSaveTime(entry.savedAt)}`),
+      button('恢复', () => {
+        if (!restoreAutoSave()) toast('自动存档的配置与当前配置不一致，未恢复播放位置', 'warn');
+        sync();
+      }, 'primary small'),
+      button('清除', () => {
+        clearAutoSave();
+        toast('已清除自动存档', 'info');
+        sync();
+      }, 'ghost small')));
+  };
+  sync();
+  renderAutosaveList = sync;
+  return group('游戏进度自动存档', [
+    h('div', { class: 'hint' }, '自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「游戏状态存档」。'),
+    host,
+  ], { open: false });
+}
+
+/* ---------------- 本地得分排行榜 ---------------- */
+
+const SCOREBOARD_KEY = 'gridsneaker:scoreboard';
+/** 排行榜保留条数 */
+const SCOREBOARD_LIMIT = 20;
+
+function readScoreboard() {
+  try {
+    const raw = localStorage.getItem(SCOREBOARD_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((r) => r && Number.isFinite(Number(r.total))) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeScoreboard(list) {
+  try {
+    localStorage.setItem(SCOREBOARD_KEY, JSON.stringify(list.slice(0, SCOREBOARD_LIMIT)));
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
+}
+
+/** 一次成绩的去重指纹：同一配置反复重算不会重复入榜 */
+function scoreSignature(entry) {
+  return `${entry.seed}|${entry.steps}|${entry.total}|${entry.map}`;
+}
+
+/**
+ * 记录本轮成绩到本地排行榜（按总分降序、限制条数）。
+ * 返回本次成绩的名次（从 1 开始），未入榜返回 0。
+ */
+function recordScore(result) {
+  const sc = result && result.summary && result.summary.score;
+  if (!sc || !Number.isFinite(Number(sc.total))) return 0;
+  const entry = {
+    total: Math.round(Number(sc.total)),
+    grade: sc.gradeLabel || '-',
+    map: `${result.grid.type === 'hex' ? '六边形' : '方格'} ${result.grid.width}×${result.grid.height}`,
+    steps: Math.round(Number(result.summary.steps) || 0),
+    length: Math.round(Number(result.summary.maxLength) || 0),
+    seed: Number(result.seed) || 0,
+    at: Date.now(),
+  };
+  const list = readScoreboard();
+  const sig = scoreSignature(entry);
+  if (list.some((r) => scoreSignature(r) === sig)) return 0;
+  list.push(entry);
+  list.sort((a, b) => Number(b.total) - Number(a.total) || Number(b.at) - Number(a.at));
+  const rank = list.indexOf(entry) + 1;
+  writeScoreboard(list);
+  return rank;
+}
+
+function scoreboardGroup() {
+  const host = h('div', { class: 'save-list' });
+  const sync = () => {
+    clear(host);
+    const list = readScoreboard();
+    if (!list.length) {
+      host.appendChild(h('div', { class: 'hint' }, '暂无成绩记录。每轮运行结束后会自动把成绩写入本地排行榜。'));
+      return;
+    }
+    list.forEach((r, i) => {
+      host.appendChild(h('div', { class: 'save-row' },
+        h('span', { class: 'rank-no' }, `${i + 1}`),
+        h('span', { class: 'save-name', title: `种子 ${r.seed} · 步数 ${r.steps}` }, `${formatScore(r.total)} · ${r.grade}`),
+        h('span', { class: 'mini-label' }, `${r.map} · ${r.steps} 步 · 最长 ${r.length}`)));
+    });
+  };
+  sync();
+  renderScoreboardList = sync;
+  return group('本地得分排行榜', [
+    row(
+      button('刷新', () => sync(), 'ghost small'),
+      button('清空排行榜', () => {
+        if (!readScoreboard().length) { toast('暂无成绩记录', 'info'); return; }
+        writeScoreboard([]);
+        toast('已清空本地得分排行榜', 'info');
+        sync();
+      }, 'ghost small'),
+    ),
+    h('div', { class: 'hint' }, `成绩保存在浏览器本地（最多 ${SCOREBOARD_LIMIT} 条，按总分降序）；同一轮运行反复重算不会重复入榜。`),
     host,
   ], { open: false });
 }
@@ -856,8 +1056,12 @@ function recompute(opts = {}) {
   if (state.score) {
     brokeRecord = saveHighScore(result.grid, state.score.total);
     if (brokeRecord) state.highScore = state.score.total;
+    // 本地得分排行榜：同一轮运行（去重指纹相同）反复重算不会重复入榜
+    const rank = recordScore(result);
+    if (rank === 1) toast('本轮成绩进入本地排行榜第 1 名', 'success');
   }
   saveLocalConfig(cfg);
+  writeAutoSave();
   renderer.setResult(result);
   renderer.setStyle(cfg.style, cfg.body);
   liveTrailCache = { tick: -1, at: 0, trail: null }; // 轨迹已重建，实时缓存失效
@@ -869,6 +1073,7 @@ function recompute(opts = {}) {
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
+  renderScoreboardList(); // 本轮成绩已写入排行榜，只刷新列表不重建整块侧栏
   if (brokeRecord && state.score && state.showScore) toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`, 'success');
 }
 
@@ -938,6 +1143,7 @@ function pause() {
   rafId = null;
   updateControls();
   draw();
+  writeAutoSave(); // 暂停 / 单步 / 拖动时间轴后记录一次进度
   maybeRefreshLiveFilter(); // 暂停后按精确的播放位置重算一次筛选结果
 }
 
@@ -1104,9 +1310,8 @@ function continueRun() {
 /** 打开「结束规则」选项卡并高亮本次命中的结束条件 */
 function focusEndReason() {
   const reason = state.result?.endReason;
-  const details = document.querySelector('#config-panel details[data-group-key="结束规则（按优先级）"]');
+  const details = revealConfigGroup('结束规则（按优先级）');
   if (!details) { toast('未找到结束规则面板', 'warn'); return; }
-  details.open = true;
   details.scrollIntoView({ block: 'start', behavior: 'smooth' });
   if (!reason) return;
   const row = details.querySelector(`[data-end-code="${reason.code}"]`);
@@ -1203,6 +1408,16 @@ function placeTooltip(clientX, clientY) {
   tip.style.top = `${Math.round(top)}px`;
 }
 
+/** 点按某个格子 → 跳到该格首次经过的步数（鼠标点击与移动端点按共用） */
+function jumpToCellFirstPass(c) {
+  if (!c || !state.result) return;
+  const info = renderer.trailInfo.get(state.result.grid.idx(c.col, c.row));
+  if (!info) return;
+  pause();
+  gotoFrame(frameIndexForTick(info.first));
+  toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`, 'info');
+}
+
 function bindCanvasEvents() {
   els.canvas.addEventListener('mousemove', (e) => {
     if (!state.result) return;
@@ -1226,15 +1441,53 @@ function bindCanvasEvents() {
   window.addEventListener('scroll', () => { if (els.tooltip?.classList.contains('show')) hideTooltip(); }, true);
   window.addEventListener('resize', () => hideTooltip());
   els.canvas.addEventListener('click', (e) => {
-    if (!state.result) return;
-    const c = renderer.hitTest(e.clientX, e.clientY);
-    if (!c) return;
-    const info = renderer.trailInfo.get(state.result.grid.idx(c.col, c.row));
-    if (!info) return;
-    pause();
-    gotoFrame(frameIndexForTick(info.first));
-    toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`, 'info');
+    jumpToCellFirstPass(renderer.hitTest(e.clientX, e.clientY));
   });
+
+  // 移动端触控：点按显示格子信息并在抬手时跳转到该格首次经过的步数。
+  // 不拦截 touchstart / touchmove 的默认行为，保留画布容器的滚动与双指缩放（CSS 侧限制 touch-action）。
+  let touchStart = null;
+  els.canvas.addEventListener('touchstart', (e) => {
+    if (!state.result || e.touches.length !== 1) { touchStart = null; return; }
+    const t = e.touches[0];
+    touchStart = { x: t.clientX, y: t.clientY, moved: false };
+    const c = renderer.hitTest(t.clientX, t.clientY);
+    renderer.hover = c;
+    draw();
+    if (!c) { hideTooltip(); return; }
+    els.tooltip.textContent = renderer.describe(state.frameIndex, c);
+    els.tooltip.classList.add('show');
+    placeTooltip(t.clientX, t.clientY);
+  }, { passive: true });
+
+  els.canvas.addEventListener('touchmove', (e) => {
+    if (!touchStart || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    // 位移超过阈值视为滚动 / 拖动手势，抬手时不触发跳转
+    if (Math.abs(t.clientX - touchStart.x) > 8 || Math.abs(t.clientY - touchStart.y) > 8) {
+      touchStart.moved = true;
+      hideTooltip();
+    }
+  }, { passive: true });
+
+  els.canvas.addEventListener('touchend', (e) => {
+    const started = touchStart;
+    touchStart = null;
+    renderer.hover = null;
+    draw();
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!started || started.moved || !t) { hideTooltip(); return; }
+    const c = renderer.hitTest(t.clientX, t.clientY);
+    hideTooltip();
+    jumpToCellFirstPass(c);
+  }, { passive: true });
+
+  els.canvas.addEventListener('touchcancel', () => {
+    touchStart = null;
+    renderer.hover = null;
+    hideTooltip();
+    draw();
+  }, { passive: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1251,6 +1504,9 @@ const STAT_KEYS = [
   ['transformDeaths', '自撞死亡'], ['transformedCells', '转化节点'], ['collisionWarnings', '碰撞预警'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
+  // 生命机制（多生命系统）
+  ['lives', '剩余生命'], ['maxLives', '峰值生命'], ['lifeGains', '获得生命'], ['lifeLosses', '失去生命'],
+  ['respawns', '重生次数'], ['lifeWarnings', '低生命预警'], ['finalDeaths', '最终死亡'],
 ];
 
 /** 运行耗时的展示格式：不足 1 秒按毫秒，超过按秒保留两位小数 */
@@ -1339,6 +1595,14 @@ function statValues() {
       caSteps: pick(st.caSteps, s.caSteps),
       obstacleCount: pick(st.obstacleCount, s.obstacleCount),
       markerCount: pick(st.markerCount, s.markerCount),
+      // 生命机制：帧级快照含 lives / 增减 / 重生 / 预警 / 最终死亡，整轮汇总取自 summary
+      lives: pick(st.lives ?? 0, s.lives ?? 0),
+      maxLives: pick(st.lives ?? 0, s.maxLives ?? 0),
+      lifeGains: pick(st.lifeGains ?? 0, s.lifeGains ?? 0),
+      lifeLosses: pick(st.lifeLosses ?? 0, s.lifeLosses ?? 0),
+      respawns: pick(st.respawns ?? 0, s.respawns ?? 0),
+      lifeWarnings: pick(st.lifeWarnings ?? 0, s.lifeWarnings ?? 0),
+      finalDeaths: pick(st.finalDeaths ?? 0, s.finalDeaths ?? 0),
       seed: r.seed,
       rngCalls: pick(st.rngCalls, r.rngCalls),
     },
@@ -1391,6 +1655,36 @@ function updateFrameStats() {
   if (!state.result) return;
   if (state.statMode === 'realtime') fillStageStats();
   if (!state.playing) syncStatModeHint();
+  notifyLifeEvents();
+}
+
+/* ---------------- 生命机制：低生命 / 生命耗尽的即时提示 ---------------- */
+
+/** 已提示过的事件键（type + 步数）：循环播放与反复重算都不会重复打扰 */
+const lifeWarnedEvents = new Set();
+
+/**
+ * 播放到含「低生命预警 / 生命耗尽」事件的帧时给出一次提示。
+ * 事件由模拟层写入帧数据，这里只负责把关键节点以提示条形式呈现给玩家。
+ */
+function notifyLifeEvents() {
+  const life = state.cfg && state.cfg.life;
+  const r = state.result;
+  if (!life || !life.enabled || !r) return;
+  const frame = r.frames[state.frameIndex];
+  if (!frame || !Array.isArray(frame.events)) return;
+  for (const e of frame.events) {
+    if (e.type !== 'lifeWarning' && e.type !== 'lifeDepleted') continue;
+    const key = `${e.type}:${frame.tick}`;
+    if (lifeWarnedEvents.has(key)) continue;
+    if (lifeWarnedEvents.size > 400) lifeWarnedEvents.clear();
+    lifeWarnedEvents.add(key);
+    if (e.type === 'lifeWarning') {
+      toast(`低生命预警：仅剩 ${e.lives} 条生命（第 ${frame.tick} 步）`, 'warn');
+    } else {
+      toast(`生命耗尽：第 ${frame.tick} 步触发最终死亡`, 'error');
+    }
+  }
 }
 
 function eventLabel(e) {
@@ -1400,12 +1694,19 @@ function eventLabel(e) {
     merge: '蛇融合', repel: '蛇排斥', agentCollision: '移动体相撞', agentDeath: '移动体消失',
     agentRemoved: '移动体被移除', markerInteraction: '交互标记物',
     transform: '身体转化入环境', transformDeath: '自撞死亡', transformSkipped: '转化未触发',
+    // 生命机制（多生命系统）
+    lifeGain: '获得生命', lifeLoss: '失去生命', lifeWarning: '低生命预警',
+    lifeDepleted: '生命耗尽', lifeRespawn: '原地重生', trapHit: '触发陷阱',
   };
   const pos = e.coord ? `(${e.coord.col},${e.coord.row})` : '';
   const extra = e.type === 'markerInteraction' && e.delta ? ` ${e.delta > 0 ? '+' : ''}${e.delta}` : '';
+  const life = e.lives !== undefined && LIFELINE_EVENTS.has(e.type) ? ` → 剩余 ${e.lives} 条` : '';
   const count = e.type === 'transform' && e.count !== undefined ? ` ×${e.count}` : '';
-  return `${map[e.type] || e.type}${extra}${count}${pos}`;
+  return `${map[e.type] || e.type}${extra}${life}${count}${pos}`;
 }
+
+/** 会在事件文本中附带「剩余生命」的事件类型 */
+const LIFELINE_EVENTS = new Set(['lifeGain', 'lifeLoss', 'lifeWarning', 'lifeDepleted', 'lifeRespawn', 'trapHit']);
 
 function drawSparkline(canvas, history) {
   if (!canvas) return;
@@ -1566,7 +1867,11 @@ function renderSidePanel() {
     h('div', { class: 'hint' }, '载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
   ], { open: false }));
 
+  side.appendChild(autosaveGroup());
+
   side.appendChild(savesGroup());
+
+  side.appendChild(scoreboardGroup());
 
   side.appendChild(group('配置导入导出', [
     row(
@@ -2394,25 +2699,106 @@ function syncControlBar() {
   updateSpeedLabel();
 }
 
+/**
+ * 配置面板四大类选项卡。
+ * 原先十余个分组平铺在同一列里，界面很长、视觉负担重；
+ * 这里按「游戏核心规则 / 视觉显示 / 场景与运行 / 扩展机制」收敛为 4 个入口，
+ * 分组本身与其中所有控件原样保留，只是换了归属，功能可访问性不变。
+ *
+ * 命名说明：
+ *  - scene（场景与运行）：场景元信息与运行语义——名称 / 描述、随机种子（复现）、规则执行方式；
+ *  - extend（扩展机制）：核心规则之外的可选机制——多蛇与交互、蛇死亡转化、生命机制、元胞自动机。
+ *    这两类此前分别叫「操作控制」「难度参数」，但配置面板中并不存在「操作控制」类选项，
+ *    真正的「难度」是运行期的拥挤度难度评估（见 difficulty.js，读数在控制条与统计面板），
+ *    与选项卡内容无关，旧命名会误导用户，故按实际内容重新命名。
+ */
+const CONFIG_TABS = [
+  { key: 'core', label: '游戏核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
+  { key: 'visual', label: '视觉显示', hint: '格子绘制、轨迹与蛇身样式、特效开关' },
+  { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式' },
+  { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机' },
+];
+
+/** 当前面板的选项卡切换函数：供「查看结束规则」等外部入口跳到目标分类 */
+let activateCfgTab = () => {};
+
 function renderConfigPanel() {
   const root = els.config;
   clear(root);
   endConditionSyncers.clear(); // 重建面板前清空旧的联动回调，避免重复累积
   const cfg = state.cfg;
-  root.appendChild(configSearchBar());
-  root.appendChild(sceneGroup(cfg));
-  root.appendChild(gridGroup(cfg));
-  root.appendChild(bodyGroup(cfg));      // 起点 · 移动体 · 长度策略
-  root.appendChild(moveRulesGroup(cfg)); // 基础权重 · 条件概率 · 安全避撞
-  root.appendChild(collisionGroup(cfg));
-  root.appendChild(multiSnakeGroup(cfg));
-  root.appendChild(envRulesGroup(cfg));
-  root.appendChild(caGroup(cfg));
-  root.appendChild(transformGroup(cfg));  // 蛇死亡转化 · 概率参数可视化调节
-  root.appendChild(endGroup(cfg));
-  root.appendChild(styleGroup(cfg));
+  const searchBar = configSearchBar();
+  root.appendChild(searchBar);
+
+  const tabs = h('div', { class: 'cfg-tabs' });
+  const nav = h('div', { class: 'cfg-tab-nav', role: 'tablist' });
+  const panels = new Map();
+  const buttons = new Map();
+  activateCfgTab = (key) => {
+    const target = CONFIG_TABS.some((t) => t.key === key) ? key : CONFIG_TABS[0].key;
+    state.cfgTab = target;
+    for (const t of CONFIG_TABS) {
+      buttons.get(t.key).classList.toggle('on', t.key === target);
+      buttons.get(t.key).setAttribute('aria-selected', t.key === target ? 'true' : 'false');
+      panels.get(t.key).classList.toggle('hidden', t.key !== target);
+    }
+  };
+  for (const t of CONFIG_TABS) {
+    const b = button(t.label, () => activateCfgTab(t.key), 'tab-btn');
+    b.title = t.hint;
+    b.setAttribute('role', 'tab');
+    b.dataset.tabKey = t.key;
+    buttons.set(t.key, b);
+    nav.appendChild(b);
+    const panel = h('div', { class: 'cfg-tab-panel', role: 'tabpanel', dataset: { tabKey: t.key, tabLabel: t.label } });
+    panels.set(t.key, panel);
+  }
+
+  // 分组归类：所有原分组都在，只是归入四大类之一
+  panels.get('core').append(
+    gridGroup(cfg),        // 网格与坐标
+    bodyGroup(cfg),        // 起点 · 移动体 · 长度策略
+    moveRulesGroup(cfg),   // 基础权重 · 条件概率 · 安全避撞
+    collisionGroup(cfg),   // 碰撞与自撞处理
+    envRulesGroup(cfg),    // 环境规则
+    endGroup(cfg),         // 结束规则（按优先级）
+  );
+  panels.get('extend').append(
+    multiSnakeGroup(cfg),  // 多蛇生成与交互
+    transformGroup(cfg),   // 蛇死亡转化
+    lifeGroup(cfg),        // 生命机制（多生命系统）
+    caGroup(cfg),          // 元胞自动机
+  );
+  panels.get('visual').append(styleGroup(cfg));
+  panels.get('scene').append(sceneGroup(cfg));
+
+  tabs.appendChild(nav);
+  for (const t of CONFIG_TABS) tabs.appendChild(panels.get(t.key));
+  root.appendChild(tabs);
+  // 选项卡导航与搜索框同处一个吸顶容器：滚动面板时二者始终可见，无需额外偏移计算
+  searchBar.appendChild(nav);
+  activateCfgTab(state.cfgTab);
   // 面板重建后按当前关键词重新过滤，避免调整参数后搜索状态丢失
   applyConfigSearch(state.cfgSearch);
+}
+
+/** 恢复选项卡面板的显隐（仅显示当前选项卡；搜索时会改为同时显示全部分类） */
+function resetCfgTabPanels() {
+  const tabs = els.config && els.config.querySelector('.cfg-tabs');
+  if (!tabs) return;
+  for (const p of tabs.querySelectorAll('.cfg-tab-panel')) {
+    p.classList.toggle('hidden', p.dataset.tabKey !== state.cfgTab);
+  }
+}
+
+/** 跳到包含指定分组的选项卡并展开该分组（供「查看结束规则」等入口使用） */
+function revealConfigGroup(groupKey) {
+  const details = els.config && els.config.querySelector(`details[data-group-key="${groupKey}"]`);
+  if (!details) return null;
+  const panel = details.closest('.cfg-tab-panel');
+  if (panel && panel.dataset.tabKey !== state.cfgTab) activateCfgTab(panel.dataset.tabKey);
+  details.open = true;
+  return details;
 }
 
 /* ---------------- 设置搜索 ---------------- */
@@ -2442,21 +2828,31 @@ function configSearchBar() {
  * 按关键词过滤配置分组：
  * 命中（自身或其子分组文本包含关键词）的分组保留并自动展开，未命中的整组隐藏；
  * 关键词清空后恢复全部显示，并收起由搜索自动展开的分组。
+ * 由于分组被归入四大类选项卡，搜索时会临时展开全部分类（命中项不会藏在别的选项卡里），
+ * 并在选项卡按钮上标注哪些分类有命中。
  */
 function applyConfigSearch(query) {
   const root = els.config;
   if (!root) return;
   const groups = [...root.querySelectorAll('details.group')];
   const q = String(query || '').trim().toLowerCase();
+  const tabs = root.querySelector('.cfg-tabs');
+  // 选项卡导航位于搜索框的吸顶容器内，因此从根节点取按钮
+  const navBtns = [...root.querySelectorAll('.cfg-tab-nav .tab-btn')];
   if (!q) {
+    if (tabs) tabs.classList.remove('searching');
+    for (const b of navBtns) b.classList.remove('has-hits', 'no-hits');
     for (const g of groups) {
       g.classList.remove('hidden');
       if (cfgSearchOpened.has(g.dataset.groupKey)) g.open = false;
     }
     cfgSearchOpened.clear();
     if (els.cfgSearchHint) els.cfgSearchHint.textContent = '';
+    resetCfgTabPanels();
     return;
   }
+  // 搜索期间隐藏选项卡切换（全部分类同时可见），由分组级过滤决定显示内容
+  if (tabs) tabs.classList.add('searching');
   let matched = 0;
   for (const g of groups) {
     const hit = String(g.textContent || '').toLowerCase().includes(q);
@@ -2467,6 +2863,12 @@ function applyConfigSearch(query) {
       g.open = true;
       cfgSearchOpened.add(g.dataset.groupKey);
     }
+  }
+  for (const b of navBtns) {
+    const panel = tabs.querySelector(`.cfg-tab-panel[data-tab-key="${b.dataset.tabKey}"]`);
+    const hits = panel ? [...panel.querySelectorAll('details.group')].filter((g) => !g.classList.contains('hidden')).length : 0;
+    b.classList.toggle('has-hits', hits > 0);
+    b.classList.toggle('no-hits', hits === 0);
   }
   if (els.cfgSearchHint) {
     els.cfgSearchHint.textContent = matched ? `${matched} 个分组匹配` : '未找到匹配设置';
@@ -2873,13 +3275,14 @@ function collisionGroup(cfg) {
   const sp = cfg.selfCollisionPolicy;
   // 「连续自撞上限」只在「结束规则 → 撞到自身」勾选时才参与结束判定，
   // 因此这里跟随该结束规则的可编辑状态联动置灰。
+  // 另外，「自撞即判定死亡」开启时该结束规则被互斥禁用，本项同样失效。
   const maxConsecutiveInput = numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 });
   const syncMaxConsecutive = (on) => {
     maxConsecutiveInput.disabled = !on;
     maxConsecutiveInput.title = on ? '' : '需先勾选「结束规则 → 撞到自身」，该项才会生效';
   };
   bindEndConditionSync('selfCollision', syncMaxConsecutive);
-  syncMaxConsecutive(!!cfg.endConditions.selfCollision);
+  syncMaxConsecutive(!!cfg.endConditions.selfCollision && !(cfg.transform.enabled && cfg.transform.dieOnSelfCollision));
   return group('碰撞与自撞处理', [
     field('视为碰撞', h('div', { class: 'chips-line' },
       chkBind(c, 'headIntoBody', () => onSimChange(), '头撞身体'),
@@ -3697,6 +4100,9 @@ function transformGroup(cfg) {
     estimate.textContent = `按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`;
   };
   syncEstimate();
+  // 自撞规则互斥绑定：本组的两项开关共同决定「结束规则 → 撞到自身」的锁定态，
+  // 而锁定态是派生值、只在面板重建时重新计算，因此改动后整体重建面板以同步禁用状态。
+  const syncSelfCollisionLock = () => rebuildAll();
   const onProbChange = () => { syncEstimate(); onSimChange(); };
 
   /** 蒙特卡洛试算：用与模拟层相同的判定顺序（先全局、再逐节）抽样，读出实际触发率与转化节数 */
@@ -3721,9 +4127,10 @@ function transformGroup(cfg) {
 
   return group('蛇死亡转化', [
     field('启用', h('div', { class: 'chips-line' },
-      chkBind(t, 'enabled', () => { onSimChange(); }, '自撞致死后按概率并入环境')),
+      chkBind(t, 'enabled', () => syncSelfCollisionLock(), '自撞致死后按概率并入环境')),
       '关闭时自撞完全沿用「碰撞与自撞处理 → 自撞处理」的原有策略'),
-    field('自撞即判定死亡', chkBind(t, 'dieOnSelfCollision', () => onSimChange(), '自撞即判定死亡（不结束运行）')),
+    field('自撞即判定死亡', chkBind(t, 'dieOnSelfCollision', () => syncSelfCollisionLock(), '自撞即判定死亡（不结束运行）'),
+      '开启后「结束规则 → 撞到自身」会被自动禁用且不可手动修改（互斥绑定），关闭本项即恢复编辑'),
     field('全局触发概率', rangeBind(t, 'globalProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
       '蛇死亡后是否启动转化流程的总概率'),
     field('分段转化概率', rangeBind(t, 'segmentProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
@@ -3734,6 +4141,55 @@ function transformGroup(cfg) {
       button('抽样试算', runSample, 'ghost small'), estimate)),
     h('div', { class: 'hint' }, '自撞死亡只让该移动体从场上消失，主循环与元胞自动机继续运行；身体节点在几步内以过渡动画连续并入环境。'),
   ], { open: false, badge: t.enabled ? '已启用' : '' });
+}
+
+/* ---------------- 生命机制（多生命系统） ---------------- */
+
+function lifeGroup(cfg) {
+  const life = cfg.life;
+  /** 由元胞自动机状态集合生成「多选格子状态」控件：勾选即写入对应状态名数组 */
+  const statePicker = (arr) => {
+    const wrap = h('div', { class: 'chips-line' });
+    const options = cfg.caMode.states.filter((s) => s.name !== 'empty');
+    if (!options.length) return h('div', { class: 'hint' }, '当前状态集合中暂无可选状态');
+    for (const s of options) {
+      wrap.appendChild(checkbox(arr.includes(s.name), (v) => {
+        const i = arr.indexOf(s.name);
+        if (v && i < 0) arr.push(s.name);
+        else if (!v && i >= 0) arr.splice(i, 1);
+        onSimChange();
+      }, stateLabelWithKey(s.name)));
+    }
+    return wrap;
+  };
+  return group('生命机制（多生命）', [
+    field('启用', h('div', { class: 'chips-line' },
+      chkBind(life, 'enabled', () => rebuildAll(), '启用多生命系统')),
+      '关闭时沿用「单条命」的原有行为：致命判定立即结束（或按「蛇死亡转化」处理）。启用后生命耗尽才触发最终死亡'),
+    field('初始生命', rangeBind(life, 'initialLives', () => rebuildAll(), {
+      min: LIFE_MIN, max: LIFE_MAX, step: 1, number: true,
+    }), `取值区间 ${LIFE_MIN} ~ ${LIFE_MAX}：单条生命耗尽时保留蛇头位置与得分，仅重置蛇身长度并播放重生动画`),
+    field('死亡后仍可移动', chkBind(life, 'keepMovingAfterDeath', () => rebuildAll(), '死亡后仍可移动'),
+      '默认关闭（推荐）：致命判定后立即停止移动并移除蛇头与蛇身。开启后死亡的蛇会以「僵尸态」保留在场上继续移动，仅用于观察'),
+    field('低生命预警阈值', rangeBind(life, 'warnThreshold', () => onSimChange(), {
+      min: 0, max: LIFE_MAX, step: 1, number: true,
+    }), '剩余生命降至该数值时给出高亮与提示；设为 0 表示不预警'),
+    h('div', { class: 'sub-title' }, '重生参数'),
+    row(
+      field('重生长度', numBind(life.respawn, 'length', () => onSimChange(), { min: 1, max: 100000 })),
+      field('重生无敌步数', numBind(life.respawn, 'invincibleTicks', () => onSimChange(), { min: 0, max: 100000 })),
+    ),
+    field('增加生命的格子', statePicker(life.items.gainStates),
+      '蛇头踏入这些状态时获得生命（上限 9）；未启用本机制时这些状态不产生效果'),
+    row(
+      field('每次增加', numBind(life.items, 'gainAmount', () => onSimChange(), { min: 0, max: LIFE_MAX })),
+      field('拾取后清除该格', chkBind(life.items, 'consumeGain', () => onSimChange(), '吃掉后变空')),
+    ),
+    field('扣除生命的格子', statePicker(life.items.lossStates),
+      '蛇头踏入这些状态时扣除生命（非致命）；扣到 0 条才触发最终死亡'),
+    field('每次扣除', numBind(life.items, 'lossAmount', () => onSimChange(), { min: 1, max: LIFE_MAX })),
+    h('div', { class: 'hint' }, '增减生命的状态取自「元胞自动机 → 状态集合」；未配置任何增减来源时，生命只会在致命判定时递减。'),
+  ], { open: false, badge: life.enabled ? `初始 ${life.initialLives} 条` : '' });
 }
 
 /* ---------------- 结束条件 ---------------- */
@@ -3773,15 +4229,26 @@ function endGroup(cfg) {
       paramFields.push(field(label, numBind(ec, key, () => onSimChange(), opts)));
     }
     const isOn = numericKeys.includes('maxSteps') ? typeof ec.maxSteps === 'number' : !!ec[code];
+    // 互斥绑定（派生值）：开启「蛇死亡转化 → 自撞即判定死亡」时，「撞到自身」被自动禁用且不可手动修改。
+    // 这里不改写 ec.selfCollision 的原始值，关闭前者后该规则会原样恢复。
+    const locked = code === 'selfCollision' && !!(cfg.transform.enabled && cfg.transform.dieOnSelfCollision);
+    const cbLabel = (END_LABELS[code] || code) + (locked ? '（已因「自撞即判定死亡」互斥禁用）' : '');
+    const cb = checkbox(locked ? false : isOn, (v) => {
+      if (numericKeys.includes('maxSteps')) ec.maxSteps = v ? endParamMemory.maxSteps : false;
+      else ec[code] = v;
+      syncDisabled.forEach((fn) => fn(v));
+      notifyEndConditionSync(code, v);
+      onSimChange();
+    }, cbLabel);
+    if (locked) {
+      const input = cb.querySelector('input');
+      if (input) input.disabled = true;
+      cb.title = '已开启「蛇死亡转化 → 自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发本规则；关闭前者即可恢复编辑';
+    }
+    const rowOn = locked ? false : isOn;
     const rowChildren = [
       h('span', { class: 'priority-no' }, `${i + 1}`),
-      checkbox(isOn, (v) => {
-        if (numericKeys.includes('maxSteps')) ec.maxSteps = v ? endParamMemory.maxSteps : false;
-        else ec[code] = v;
-        syncDisabled.forEach((fn) => fn(v));
-        notifyEndConditionSync(code, v);
-        onSimChange();
-      }, END_LABELS[code] || code),
+      cb,
       ...paramFields,
       orderActions(
         button('↑', () => { swap(ec.priority, i, i - 1); rebuildAll(); }, 'icon small'),
@@ -3789,7 +4256,7 @@ function endGroup(cfg) {
       ),
     ];
     rows.push(h('div', {
-      class: `end-row${isOn ? ' on' : ''}`,
+      class: `end-row${rowOn ? ' on' : ''}${locked ? ' locked' : ''}`,
       'data-end-code': code,
     }, rowChildren));
   });
