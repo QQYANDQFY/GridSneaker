@@ -5,7 +5,7 @@ import { normalizeStates } from './world.js';
 import { Grid, parseDir, dirNames, DIR_LABEL_CN } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
-export const CONFIG_VERSION = '1.2';
+export const CONFIG_VERSION = '1.3';
 
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
@@ -58,6 +58,8 @@ export const END_LABELS = {
   transformDone: '蛇已全部转化为环境',
   /** 生命机制：生命耗尽后的最终死亡 */
   lifeDepleted: '生命耗尽',
+  /** 障碍物陷阱：蛇尝试移动到陷阱格并判定为致命 */
+  trap: '踩中陷阱',
   manual: '手动结束',
 };
 
@@ -91,6 +93,39 @@ export const SPAWN_EVENT_LABELS = {
 
 /** 逐蛇安全避撞列表的最大长度（与「最大同时存在」的上限保持一致） */
 export const MAX_AGENT_SLOTS = 64;
+
+/**
+ * 自定义标记物 / 障碍物类型的数量上限。
+ * 类型数量会直接体现在画布编辑器的下拉选项与配置面板高度上，
+ * 因此设一个与「状态集合」体量匹配的上限，避免配置被无意义地撑大。
+ */
+export const MAX_MARKER_TYPES = 32;
+export const MAX_OBSTACLE_TYPES = 32;
+
+/** 移动方向权重可选项：左 / 直 / 右 之外新增「停止」（不产生有效位移） */
+export const MOVE_KEYS = ['left', 'straight', 'right', 'stop'];
+export const MOVE_LABELS = { left: '左转', straight: '直行', right: '右转', stop: '停止' };
+
+/**
+ * 标记物类型的「生效条件」：
+ *  - always      始终生效
+ *  - probability 按概率生效（value 为触发概率）
+ *  - minLength   蛇身长度 ≥ value 时生效
+ *  - maxLength   蛇身长度 ≤ value 时生效
+ *  - minSteps    运行步数 ≥ value 时生效
+ */
+export const MARKER_CONDITION_TYPES = ['always', 'probability', 'minLength', 'maxLength', 'minSteps'];
+export const MARKER_CONDITION_LABELS = {
+  always: '始终生效',
+  probability: '按概率生效',
+  minLength: '蛇身长度不小于',
+  maxLength: '蛇身长度不大于',
+  minSteps: '运行步数不小于',
+};
+
+/** 画布格子编辑工具：标记物 / 障碍物 / 擦除 */
+export const CELL_TOOLS = ['marker', 'obstacle', 'erase'];
+export const CELL_TOOL_LABELS = { marker: '标记物', obstacle: '障碍物', erase: '擦除' };
 
 export const DEFAULT_STATES = [
   { name: 'empty', color: null, blocking: false, symbol: '.', render: 'fill' },
@@ -228,7 +263,7 @@ export function defaultConfig() {
        */
       skin: { head: '', body: '' },
     },
-    moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
+    moveRules: { left: 0.33, straight: 0.34, right: 0.33, stop: 0 },
     /**
      * 安全避撞预设：在方向选择阶段先剔除会撞到自身身体 / 障碍物 / 其它移动体 / 边界的候选方向，
      * 仅当所有可行方向均被阻塞时才回落到原始权重，从而触发原本的碰撞逻辑。
@@ -395,6 +430,73 @@ export function defaultConfig() {
         ],
       },
     },
+    /**
+     * 自定义障碍物类型：在「环境状态集合」的阻塞状态之上，附加外观样式与陷阱属性。
+     *  - state   引用的元胞状态名（该状态通常 blocking = true，即实实在在挡住移动体）；
+     *  - weight  随机放置模式下的抽取权重（相对值，只有概率意义）；
+     *  - trap    陷阱属性：蛇尝试移动到本类型障碍物时，先按 triggerProbability 判定是否触发，
+     *            触发后再按 deathProbability 判定是否致命（两项都为 0/1 时退化为确定行为）。
+     * 列表默认只含内置「障碍物」一项、且陷阱关闭，因此旧场景与旧分享链接的行为零变化。
+     */
+    obstacleTypes: [
+      {
+        id: 'ob_obstacle',
+        name: '障碍物',
+        enabled: true,
+        state: 'obstacle',
+        weight: 1,
+        color: '',
+        symbol: '',
+        render: '',
+        trap: { enabled: false, triggerProbability: 1, deathProbability: 0.5, log: true },
+      },
+    ],
+    /**
+     * 自定义标记物类型：多维度自定义体系（外观样式 / 生效条件 / 触发权重）。
+     *
+     * 与 caMode.markerInteraction 的关系：
+     *  - markerInteraction.states 决定「哪些元胞状态算交互标记物」（基础层）；
+     *  - 本列表为同一状态新增「类型层」：同名状态下可挂多个类型，各自带独立生效条件与触发权重，
+     *    运行时按权重抽取一个生效类型，再应用该类型的反馈（effect 为空时沿用反馈规则表）；
+     *  - 列表默认为空，此时行为与旧版完全一致（不启用类型层）。
+     *
+     * 每条类型的字段即扩展接口：后续新增标记物只需追加一条记录，
+     * 运行时会自动纳入条件判定与权重抽取，无需改动模拟主循环。
+     */
+    markerTypes: [],
+    /**
+     * 画布格子编辑器：把「点击画布」从「跳转到首次经过的步数」切换为「直接增删格子元素」。
+     *
+     *  - enabled  总开关（默认关闭，保证既有用户的点击跳转行为不变）；
+     *  - tool     当前工具：标记物 / 障碍物 / 擦除；
+     *  - painted  用户绘制的格子（[{ col, row, state }]），随配置保存与分享；
+     *             在模拟开始时写入世界——因此它等价于「自定义初始环境」；
+     *  - 其余字段为体验增强开关（拖拽连画 / 右键擦除 / 撤销历史 / 随机放置 / 画笔尺寸）。
+     */
+    cellEditor: {
+      enabled: false,
+      tool: 'marker',
+      markerTypeId: '',
+      obstacleTypeId: '',
+      /** 随机放置模式：从「随机池」里按权重抽取类型（替代「先选类型再点击」） */
+      randomObstacle: false,
+      /** 随机池（障碍物类型 id 列表）；为空表示「全部启用的障碍物类型」 */
+      randomPool: [],
+      /** 随机放置的触发概率：低于 1 时有一定几率本次点击不放置 */
+      randomProbability: 1,
+      /** 画笔尺寸：1 为单格，n 为以点击点为中心的 n×n 方块 */
+      brushSize: 1,
+      /** 拖拽连续绘制（按住左键拖动即可连画） */
+      drag: false,
+      /** 右键擦除：右键单击直接把格子恢复为空 */
+      rightClickErase: true,
+      /** 撤销 / 重做历史步数上限（0 = 关闭历史记录） */
+      historyLimit: 60,
+      /** 一键随机散布的密度（0~1） */
+      scatterDensity: 0.15,
+      /** 已绘制的格子（初始环境补丁） */
+      painted: [],
+    },
     endConditions: {
       wall: true,
       outOfBounds: true,
@@ -432,6 +534,10 @@ export function defaultConfig() {
       showCoords: false,
       showObstacles: true,
       showMarkers: true,
+      /** 陷阱格标识：为启用了陷阱的障碍物格子叠加危险纹理与外框（默认开启，便于一眼识别风险） */
+      showTraps: true,
+      /** 陷阱标识色（同时用于危险纹理与外框） */
+      trapColor: '#ff4d4f',
       highlightRules: true,
       showStartEnd: true,
       trailFade: true,
@@ -754,6 +860,7 @@ function normAdvancedRules(raw) {
       left: Math.max(0, num(r.moves?.left, 0.33)),
       straight: Math.max(0, num(r.moves?.straight, 0.34)),
       right: Math.max(0, num(r.moves?.right, 0.33)),
+      stop: Math.max(0, num(r.moves?.stop, 0)),
     },
     priority: Math.round(num(r.priority, 1)),
   }));
@@ -808,6 +915,7 @@ export const DEFAULT_HIDDEN_STATS = [
   'frames', 'rngCalls',
   'spawns', 'agentDeaths', 'merges', 'repels',
   'transformDeaths', 'transformedCells', 'collisionWarnings',
+  'stops', 'trapTriggers', 'trapDeaths',
   'lives', 'maxLives', 'lifeGains', 'lifeLosses', 'respawns', 'lifeWarnings', 'finalDeaths',
 ];
 
@@ -863,6 +971,8 @@ function normalizeStyle(raw = {}) {
     showCoords: bool(raw.showCoords, d.showCoords),
     showObstacles: bool(raw.showObstacles, d.showObstacles),
     showMarkers: bool(raw.showMarkers, d.showMarkers),
+    showTraps: bool(raw.showTraps, d.showTraps),
+    trapColor: HEX_COLOR.test(String(raw.trapColor || '')) ? String(raw.trapColor) : d.trapColor,
     highlightRules: bool(raw.highlightRules, d.highlightRules),
     showStartEnd: bool(raw.showStartEnd, d.showStartEnd),
     trailFade: bool(raw.trailFade, d.trailFade),
@@ -981,6 +1091,182 @@ function normCaMarkerInteraction(raw = {}) {
     states,
     effects: normMarkerEffects(raw.effects),
   };
+}
+
+/** 自定义类型的「外观样式」覆盖：留空字符串表示沿用所引用状态自身的外观 */
+function normTypeStyle(raw) {
+  return {
+    color: HEX_COLOR.test(String(raw?.color || '')) ? String(raw.color) : '',
+    symbol: str(raw?.symbol, '').slice(0, 1),
+    render: ['fill', 'cross', 'dot'].includes(raw?.render) ? raw.render : '',
+  };
+}
+
+/** 标记物类型的「内置反馈」：为空表示沿用 caMode.markerInteraction.effects 反馈规则表 */
+function normMarkerTypeEffect(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    mode: ['set', 'percent'].includes(raw.mode) ? raw.mode : 'delta',
+    value: Math.round(num(raw.value, 1)),
+    probability: clamp(num(raw.probability, 1), 0, 1),
+    consume: bool(raw.consume, true),
+    consumeTo: str(raw.consumeTo, 'empty'),
+    color: HEX_COLOR.test(String(raw.color || '')) ? String(raw.color) : '',
+  };
+}
+
+/** 自定义标记物类型的引用状态校正：必须指向真实存在且非 empty 的状态 */
+function resolveTypeState(want, names) {
+  if (names.has(want) && want !== 'empty') return want;
+  if (names.has('marker')) return 'marker';
+  return [...names].find((n) => n !== 'empty') || 'marker';
+}
+
+/**
+ * 自定义标记物类型规范化（多维度自定义体系）。
+ * 每一条类型都携带「外观样式 + 生效条件 + 触发权重」三类核心属性，
+ * 新增标记物只需追加一条记录即可被模拟主循环识别，无需改动其它代码。
+ */
+function normMarkerTypes(raw, states) {
+  const names = new Set(states.map((s) => s.name));
+  const list = Array.isArray(raw) ? raw.slice(0, MAX_MARKER_TYPES) : [];
+  const out = [];
+  const seen = new Set();
+  list.forEach((t, i) => {
+    const id = str(t?.id, `mk_${i}`).trim() || `mk_${i}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    const c = t?.condition && typeof t.condition === 'object' ? t.condition : {};
+    const type = MARKER_CONDITION_TYPES.includes(c.type) ? c.type : 'always';
+    const cv = num(c.value, 0);
+    out.push({
+      id,
+      name: str(t?.name, `标记物类型 ${i + 1}`),
+      enabled: bool(t?.enabled, true),
+      state: resolveTypeState(str(t?.state, 'marker'), names),
+      weight: Math.max(0, num(t?.weight, 1)),
+      condition: {
+        type,
+        value: type === 'probability' ? clamp(cv, 0, 1) : clamp(Math.round(cv), 0, 100000),
+      },
+      ...normTypeStyle(t),
+      effect: normMarkerTypeEffect(t?.effect),
+    });
+  });
+  return out;
+}
+
+/**
+ * 自定义障碍物类型规范化（含陷阱属性）。
+ * trap.triggerProbability 决定「尝试移动到陷阱是否触发」，deathProbability 决定「触发后是否致命」，
+ * 两者都夹取到 [0,1]，保证概率语义始终成立（1 = 必定，0 = 从不）。
+ */
+function normObstacleTypes(raw, states) {
+  const d = defaultConfig().obstacleTypes;
+  const names = new Set(states.map((s) => s.name));
+  const list = (Array.isArray(raw) ? raw : d).slice(0, MAX_OBSTACLE_TYPES);
+  const out = [];
+  const seen = new Set();
+  list.forEach((t, i) => {
+    const id = str(t?.id, `ob_${i}`).trim() || `ob_${i}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    const tr = t?.trap && typeof t.trap === 'object' ? t.trap : {};
+    out.push({
+      id,
+      name: str(t?.name, `障碍物类型 ${i + 1}`),
+      enabled: bool(t?.enabled, true),
+      state: resolveTypeState(str(t?.state, 'obstacle'), names),
+      weight: Math.max(0, num(t?.weight, 1)),
+      ...normTypeStyle(t),
+      trap: {
+        enabled: bool(tr.enabled, false),
+        triggerProbability: clamp(num(tr.triggerProbability, 1), 0, 1),
+        deathProbability: clamp(num(tr.deathProbability, 0.5), 0, 1),
+        log: bool(tr.log, true),
+      },
+    });
+  });
+  return out.length ? out : d.map((t) => ({ ...t, trap: { ...t.trap } }));
+}
+
+/**
+ * 画布格子编辑器规范化。
+ * painted 为「用户绘制的初始环境」：逐项校验坐标与状态名，按坐标去重（保留最后一次绘制），
+ * 因此同一份配置反复规范化结果恒定（幂等），可直接随分享链接往返。
+ */
+function normCellEditor(raw, states, grid) {
+  const d = defaultConfig().cellEditor;
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const names = new Set(states.map((s) => s.name));
+  const map = new Map();
+  for (const item of Array.isArray(src.painted) ? src.painted : []) {
+    const col = Math.round(num(item?.col, -1));
+    const row = Math.round(num(item?.row, -1));
+    const state = String(item?.state ?? '');
+    if (col < 0 || row < 0 || col >= grid.width || row >= grid.height) continue;
+    if (!names.has(state) || state === 'empty') continue;
+    map.set(`${col},${row}`, { col, row, state });
+  }
+  const pool = Array.isArray(src.randomPool) ? src.randomPool.map(String) : [];
+  return {
+    enabled: bool(src.enabled, d.enabled),
+    tool: CELL_TOOLS.includes(src.tool) ? src.tool : d.tool,
+    markerTypeId: str(src.markerTypeId, d.markerTypeId),
+    obstacleTypeId: str(src.obstacleTypeId, d.obstacleTypeId),
+    randomObstacle: bool(src.randomObstacle, d.randomObstacle),
+    randomPool: [...new Set(pool)].slice(0, MAX_OBSTACLE_TYPES),
+    randomProbability: clamp(num(src.randomProbability, d.randomProbability), 0, 1),
+    brushSize: clamp(Math.round(num(src.brushSize, d.brushSize)), 1, 9),
+    drag: bool(src.drag, d.drag),
+    rightClickErase: bool(src.rightClickErase, d.rightClickErase),
+    historyLimit: clamp(Math.round(num(src.historyLimit, d.historyLimit)), 0, 1000),
+    scatterDensity: clamp(num(src.scatterDensity, d.scatterDensity), 0, 1),
+    painted: [...map.values()],
+  };
+}
+
+/**
+ * 某状态名对应的「障碍物类型」（命中陷阱判定的唯一入口）。
+ * 同一状态挂多个类型时取列表中最靠前的启用项，保证行为确定可复现。
+ */
+export function obstacleTypeForState(cfg, stateName) {
+  const list = cfg?.obstacleTypes;
+  if (!Array.isArray(list) || !stateName) return null;
+  return list.find((t) => t.enabled && t.state === stateName) || null;
+}
+
+/** 某状态是否配置了「已启用」的陷阱（供渲染层与诊断使用） */
+export function isTrapState(cfg, stateName) {
+  const t = obstacleTypeForState(cfg, stateName);
+  return !!(t && t.trap.enabled && t.trap.triggerProbability > 0);
+}
+
+/**
+ * 标记物类型的「生效条件」判定。
+ * ctx = { length, steps, rng }；probability 类型会消耗一次随机数。
+ */
+export function markerConditionMet(type, ctx) {
+  const c = type?.condition || { type: 'always', value: 0 };
+  switch (c.type) {
+    case 'probability':
+      return c.value >= 1 ? true : (c.value <= 0 ? false : ctx.rng.next() < c.value);
+    case 'minLength':
+      return (ctx.length || 0) >= c.value;
+    case 'maxLength':
+      return (ctx.length || 0) <= c.value;
+    case 'minSteps':
+      return (ctx.steps || 0) >= c.value;
+    default:
+      return true;
+  }
+}
+
+/** 某状态名下「已启用」的标记物类型列表（按配置顺序，供权重抽取使用） */
+export function markerTypesForState(cfg, stateName) {
+  const list = cfg?.markerTypes;
+  if (!Array.isArray(list) || !stateName) return [];
+  return list.filter((t) => t.enabled && t.state === stateName);
 }
 
 /**
@@ -1168,6 +1454,8 @@ export function normalizeConfig(rawInput = {}) {
     left: Math.max(0, num(movesRaw.left, d.moveRules.left)),
     straight: Math.max(0, num(movesRaw.straight, d.moveRules.straight)),
     right: Math.max(0, num(movesRaw.right, d.moveRules.right)),
+    // 「停止」：默认权重 0，即默认不产生停止行为；生效逻辑与「尝试移动到障碍物」一致
+    stop: Math.max(0, num(movesRaw.stop, d.moveRules.stop)),
   };
 
   const collisionRaw = raw.collision || {};
@@ -1267,6 +1555,18 @@ export function normalizeConfig(rawInput = {}) {
   cfg.transform = normTransform(raw.transform, cfg.caMode.states);
   // 生命机制的增减生命状态同样依赖最终状态集合
   cfg.life = normLife(raw.life, cfg.caMode.states);
+  // 自定义标记物 / 障碍物类型依赖最终状态集合（类型必须引用真实存在的状态名）
+  cfg.markerTypes = normMarkerTypes(raw.markerTypes, cfg.caMode.states);
+  cfg.obstacleTypes = normObstacleTypes(raw.obstacleTypes, cfg.caMode.states);
+  // 画布格子编辑器：绘制的格子需要校验坐标落在网格内、状态名真实存在
+  cfg.cellEditor = normCellEditor(raw.cellEditor, cfg.caMode.states, cfg.grid);
+  // 编辑器的工具选中项若指向已被删除的类型，回退为第一个可用类型，避免面板出现空选择
+  if (cfg.cellEditor.markerTypeId && !cfg.markerTypes.some((t) => t.id === cfg.cellEditor.markerTypeId)) {
+    cfg.cellEditor.markerTypeId = '';
+  }
+  if (cfg.cellEditor.obstacleTypeId && !cfg.obstacleTypes.some((t) => t.id === cfg.cellEditor.obstacleTypeId)) {
+    cfg.cellEditor.obstacleTypeId = '';
+  }
   // 自撞规则互斥（自动关闭）：「自撞即判定死亡」与结束规则「撞到自身」语义相反——
   // 前者让自撞只令该移动体消失、整轮运行继续，后者让自撞立即终止整轮运行，两者不能同时生效。
   // 规范化时若前者已生效（transform.enabled && dieOnSelfCollision），就把后者关闭；

@@ -10,7 +10,7 @@ import { RNG } from './rng.js';
 import { World, Agent } from './world.js';
 import { CAEngine } from './ca.js';
 import { RuleEngine } from './rules.js';
-import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, LIFE_MAX, agentSafetyEnabled, DEFAULT_RUN_FRAME_CAP, MAX_RUN_FRAME_CAP } from './config.js';
+import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, LIFE_MAX, agentSafetyEnabled, obstacleTypeForState, markerConditionMet, markerTypesForState, DEFAULT_RUN_FRAME_CAP, MAX_RUN_FRAME_CAP } from './config.js';
 import { resolveTurn, occupiedByAgent, findSpawnCoord } from './actions.js';
 import { evaluateCondition } from './conditions.js';
 import { computeScore } from './score.js';
@@ -164,6 +164,14 @@ export class Simulation {
     const world = new World(grid, states);
     const ca = cfg.caMode.enabled ? new CAEngine(grid, cfg.caMode, states) : null;
     if (ca) ca.init(world, rng);
+    /**
+     * 用户绘制的初始环境（画布格子编辑器 → cellEditor.painted）：
+     * 在 CA 初始化之后写入，保证「手工绘制优先于随机 / 图案初始状态」，
+     * 与点击编辑的所见即所得语义一致。
+     */
+    for (const p of (cfg.cellEditor && Array.isArray(cfg.cellEditor.painted) ? cfg.cellEditor.painted : [])) {
+      world.set(p, p.state);
+    }
     this.runtimeDiagnostics = [];
     this.diagCodes.clear();
     // 蛇形实体总开关：body.enabled=false 或 initialLength=0 时不生成任何初始蛇
@@ -210,6 +218,11 @@ export class Simulation {
       repels: 0,
       markerInteractions: 0,
       forcedStraights: 0,
+      /** 「停止」移动选项被选中的次数（不产生有效位移） */
+      stops: 0,
+      /** 障碍物陷阱：触发次数 / 致命判定通过次数（两者都写入运行日志，便于调试） */
+      trapTriggers: 0,
+      trapDeaths: 0,
       // 「蛇死亡转化」专属统计：自撞致死次数 / 成功并入环境的身体节点数 / 转化流程触发次数
       transformDeaths: 0,
       transformedCells: 0,
@@ -371,6 +384,10 @@ export class Simulation {
         steps: stats.steps,
         collisions: stats.collisions,
         selfCollisions: stats.selfCollisions,
+        /** 「停止」移动选项命中次数 / 陷阱触发与致命次数 */
+        stops: stats.stops,
+        trapTriggers: stats.trapTriggers,
+        trapDeaths: stats.trapDeaths,
         maxLength: stats.maxLength,
         coverage: stats.coverage,
         ruleTriggers: stats.ruleTriggers,
@@ -527,6 +544,24 @@ export class Simulation {
     const turnKey = decision.turnKey;
     agent.lastTurn = turnKey;
 
+    /**
+     * 「停止」移动选项：不产生任何有效位移，判定链与「尝试移动到障碍物」完全一致
+     * （计入碰撞统计、写入 obstacle 事件与碰撞高亮，并遵循「撞到障碍物」的结束规则与生命机制）。
+     * 该选项默认权重为 0，因此不配置时行为与旧版完全一致。
+     */
+    const stopped = turnKey === 'stop';
+    if (stopped) {
+      agent.dir = dir;
+      stats.stops = (stats.stops || 0) + 1;
+      stats.collisions++;
+      stats.collisionsTotal++;
+      stats.collisionsConsecutive++;
+      stats.selfCollisionsConsecutive = 0; // 停止不是自撞，打断连续自撞计数
+      tickEvents.push({ type: 'obstacle', coord: { ...agent.head }, stopped: true });
+      ctx.highlights.push({ col: agent.head.col, row: agent.head.row, type: 'collision', tick: ctx.tick });
+      return this.resolveBlockedMove(ctx, agent, agent.head, turnKey, protectedAgent, tickEvents);
+    }
+
     // 2. 边界处理
     let target = grid.step(agent.head, dir);
     let wallHit = false;
@@ -652,6 +687,30 @@ export class Simulation {
 
     // 4. 障碍物处理
     if (ctx.world.isBlocking(target)) {
+      // 4.0 障碍物陷阱：命中「已启用陷阱」的障碍物时先走两级概率链（触发 → 致命）
+      const trap = this.resolveObstacleTrap(ctx, agent, target, tickEvents);
+      if (trap === 'dead') {
+        stats.collisions++;
+        stats.collisionsTotal++;
+        stats.collisionsConsecutive++;
+        stats.selfCollisionsConsecutive = 0;
+        stats.trapDeaths = (stats.trapDeaths || 0) + 1;
+        tickEvents.push({ type: 'trapDeath', coord: { ...target }, highlight: true });
+        ctx.highlights.push({ col: target.col, row: target.row, type: 'trapDeath', tick: ctx.tick });
+        // 无敌窗口 / 「死亡后仍可移动」下踩中陷阱不致命，仅记录碰撞与高亮
+        if (protectedAgent) return { ended: false, turn: turnKey };
+        // 生命机制：先扣 1 条命并原地重生，生命耗尽才是最终死亡
+        if (life.enabled) {
+          const r = this.consumeLifeOnDeath(ctx, agent, {
+            code: 'trap',
+            label: END_LABELS.trap,
+            tick: ctx.tick,
+            coord: { ...target },
+          }, tickEvents);
+          if (r === 'alive') return { ended: false, turn: turnKey };
+        }
+        return this.agentEnd(ctx, agent, { code: 'trap', label: END_LABELS.trap, tick: ctx.tick, coord: { ...target } }, tickEvents);
+      }
       const policy = cfg.collision.obstacle;
       if (policy === 'destroy') {
         ctx.world.set(target, 'empty');
@@ -842,6 +901,87 @@ export class Simulation {
     else stats.turnsStraight++;
 
     return { ended: false, turn: turnKey };
+  }
+
+  /**
+   * 无法完成有效位移的统一收尾（「停止」移动选项）。
+   * 判定与「撞到障碍物」的默认策略完全一致：
+   *  - 结束规则「撞到障碍物」开启时按同一路径收尾（生命机制下先扣命重生）；
+   *  - 未开启该结束规则时只作碰撞记录，本步结束、位置不变。
+   * @returns {{ended:boolean, turn:(string|null)}}
+   */
+  resolveBlockedMove(ctx, agent, coord, turnKey, protectedAgent, tickEvents) {
+    if (ctx.config.endConditions.obstacle && !protectedAgent) {
+      if (ctx.config.life.enabled) {
+        const r = this.consumeLifeOnDeath(ctx, agent, {
+          code: 'obstacle',
+          label: END_LABELS.obstacle,
+          tick: ctx.tick,
+          coord: { ...coord },
+        }, tickEvents);
+        if (r === 'alive') {
+          this.absorbFatalEvent(tickEvents, 'obstacle');
+          return { ended: false, turn: turnKey };
+        }
+      }
+      return this.agentEnd(ctx, agent, { code: 'obstacle', label: END_LABELS.obstacle, tick: ctx.tick, coord: { ...coord } }, tickEvents);
+    }
+    // 无敌窗口 / 「死亡后仍可移动」下只作碰撞记录，不触发结束规则
+    if (ctx.config.endConditions.obstacle && ctx.config.life.enabled) this.absorbFatalEvent(tickEvents, 'obstacle');
+    return { ended: false, turn: turnKey };
+  }
+
+  /**
+   * 障碍物陷阱判定：蛇「尝试移动到陷阱格」时的两级概率链。
+   *
+   *  1. triggerProbability —— 决定本次尝试是否触发陷阱（未触发则退回普通障碍物阻塞）；
+   *  2. deathProbability   —— 决定触发后是否致命（不致命则退回普通障碍物阻塞）。
+   *
+   * 每次判定都会写入运行日志（可关闭），便于调试陷阱参数是否符合预期。
+   *
+   * @returns {'dead'|'alive'|null} null 表示未配置陷阱 / 未触发（交由常规障碍物逻辑处理）
+   */
+  resolveObstacleTrap(ctx, agent, target, tickEvents) {
+    const cfg = ctx.config;
+    const stateName = ctx.world.get(target);
+    if (!stateName) return null;
+    const ot = obstacleTypeForState(cfg, stateName);
+    const trap = ot && ot.trap;
+    if (!trap || !trap.enabled || trap.triggerProbability <= 0) return null;
+    const rng = ctx.rng;
+    const logTrap = (ok, text, death) => {
+      if (!trap.log) return;
+      ctx.log({
+        tick: ctx.tick,
+        ruleId: 'trap',
+        ruleName: `障碍物陷阱（${ot.name}）`,
+        trigger: death ? 'trapDeath' : (ok ? 'trapTriggered' : 'trapMissed'),
+        subject: agent.label || agent.id,
+        coord: { ...target },
+        priority: 0,
+        condition: `触发概率 ${(trap.triggerProbability * 100).toFixed(0)}% · 死亡概率 ${(trap.deathProbability * 100).toFixed(0)}%`,
+        actions: text,
+        text,
+      });
+    };
+    // 第一级：触发判定
+    if (trap.triggerProbability < 1 && rng.next() >= trap.triggerProbability) {
+      logTrap(false, `「${agent.label || agent.id}」尝试移动到 (${target.col}, ${target.row}) 的「${ot.name}」，本次未触发陷阱（触发概率 ${(trap.triggerProbability * 100).toFixed(0)}%）`, false);
+      return null;
+    }
+    ctx.stats.trapTriggers = (ctx.stats.trapTriggers || 0) + 1;
+    tickEvents.push({ type: 'trapTriggered', coord: { ...target }, state: stateName, typeName: ot.name });
+    ctx.highlights.push({ col: target.col, row: target.row, type: 'trapTrigger', tick: ctx.tick });
+    // 第二级：致命判定
+    const lethal = trap.deathProbability >= 1
+      ? true
+      : (trap.deathProbability <= 0 ? false : rng.next() < trap.deathProbability);
+    if (!lethal) {
+      logTrap(true, `「${agent.label || agent.id}」触发 (${target.col}, ${target.row}) 的「${ot.name}」陷阱，但死亡判定未通过（死亡概率 ${(trap.deathProbability * 100).toFixed(0)}%），保持存活`, false);
+      return 'alive';
+    }
+    logTrap(true, `「${agent.label || agent.id}」触发 (${target.col}, ${target.row}) 的「${ot.name}」陷阱并通过死亡判定（死亡概率 ${(trap.deathProbability * 100).toFixed(0)}%），判定死亡`, true);
+    return 'dead';
   }
 
   /**
@@ -1252,6 +1392,8 @@ export class Simulation {
     const out = [];
     for (const o of options) {
       if (o.weight <= 0) continue;
+      // 「停止」不产生位移，不可能撞到身体 / 障碍物 / 其它移动体 / 边界，因此始终可行
+      if (o.stop) { out.push({ ...o }); continue; }
       const dir = o.dir !== undefined ? o.dir : resolveTurn(o.key, agent, grid, ctx.rng);
       // 边界穿越开启时，越界候选先环绕回网格内再判定，避免四角位置被误剔；
       // 边界规避开启时，不可达的越界候选直接剔除，实体因此不会触碰边界。
@@ -1300,10 +1442,13 @@ export class Simulation {
         break;
       }
     }
+    const nz = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0);
     const options = [
-      { key: 'left', weight: Math.max(0, weights.left) },
-      { key: 'straight', weight: Math.max(0, weights.straight) },
-      { key: 'right', weight: Math.max(0, weights.right) },
+      { key: 'left', weight: nz(weights.left) },
+      { key: 'straight', weight: nz(weights.straight) },
+      { key: 'right', weight: nz(weights.right) },
+      /** 「停止」：默认权重 0；被选中时不产生有效位移（判定同「尝试移动到障碍物」） */
+      { key: 'stop', weight: nz(weights.stop), stop: true },
     ];
     let safe = this.filterSafeOptions(ctx, agent, options);
     /**
@@ -1321,13 +1466,25 @@ export class Simulation {
      */
     if (safe && safe.length > 1) {
       const live = safe.filter((o) => {
+        // 「停止」不产生位移，不存在「走进去出不来」的死胡同问题
+        if (o.stop) return true;
         const c = this.resolveCandidate(ctx, grid.step(agent.head, o.dir));
         return !c.ok || !this.isDeadEnd(ctx, agent, c.coord);
       });
       if (live.length) safe = live;
     }
     const pool = safe && safe.length ? safe : options;
-    const { item } = rng.weighted(pool, (o) => o.weight);
+    /**
+     * 「全部权重为 0」时退化为均匀分布：此时排除「停止」，
+     * 保持旧版「无论如何都会朝某个方向移动」的兜底语义不变。
+     */
+    let effective = pool;
+    if (!pool.some((o) => o.weight > 0)) {
+      const dirs = pool.filter((o) => !o.stop);
+      if (dirs.length) effective = dirs;
+    }
+    const { item } = rng.weighted(effective, (o) => o.weight);
+    if (item.key === 'stop') return { dir: agent.dir, turnKey: 'stop' };
     return { dir: item.dir !== undefined ? item.dir : resolveTurn(item.key, agent, grid, rng), turnKey: item.key };
   }
 
@@ -1341,7 +1498,27 @@ export class Simulation {
     if (!mi.enabled || !mi.states.length) return null;
     const stateName = ctx.world.get(target);
     if (stateName === null || !mi.states.includes(stateName)) return null;
-    const applicable = mi.effects.filter((e) => e.enabled && (!e.state || e.state === stateName));
+    /**
+     * 类型层（多维度自定义标记物）：
+     * 该状态若挂有自定义标记物类型，则先按「生效条件」过滤，再按「触发权重」抽取一个生效类型——
+     *  - 没有任何类型满足条件 → 本次不产生反馈；
+     *  - 抽中的类型带内置反馈（effect）→ 用它；否则沿用下面的反馈规则表（effects）。
+     * markerTypes 为空时本段完全不介入，行为与旧版完全一致。
+     */
+    let applicable = mi.effects.filter((e) => e.enabled && (!e.state || e.state === stateName));
+    const types = markerTypesForState(ctx.config, stateName);
+    if (types.length) {
+      const eligible = types.filter((t) => markerConditionMet(t, {
+        length: agent.length,
+        steps: ctx.tick,
+        rng: ctx.rng,
+      }));
+      if (!eligible.length) return null;
+      const picked = ctx.rng.weighted(eligible, (t) => t.weight).item;
+      applicable = picked && picked.effect
+        ? [{ ...picked.effect, name: `${picked.name}（类型反馈）` }]
+        : applicable;
+    }
     if (!applicable.length) return null;
 
     let consumed = false;

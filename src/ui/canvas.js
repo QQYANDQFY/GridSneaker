@@ -18,6 +18,10 @@ export const STYLE_DEFAULTS = {
   showCoords: false,
   showObstacles: true,
   showMarkers: true,
+  /** 陷阱格标识：为启用了陷阱的障碍物格叠加危险外框与警示符号 */
+  showTraps: true,
+  /** 陷阱标识色 */
+  trapColor: '#ff4d4f',
   highlightRules: true,
   showStartEnd: true,
   trailFade: true,
@@ -151,6 +155,17 @@ export class Renderer {
     this.style = { ...STYLE_DEFAULTS };
     this.body = null;
     this.hover = null;
+    /**
+     * 陷阱状态集合（由界面从 obstacleTypes 注入）：仅这些状态的格子会叠加陷阱标识。
+     * 空集合时渲染结果与旧版完全一致。
+     */
+    this.trapStates = new Set();
+    /** 画布格子编辑模式：开启后悬浮高亮改为「画笔」样式（带尺寸预览） */
+    this.editMode = false;
+    /** 画笔尺寸（1 = 单格；n = 以光标为中心的 n×n 方块） */
+    this.brushSize = 1;
+    /** 画笔预览色（按当前工具 / 类型着色） */
+    this.editAccent = '#7cc0ff';
     /** 轨迹模型：按经过时间升序的路径 + 逐格聚合信息（经过次序 / 次数 / 首末步） */
     this.trail = { path: [], order: [], info: new Map(), maxTick: 0 };
     this.trailInfo = new Map();
@@ -559,6 +574,34 @@ export class Renderer {
         }
       }
       ctx.restore();
+    }
+    // 陷阱格标识（独立于「显示障碍物」开关，有自己的 showTraps 开关）：
+    // 危险色外框 + 中心警示符号，让「踩上去会死」的格子一眼可辨。
+    if (s.showTraps !== false && this.trapStates && this.trapStates.size) {
+      const trapColor = s.trapColor || '#ff4d4f';
+      const outer = half + gap / 2;
+      for (let i = 0; i < frame.cells.length; i++) {
+        const st = this.states[frame.cells[i]];
+        if (!st || !this.trapStates.has(st.name)) continue;
+        const p = this.center(this.grid.coord(i));
+        ctx.save();
+        ctx.strokeStyle = trapColor;
+        ctx.lineWidth = Math.max(1, cellSize * 0.08);
+        ctx.beginPath();
+        if (this.grid.type === 'hex') pathHex(ctx, p.x, p.y, outer);
+        else roundRect(ctx, p.x - outer, p.y - outer, outer * 2, outer * 2, cellSize * 0.16);
+        ctx.stroke();
+        // 中心警示三角（危险标记）
+        const k = half * 0.5;
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(p.x - k, p.y + k * 0.8);
+        ctx.lineTo(p.x, p.y - k * 0.9);
+        ctx.lineTo(p.x + k, p.y + k * 0.8);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 
@@ -2019,9 +2062,33 @@ export class Renderer {
 
   drawHover() {
     const ctx = this.ctx;
-    const { cellSize } = this.style;
+    const { cellSize, gap } = this.style;
     const p = this.center(this.hover);
     ctx.save();
+    // 编辑模式：按画笔尺寸画出实际会被改写的范围，避免「点了却没改到预想格子」
+    if (this.editMode) {
+      const n = Math.max(1, Math.round(this.brushSize || 1));
+      const off = Math.floor((n - 1) / 2);
+      const half = cellSize / 2 - gap / 2;
+      for (let dr = 0; dr < n; dr++) {
+        for (let dc = 0; dc < n; dc++) {
+          const c = { col: this.hover.col - off + dc, row: this.hover.row - off + dr };
+          if (!this.grid.inBounds(c)) continue;
+          const q = this.center(c);
+          if (this.grid.type === 'hex') pathHex(ctx, q.x, q.y, half);
+          else roundRect(ctx, q.x - half, q.y - half, half * 2, half * 2, cellSize * 0.2);
+          ctx.globalAlpha = 0.18;
+          ctx.fillStyle = this.editAccent;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = this.editAccent;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = HOVER_ACCENT;
     ctx.lineWidth = 1.5;
     const half = cellSize / 2;
@@ -2087,6 +2154,11 @@ export class Renderer {
     if (s.hoverTipState !== false) {
       const st = this.states[frame.cells[index]];
       lines.push(`环境：${st ? stateLabel(st.name) : '空格'}`);
+      // 陷阱格补充说明：悬浮即可读到触发 / 死亡概率，无需翻配置面板
+      const trap = this.trapInfo && this.trapInfo.get(st ? st.name : '');
+      if (trap) {
+        lines.push(`陷阱：触发 ${Math.round(trap.triggerProbability * 100)}% · 死亡 ${Math.round(trap.deathProbability * 100)}%（${trap.name}）`);
+      }
     }
 
     // 标记类信息：与「起点/终点」「边界进出点」两个显示开关同步，未开启则不出现

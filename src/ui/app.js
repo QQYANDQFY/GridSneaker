@@ -7,6 +7,8 @@ import {
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
   SKIN_MIME_TYPES, stripSkinAssets, LIFE_MIN, LIFE_MAX,
   DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT, MAX_AGENT_SLOTS,
+  MOVE_KEYS, MOVE_LABELS, MARKER_CONDITION_TYPES, MARKER_CONDITION_LABELS,
+  CELL_TOOLS, CELL_TOOL_LABELS, isTrapState, MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -169,6 +171,17 @@ let runTimer = null;
 let runSeq = 0;
 let activeLogEls = [];
 
+/**
+ * 画布格子编辑器的撤销 / 重做栈。
+ * 仅保存 cellEditor.painted 的快照（JSON 字符串），与配置整体撤销（cfgHistory）互不干扰；
+ * 步数上限由 cellEditor.historyLimit 控制（0 表示关闭历史记录）。
+ */
+const editHistory = { undo: [], redo: [] };
+/** 拖拽连画的进行态：{ painting, erasing, last } —— 为 null 表示未在拖拽 */
+let editDrag = null;
+/** 编辑面板中的「已绘制格数」读数节点（重建面板后重新缓存） */
+let editorCountEl = null;
+
 /** 结束规则中数值型条件的“上次取值”记忆：取消勾选后仍保留数值，便于再次启用 */
 const endParamMemory = { maxSteps: defaultConfig().endConditions.maxSteps };
 
@@ -259,10 +272,20 @@ function bindKeyboard() {
     // 模态对话框打开时让位：Esc / 回车交由对话框处理
     if (dialogOpen()) return;
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-      // Ctrl/Cmd + Z：撤销上一次配置整体替换（载入模板 / 导入 / 恢复）
+      // Ctrl/Cmd + Z：优先撤销画布格子编辑（编辑模式且有历史时），否则撤销上一次配置整体替换
       if (e.key === 'z' || e.key === 'Z') {
         e.preventDefault();
-        undoConfigReplace();
+        if (e.shiftKey) {
+          if (state.cfg.cellEditor.enabled && redoEdit()) toast('已重做上一次格子编辑', 'info');
+        } else if (state.cfg.cellEditor.enabled && undoEdit()) {
+          toast('已撤销上一次格子编辑', 'info');
+        } else {
+          undoConfigReplace();
+        }
+      } else if ((e.key === 'y' || e.key === 'Y') && state.cfg.cellEditor.enabled) {
+        // Ctrl/Cmd + Y：部分平台的「重做」习惯键位
+        e.preventDefault();
+        if (redoEdit()) toast('已重做上一次格子编辑', 'info');
       }
       return;
     }
@@ -1142,6 +1165,7 @@ function onStyleChange() {
   if (!state.result) return;
   // 同时传入移动体外观配置，使形状 / 尺寸 / 配色模式的修改即时生效（无需重新计算）
   renderer.setStyle(state.cfg.style, state.cfg.body);
+  applyRendererExtras(state.cfg);
   draw();
 }
 
@@ -1149,6 +1173,28 @@ function onStyleChange() {
 function clampFrameCap(v) {
   if (!Number.isFinite(v)) return DEFAULT_FRAME_CAP;
   return Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(v)));
+}
+
+/**
+ * 把「陷阱标识」与「格子编辑器」的运行期状态注入渲染器。
+ * 陷阱集合与概率来自 obstacleTypes（与模拟层的判定入口 isTrapState 保持一致），
+ * 编辑模式来自 cellEditor；二者都只作用于渲染层，不参与模拟计算。
+ */
+function applyRendererExtras(cfg) {
+  if (!renderer) return;
+  const traps = new Set();
+  const info = new Map();
+  for (const t of cfg.obstacleTypes) {
+    if (!t.enabled || info.has(t.state) || !isTrapState(cfg, t.state)) continue;
+    info.set(t.state, { name: t.name, ...t.trap });
+    traps.add(t.state);
+  }
+  renderer.trapStates = traps;
+  renderer.trapInfo = info;
+  const ce = cfg.cellEditor;
+  renderer.editMode = !!ce.enabled;
+  renderer.brushSize = ce.brushSize;
+  renderer.editAccent = ce.tool === 'erase' ? '#ff7b72' : (ce.tool === 'obstacle' ? '#ffa94d' : '#7cc0ff');
 }
 
 function recompute(opts = {}) {
@@ -1221,6 +1267,7 @@ function recompute(opts = {}) {
   writeAutoSave();
   renderer.setResult(result);
   renderer.setStyle(cfg.style, cfg.body);
+  applyRendererExtras(cfg);
   liveTrailCache = { tick: -1, at: 0, trail: null }; // 轨迹已重建，实时缓存失效
   renderStageStats();
   renderLog();
@@ -1639,11 +1686,192 @@ function jumpToCellFirstPass(c) {
   toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`, 'info');
 }
 
+/* ------------------------------------------------------------------ */
+/* 画布格子编辑器（元胞自动机格子交互）                                 */
+/*                                                                     */
+/* 坐标来源始终是 renderer.hitTest()——它按画布内边距与格子间距反算     */
+/* 行列号，与绘制走同一套几何换算，因此点击位置与格子严格一一对应，     */
+/* 不存在额外的像素偏移。                                              */
+/* ------------------------------------------------------------------ */
+
+/** 编辑模式是否生效：开关打开且已有渲染结果（编辑写回配置后重算才能看到效果） */
+function cellEditorActive() {
+  return !!(state.cfg && state.cfg.cellEditor && state.cfg.cellEditor.enabled && state.result);
+}
+
+/** painted 列表 → Map（键为 "col,row"，便于按坐标增删） */
+function paintedMap() {
+  const map = new Map();
+  for (const p of state.cfg.cellEditor.painted) map.set(`${p.col},${p.row}`, p);
+  return map;
+}
+
+/** 画笔覆盖的格子（以点击格为中心取 n×n；n 为偶数时中心偏向左上） */
+function brushCells(col, row, n) {
+  const size = Math.max(1, Math.round(n || 1));
+  const off = Math.floor((size - 1) / 2);
+  const out = [];
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      const c = { col: col - off + dc, row: row - off + dr };
+      if (state.result.grid.inBounds(c)) out.push(c);
+    }
+  }
+  return out;
+}
+
+/**
+ * 按当前工具 / 类型解析「本次点击要写入的状态名」，返回 '' 表示本次不放置。
+ * 障碍物支持两种模式：先选类型再点击（精准放置）、随机放置（按权重从随机池抽取）。
+ */
+function paintStateForCell() {
+  const cfg = state.cfg;
+  const ce = cfg.cellEditor;
+  if (ce.tool === 'erase') return '';
+  if (ce.tool === 'obstacle') {
+    const types = cfg.obstacleTypes.filter((t) => t.enabled);
+    if (!types.length) return '';
+    if (ce.randomObstacle) {
+      const pool = types.filter((t) => !ce.randomPool.length || ce.randomPool.includes(t.id));
+      if (!pool.length) return '';
+      // 随机放置的触发概率：低于 1 时本次点击可能不放置任何障碍物
+      if (ce.randomProbability < 1 && Math.random() >= ce.randomProbability) return '';
+      const total = pool.reduce((a, t) => a + Math.max(0, t.weight), 0);
+      if (total <= 0) return pool[pool.length - 1].state;
+      let r = Math.random() * total;
+      for (const t of pool) { r -= Math.max(0, t.weight); if (r <= 0) return t.state; }
+      return pool[pool.length - 1].state;
+    }
+    const t = types.find((x) => x.id === ce.obstacleTypeId) || types[0];
+    return t.state;
+  }
+  // 标记物：优先选中的自定义标记物类型，其次第一个启用的类型，最后退回「交互标记物状态」首项
+  const mt = cfg.markerTypes.find((t) => t.id === ce.markerTypeId && t.enabled)
+    || cfg.markerTypes.find((t) => t.enabled);
+  if (mt && cfg.caMode.states.some((s) => s.name === mt.state)) return mt.state;
+  const mi = cfg.caMode.markerInteraction;
+  const fallback = (mi.states || []).find((n) => cfg.caMode.states.some((s) => s.name === n));
+  if (fallback) return fallback;
+  const idx = cfg.caMode.states.findIndex((s) => s.name === 'marker');
+  return idx >= 0 ? 'marker' : (cfg.caMode.states[1] ? cfg.caMode.states[1].name : '');
+}
+
+/** 记录一次编辑前的快照（受 historyLimit 限制；0 表示不记录） */
+function pushEditHistory() {
+  const limit = state.cfg.cellEditor.historyLimit;
+  if (!limit) return;
+  editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+  if (editHistory.undo.length > limit) editHistory.undo.shift();
+  editHistory.redo.length = 0;
+}
+
+/** 把 Map 写回配置并重算（0 延时可被连续拖拽合并，避免逐格重算） */
+function commitPainted(map) {
+  state.cfg.cellEditor.painted = [...map.values()];
+  syncEditorCount();
+  onSimChange(0);
+}
+
+/** 在指定格执行一次「添加 / 删除」（再次单击已放置元素 = 删除） */
+function applyEditAt(col, row, opts = {}) {
+  const ce = state.cfg.cellEditor;
+  const cells = brushCells(col, row, ce.brushSize);
+  const map = paintedMap();
+  pushEditHistory();
+  // 拖拽 / 强制添加时只增不减；否则以「中心格是否已放置」决定本次是添加还是删除
+  const removing = !opts.erase && !opts.force && map.has(`${col},${row}`);
+  for (const c of cells) {
+    const k = `${c.col},${c.row}`;
+    if (opts.erase || removing) { map.delete(k); continue; }
+    const st = paintStateForCell();
+    if (st) map.set(k, { col: c.col, row: c.row, state: st });
+  }
+  commitPainted(map);
+}
+
+/**
+ * 拖拽连画时对单个格子的处理。
+ * 不单独记录历史：整轮拖拽共用 mousedown 时压入的那一条快照，撤销时一次退掉整笔涂抹。
+ */
+function paintByDrag(c) {
+  const map = paintedMap();
+  const k = `${c.col},${c.row}`;
+  if (editDrag.mode === 'erase') {
+    map.delete(k);
+  } else {
+    const st = paintStateForCell();
+    if (!st) return;
+    map.set(k, { col: c.col, row: c.row, state: st });
+  }
+  state.cfg.cellEditor.painted = [...map.values()];
+  syncEditorCount();
+  onSimChange(0);
+}
+
+/** 撤销上一次编辑（返回 false 表示没有可撤销的历史） */
+function undoEdit() {
+  if (!editHistory.undo.length) return false;
+  editHistory.redo.push(JSON.stringify(state.cfg.cellEditor.painted));
+  state.cfg.cellEditor.painted = JSON.parse(editHistory.undo.pop());
+  syncEditorCount();
+  onSimChange(0);
+  return true;
+}
+
+/** 重做上一次被撤销的编辑（返回 false 表示没有可重做的历史） */
+function redoEdit() {
+  if (!editHistory.redo.length) return false;
+  editHistory.undo.push(JSON.stringify(state.cfg.cellEditor.painted));
+  state.cfg.cellEditor.painted = JSON.parse(editHistory.redo.pop());
+  syncEditorCount();
+  onSimChange(0);
+  return true;
+}
+
+/** 一键随机散布：按密度在整个网格上随机落点（用当前工具 / 类型写入状态） */
+function scatterPainted() {
+  const ce = state.cfg.cellEditor;
+  const grid = state.result.grid;
+  const map = paintedMap();
+  pushEditHistory();
+  for (let row = 0; row < grid.height; row++) {
+    for (let col = 0; col < grid.width; col++) {
+      if (Math.random() >= ce.scatterDensity) continue;
+      const st = paintStateForCell();
+      if (st) map.set(`${col},${row}`, { col, row, state: st });
+    }
+  }
+  commitPainted(map);
+  toast(`已按 ${(ce.scatterDensity * 100).toFixed(0)}% 密度随机散布`, 'success');
+}
+
+/** 清空全部手绘格子（可撤销） */
+function clearPainted() {
+  if (!state.cfg.cellEditor.painted.length) { toast('当前没有手绘格子', 'info'); return; }
+  pushEditHistory();
+  commitPainted(new Map());
+  toast('已清空手绘格子', 'success');
+}
+
+/** 刷新编辑面板上的「已绘制格数 · 可撤销步数」读数 */
+function syncEditorCount() {
+  if (!editorCountEl) return;
+  editorCountEl.textContent = `已绘制 ${state.cfg.cellEditor.painted.length} 格 · 可撤销 ${editHistory.undo.length} 步`;
+}
+
 function bindCanvasEvents() {
   els.canvas.addEventListener('mousemove', (e) => {
     if (!state.result) return;
     const c = renderer.hitTest(e.clientX, e.clientY);
     renderer.hover = c;
+    // 拖拽连画：光标滑过的每一格都按起手时的模式（画 / 擦）处理
+    if (editDrag && c) {
+      const key = `${c.col},${c.row}`;
+      if (editDrag.last !== key) {
+        editDrag.last = key;
+        paintByDrag(c);
+      }
+    }
     draw();
     // 悬浮提示总开关（「展示样式 → 悬浮提示」）关闭时只保留画布高亮，不弹提示浮层
     if (!c || renderer.style.hoverTip === false) {
@@ -1663,7 +1891,35 @@ function bindCanvasEvents() {
   window.addEventListener('scroll', () => { if (els.tooltip?.classList.contains('show')) hideTooltip(); }, true);
   window.addEventListener('resize', () => hideTooltip());
   els.canvas.addEventListener('click', (e) => {
+    // 编辑模式下点击已在 mousedown 中处理（含「再次单击删除」语义），这里不再跳转
+    if (cellEditorActive()) return;
     jumpToCellFirstPass(renderer.hitTest(e.clientX, e.clientY));
+  });
+
+  /* 左键按下即完成一次编辑（比 click 更跟手）：命中格已有同类元素则删除，否则添加 */
+  els.canvas.addEventListener('mousedown', (e) => {
+    if (!cellEditorActive() || e.button !== 0) return;
+    const c = renderer.hitTest(e.clientX, e.clientY);
+    if (!c) return;
+    // 起手格是否已有元素，决定「再次单击删除」以及本轮拖拽是连画还是连擦
+    const existed = state.cfg.cellEditor.painted.some((p) => p.col === c.col && p.row === c.row);
+    applyEditAt(c.col, c.row);
+    // 开启「拖拽连画」后继续按住拖动可连画 / 连擦（本轮的增删模式由起手动作决定）
+    if (state.cfg.cellEditor.drag) {
+      editDrag = { mode: existed ? 'erase' : 'paint', last: `${c.col},${c.row}` };
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    if (!editDrag) return;
+    editDrag = null;
+    syncEditorCount();
+  });
+  /* 右键擦除：仅在编辑模式且开启「右键擦除」时接管，其余情况保留浏览器右键菜单 */
+  els.canvas.addEventListener('contextmenu', (e) => {
+    if (!cellEditorActive() || !state.cfg.cellEditor.rightClickErase) return;
+    e.preventDefault();
+    const c = renderer.hitTest(e.clientX, e.clientY);
+    if (c) applyEditAt(c.col, c.row, { erase: true });
   });
 
   // 移动端触控：点按显示格子信息并在抬手时跳转到该格首次经过的步数。
@@ -1701,6 +1957,11 @@ function bindCanvasEvents() {
     if (!started || started.moved || !t) { hideTooltip(); return; }
     const c = renderer.hitTest(t.clientX, t.clientY);
     hideTooltip();
+    // 编辑模式下抬手即完成一次「添加 / 删除」，与桌面端单击语义一致
+    if (cellEditorActive()) {
+      if (c) applyEditAt(c.col, c.row);
+      return;
+    }
     jumpToCellFirstPass(c);
   }, { passive: true });
 
@@ -1724,6 +1985,7 @@ const STAT_KEYS = [
   ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
   ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
   ['transformDeaths', '自撞死亡'], ['transformedCells', '转化节点'], ['collisionWarnings', '碰撞预警'],
+  ['stops', '停止次数'], ['trapTriggers', '陷阱触发'], ['trapDeaths', '陷阱死亡'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
   // 生命机制（多生命系统）
@@ -1743,7 +2005,7 @@ const STAT_GROUPS = [
   },
   {
     title: '长度与碰撞',
-    keys: ['length', 'finalLength', 'maxLength', 'collisions', 'selfCollisions', 'coverage'],
+    keys: ['length', 'finalLength', 'maxLength', 'collisions', 'selfCollisions', 'coverage', 'stops'],
   },
   {
     title: '移动体与交互',
@@ -1751,7 +2013,7 @@ const STAT_GROUPS = [
   },
   {
     title: '环境与转化',
-    keys: ['obstacleCount', 'markerCount', 'caSteps', 'transformDeaths', 'transformedCells', 'collisionWarnings'],
+    keys: ['obstacleCount', 'markerCount', 'caSteps', 'transformDeaths', 'transformedCells', 'collisionWarnings', 'trapTriggers', 'trapDeaths'],
   },
   {
     title: '生命机制（多生命）',
@@ -1790,6 +2052,9 @@ const STAT_TERMS = {
   transformDeaths: { name: '自撞死亡', desc: '开启「自撞即判定死亡」后，因撞到自身而直接死亡的累计次数（此时不再结束整轮运行）。' },
   transformedCells: { name: '转化节点', desc: '移动体死亡后，其身体体节就地写入环境（转为障碍物等状态）的格子总数。' },
   collisionWarnings: { name: '碰撞预警', desc: '开启「碰撞预警提示」后，被标记为「下一步会撞到自身身体」的危险落点累计数量。' },
+  stops: { name: '停止次数', desc: '「停止」权重被抽中的累计次数：该回合原地不动，判定与撞上障碍物相同，同时计入碰撞次数。' },
+  trapTriggers: { name: '陷阱触发', desc: '蛇尝试移动到已启用陷阱的障碍物格、并按触发概率成功触发的累计次数。' },
+  trapDeaths: { name: '陷阱死亡', desc: '陷阱触发后按死亡概率判定为死亡、导致蛇消失的累计次数（每次判定都会写入运行日志）。' },
   caSteps: { name: 'CA 演进次数', desc: '元胞自动机执行的更新代数。每步移动结束后 CA 按设定规则推进一代，因此它与步数通常同步增长（含初始代）。' },
   obstacleCount: { name: '障碍物', desc: '当前环境中处于障碍物状态的格子数量（含 CA 演化与身体转化产生的障碍物）。' },
   markerCount: { name: '标记物', desc: '当前环境中处于标记物状态的格子数量，移动体踩到后会被消耗或触发效果。' },
@@ -1894,6 +2159,9 @@ function statValues() {
       transformDeaths: pick(st.transformDeaths, s.transformDeaths || 0),
       transformedCells: pick(st.transformedCells, s.transformedCells || 0),
       collisionWarnings: pick(st.collisionWarnings, s.collisionWarnings || 0),
+      stops: pick(st.stops ?? 0, s.stops || 0),
+      trapTriggers: pick(st.trapTriggers ?? 0, s.trapTriggers || 0),
+      trapDeaths: pick(st.trapDeaths ?? 0, s.trapDeaths || 0),
       caSteps: pick(st.caSteps, s.caSteps),
       obstacleCount: pick(st.obstacleCount, s.obstacleCount),
       markerCount: pick(st.markerCount, s.markerCount),
@@ -3086,10 +3354,10 @@ function syncControlBar() {
  *    另：本产品定位为「网格移动动画模拟平台」，各选项卡名称一律不再使用「游戏」这类自称。
  */
 const CONFIG_TABS = [
-  { key: 'core', label: '核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
+  { key: 'core', label: '核心规则', hint: '网格与坐标、起点与移动体、基础移动规则（含停止）、碰撞与自撞、环境规则、画布格子编辑器、结束规则' },
   { key: 'visual', label: '视觉显示', hint: '基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置' },
   { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式、模拟帧率、单次运行步数上限、网格边界与多移动体规模' },
-  { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机' },
+  { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机、自定义标记物类型、自定义障碍物类型（含陷阱）' },
 ];
 
 /** 当前面板的选项卡切换函数：供「查看结束规则」等外部入口跳到目标分类 */
@@ -3129,18 +3397,21 @@ function renderConfigPanel() {
 
   // 分组归类：所有原分组都在，只是归入四大类之一
   panels.get('core').append(
-    gridGroup(cfg),        // 网格与坐标
-    bodyGroup(cfg),        // 起点 · 移动体 · 长度策略
-    moveRulesGroup(cfg),   // 基础权重 · 条件概率 · 安全避撞
-    collisionGroup(cfg),   // 碰撞与自撞处理
-    envRulesGroup(cfg),    // 环境规则
-    endGroup(cfg),         // 结束规则（按优先级）
+    gridGroup(cfg),          // 网格与坐标
+    bodyGroup(cfg),          // 起点 · 移动体 · 长度策略
+    moveRulesGroup(cfg),     // 基础权重 · 条件概率 · 安全避撞
+    collisionGroup(cfg),     // 碰撞与自撞处理
+    envRulesGroup(cfg),      // 环境规则
+    cellEditorGroup(cfg),    // 画布格子编辑器（点击增删格子元素）
+    endGroup(cfg),           // 结束规则（按优先级）
   );
   panels.get('extend').append(
-    multiSnakeGroup(cfg),  // 多蛇生成与交互
-    transformGroup(cfg),   // 蛇死亡转化
-    lifeGroup(cfg),        // 生命机制（多生命系统）
-    caGroup(cfg),          // 元胞自动机
+    multiSnakeGroup(cfg),    // 多蛇生成与交互
+    transformGroup(cfg),     // 蛇死亡转化
+    lifeGroup(cfg),          // 生命机制（多生命系统）
+    caGroup(cfg),            // 元胞自动机
+    markerTypesGroup(cfg),   // 自定义标记物类型（多维度自定义）
+    obstacleTypesGroup(cfg), // 自定义障碍物类型（含陷阱属性）
   );
   panels.get('visual').append(
     visualBasicGroup(cfg),   // 基础视觉设置
@@ -3590,11 +3861,17 @@ function parseColorList(text) {
     .filter((s) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s));
 }
 
-/** 左/直/右权重占比说明（引擎按占比归一化，权重绝对值不影响比例） */
+/**
+ * 左/直/右/停权重占比说明（引擎按占比归一化，权重绝对值不影响比例）。
+ * 「停止」与其它三项同权：占比 > 0 时该回合有一定几率原地不动（等价于撞上障碍物的无效位移）。
+ */
 function weightSummary(m) {
-  const sum = m.left + m.straight + m.right;
+  const sum = MOVE_KEYS.reduce((a, k) => a + (Number(m[k]) || 0), 0);
   if (sum <= 0) return '权重全为 0，运行时按均匀分布处理';
-  return `概率：左 ${(m.left / sum * 100).toFixed(1)}% · 直 ${(m.straight / sum * 100).toFixed(1)}% · 右 ${(m.right / sum * 100).toFixed(1)}%`;
+  const parts = MOVE_KEYS
+    .filter((k) => (Number(m[k]) || 0) > 0)
+    .map((k) => `${MOVE_LABELS[k]} ${(m[k] / sum * 100).toFixed(1)}%`);
+  return `概率：${parts.join(' · ')}`;
 }
 
 /* ---------------- 移动规则：基础权重 · 条件概率 · 安全避撞 ---------------- */
@@ -3606,6 +3883,9 @@ function moveRulesGroup(cfg) {
 
   const list = h('div', { class: 'rule-list' });
   cfg.advancedRules.forEach((r, index) => {
+    // 旧规则可能缺少「停止」权重（升级前保存的配置），这里补齐以保证滑条有初值
+    if (!r.moves || typeof r.moves !== 'object') r.moves = {};
+    for (const k of MOVE_KEYS) if (!Number.isFinite(Number(r.moves[k]))) r.moves[k] = 0;
     const hint = h('div', { class: 'hint' }, weightSummary(r.moves));
     const updWeights = () => { onSimChange(); hint.textContent = weightSummary(r.moves); };
     const body = [
@@ -3619,9 +3899,11 @@ function moveRulesGroup(cfg) {
         ),
       ),
       field('条件', conditionEditor(r.condition, () => onSimChange(), () => rebuildAll()), '条件满足时使用下面的权重'),
-      field('左转权重', rangeBind(r.moves, 'left', updWeights, { min: 0, max: 1, step: 0.01, number: true })),
-      field('直行权重', rangeBind(r.moves, 'straight', updWeights, { min: 0, max: 1, step: 0.01, number: true })),
-      field('右转权重', rangeBind(r.moves, 'right', updWeights, { min: 0, max: 1, step: 0.01, number: true })),
+      ...MOVE_KEYS.map((k) => field(
+        `${MOVE_LABELS[k]}权重`,
+        rangeBind(r.moves, k, updWeights, { min: 0, max: 1, step: 0.01, number: true }),
+        k === 'stop' ? '原地不动（与撞上障碍物等效，无法完成有效位移）' : null,
+      )),
       hint,
       field('优先级', numBind(r, 'priority', () => onSimChange(), { step: 1 }), '数值越大越优先匹配'),
     ];
@@ -3630,9 +3912,11 @@ function moveRulesGroup(cfg) {
 
   return group('移动规则', [
     h('div', { class: 'sub-title' }, '基础权重'),
-    field('左转权重', rangeBind(m, 'left', upd, { min: 0, max: 1, step: 0.01, number: true })),
-    field('直行权重', rangeBind(m, 'straight', upd, { min: 0, max: 1, step: 0.01, number: true })),
-    field('右转权重', rangeBind(m, 'right', upd, { min: 0, max: 1, step: 0.01, number: true })),
+    ...MOVE_KEYS.map((k) => field(
+      `${MOVE_LABELS[k]}权重`,
+      rangeBind(m, k, upd, { min: 0, max: 1, step: 0.01, number: true }),
+      k === 'stop' ? '默认 0（不停止）：设为正值后该回合有几率原地不动，判定与撞上障碍物一致' : null,
+    )),
     weightHint,
     h('div', { class: 'sub-title' }, '条件概率规则（按优先级匹配，命中后改用其权重）'),
     list,
@@ -3642,7 +3926,7 @@ function moveRulesGroup(cfg) {
         enabled: true,
         name: `条件概率 ${cfg.advancedRules.length + 1}`,
         condition: { logic: 'and', clauses: [defaultClause('count')] },
-        moves: { left: 0.2, straight: 0.6, right: 0.2 },
+        moves: { left: 0.2, straight: 0.6, right: 0.2, stop: 0 },
         priority: 1,
       });
       rebuildAll();
@@ -4370,6 +4654,72 @@ function markerLengthWarning() {
   return '⚠ 未启用「蛇长度可变」：当前「长度策略」为「固定」，长度恒等于初始长度，交互吞噬 / 触碰带来的长度变化不会生效。请把「长度策略」改为「可变」。';
 }
 
+/** 转义 HTML 特殊字符（说明浮层里会拼接用户自定义的状态名 / 类型名，避免破坏浮层结构） */
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+/**
+ * 「交互标记物状态」的悬浮说明文案。
+ * 按当前配置实时生成——是否已勾选、是否阻挡、命中了哪些反馈规则、挂载了哪些自定义标记物类型，
+ * 一次性回答「功能 / 生效规则 / 使用场景」三个问题，无需来回翻配置。
+ */
+function markerStateTip(s) {
+  const cfg = state.cfg;
+  const mi = cfg.caMode.markerInteraction;
+  const active = mi.states.includes(s.name);
+  const fxs = mi.effects.filter((e) => e.enabled && e.state === s.name);
+  const types = cfg.markerTypes.filter((t) => t.enabled && t.state === s.name);
+  const lines = [
+    `<b>功能</b>：${active ? '已设为交互标记物，蛇头进入该格时按下方反馈规则表产生效果。' : '尚未设为交互标记物：勾选本状态后才会参与交互。'}`,
+    `<b>生效规则</b>：${s.blocking
+      ? '当前标记为「阻挡」状态，移动体无法进入，交互反馈不会触发（需先取消阻挡）。'
+      : `非阻挡状态，移动体可进入；共命中 ${fxs.length} 条启用中的反馈规则${fxs.length ? `（${escHtml(fxs.map((e) => e.name).join(' / '))}），按列表顺序自上而下匹配，可分别设置概率、消耗与变色` : '（可在下方反馈规则表新增）'}。`}`,
+    `<b>使用场景</b>：${escHtml(markerUsageScene(s, fxs.length))}`,
+  ];
+  if (types.length) {
+    const detail = types.map((t) => `${t.name}·权重 ${t.weight}·${MARKER_CONDITION_LABELS[t.condition.type]}`).join('；');
+    lines.push(`<b>自定义类型</b>：${escHtml(detail)}；运行时先判断生效条件，再按权重抽取其中一个生效。`);
+  }
+  return { name: `状态「${escHtml(stateLabelWithKey(s.name))}」`, desc: lines.join('<br>') };
+}
+
+/** 依据该状态当前承担的角色，给出一句「适合用在哪」的场景提示 */
+function markerUsageScene(s, fxCount) {
+  const cfg = state.cfg;
+  if (cfg.obstacleTypes.some((t) => t.enabled && t.state === s.name)) return '该状态同时被某个障碍物类型引用，碰撞处理优先于标记物交互。';
+  if (fxCount > 0) return '常用于「吃食物变长」「踩到减速」「中毒缩短」等玩法：把食物格设为本状态并配置长度变化即可。';
+  return '适合作为待激活的交互点：勾选后新增一条反馈规则即可让它对移动体产生影响。';
+}
+
+/** 「交互标记物状态」选择区：每个标记物按钮后追加一个带「?」的说明入口 */
+function markerStateChips(ca, mi) {
+  const box = h('div', { class: 'chips' });
+  for (const s of ca.states) {
+    const on = mi.states.includes(s.name);
+    const chip = h('button', {
+      type: 'button',
+      class: `chip${on ? ' on' : ''}`,
+      title: `内部键名：${s.name}`,
+      onclick: () => {
+        const i = mi.states.indexOf(s.name);
+        if (i >= 0) mi.states.splice(i, 1);
+        else mi.states.push(s.name);
+        onSimChange();
+        rebuildAll();
+      },
+    }, stateLabelWithKey(s.name));
+    const help = bindTermTip(h('button', {
+      type: 'button',
+      class: 'chip-help',
+      title: '查看该标记物的详细说明',
+      'aria-label': `${s.name} 标记物说明`,
+    }, '?'), markerStateTip(s));
+    box.appendChild(h('span', { class: 'chip-item' }, chip, help));
+  }
+  return box;
+}
+
 /**
  * 标记物交互编辑器：将指定元胞状态定义为交互标记物，并配置「触碰反馈规则表」。
  * 每条反馈可独立设置作用状态、变化方式（增减 / 百分比 / 直接设定）、概率、是否消耗标记物与变色。
@@ -4393,22 +4743,8 @@ function markerInteractionEditor(ca) {
       }, 'primary small'),
     ));
   }
-  wrap.appendChild(field('交互标记物状态', h('div', { class: 'chips' },
-    ...ca.states.map((s) => {
-      const on = mi.states.includes(s.name);
-      return h('button', {
-        type: 'button',
-        class: `chip${on ? ' on' : ''}`,
-        title: `内部键名：${s.name}`,
-        onclick: () => {
-          const i = mi.states.indexOf(s.name);
-          if (i >= 0) mi.states.splice(i, 1);
-          else mi.states.push(s.name);
-          onSimChange();
-          rebuildAll();
-        },
-      }, stateLabelWithKey(s.name));
-    })), '可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则'));
+  wrap.appendChild(field('交互标记物状态', markerStateChips(ca, mi),
+    '可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则。点击每个标记物右侧的「?」可查看该标记物的功能、生效规则与使用场景'));
 
   const list = h('div', { class: 'rule-list' });
   mi.effects.forEach((fx, i) => {
@@ -4563,6 +4899,325 @@ function caRulesEditor(ca) {
     rebuildAll();
   }, 'ghost small'));
   return list;
+}
+
+/* ---------------- 自定义标记物类型（多维度自定义体系） ---------------- */
+
+/** 类型「引用状态」下拉项：排除 empty（类型必须挂在一个可放置的状态上） */
+function typeStateOptions() {
+  return state.cfg.caMode.states
+    .filter((s) => s.name !== 'empty')
+    .map((s) => ({ value: s.name, label: stateLabelWithKey(s.name) }));
+}
+
+/** 「外观绘制方式」下拉项：空值表示继承状态自身的绘制方式 */
+function typeRenderOptions() {
+  return [
+    { value: '', label: '继承状态' },
+    { value: 'fill', label: '填充' },
+    { value: 'cross', label: '交叉' },
+    { value: 'dot', label: '圆点' },
+  ];
+}
+
+/** 「外观符号」输入框：留空表示继承状态符号 */
+function typeSymbolInput(t) {
+  return h('input', {
+    class: 'input tiny',
+    value: t.symbol || '',
+    placeholder: '继承',
+    maxlength: 1,
+    onchange: (e) => { t.symbol = e.target.value.slice(0, 1); onSimChange(); rebuildAll(); },
+  });
+}
+
+/** 标记物类型的「生效条件」编辑行：条件类型 + 阈值（阈值含义随类型变化） */
+function markerConditionRow(t) {
+  const c = t.condition;
+  const label = c.type === 'probability' ? '生效概率'
+    : c.type === 'minLength' ? '最小蛇长'
+      : c.type === 'maxLength' ? '最大蛇长'
+        : c.type === 'minSteps' ? '最小步数' : '';
+  return row(
+    field('生效条件', selBind(c, 'type', () => { onSimChange(); rebuildAll(); },
+      MARKER_CONDITION_TYPES.map((v) => ({ value: v, label: MARKER_CONDITION_LABELS[v] }))),
+      '条件不满足时本类型不参与抽取（不会消耗随机数）'),
+    c.type === 'always' ? null : field(label, numBind(c, 'value', () => onSimChange(),
+      c.type === 'probability' ? { min: 0, max: 1, step: 0.01 } : { min: 0, max: 100000 })),
+  );
+}
+
+/** 标记物类型的「内置反馈」编辑：关闭（null）时沿用「反馈规则表」 */
+function markerTypeEffectEditor(t) {
+  const box = h('div', {});
+  box.appendChild(checkbox(!!t.effect, (v) => {
+    t.effect = v ? { mode: 'delta', value: 1, probability: 1, consume: true, consumeTo: 'empty', color: '' } : null;
+    onSimChange();
+    rebuildAll();
+  }, '使用本类型独立的反馈参数'));
+  if (!t.effect) return box;
+  const e = t.effect;
+  box.appendChild(row(
+    field('变化方式', selBind(e, 'mode', () => { onSimChange(); rebuildAll(); }, [
+      { value: 'delta', label: '增减固定长度' },
+      { value: 'percent', label: '按当前长度百分比' },
+      { value: 'set', label: '直接设定长度' },
+    ])),
+    field(e.mode === 'percent' ? '百分比（%，负数为缩短）' : e.mode === 'set' ? '目标长度' : '变化量（负数为缩短）',
+      numBind(e, 'value', () => onSimChange(), e.mode === 'set' ? { min: 1, max: 100000 } : { min: -1000, max: 1000 })),
+  ));
+  box.appendChild(row(
+    field('触发概率', rangeBind(e, 'probability', () => onSimChange(), { min: 0, max: 1, step: 0.01 })),
+    field('消耗标记物', row(
+      chkBind(e, 'consume', () => onSimChange(), '消耗'),
+      select(e.consumeTo, stateOptions(), (v) => { e.consumeTo = v; onSimChange(); }),
+    ), '消耗后该格变为右侧状态'),
+    field('反馈变色', row(
+      colorInput(e.color || '#51cf66', (v) => { e.color = v; onSimChange(); }),
+      button('清除', () => { e.color = ''; onSimChange(); rebuildAll(); }, 'ghost small'),
+    ), '留空表示不变色'),
+  ));
+  return box;
+}
+
+/**
+ * 自定义标记物类型编辑器。
+ * 列表中的每一条即一次「新增标记物」：外观样式 / 生效条件 / 触发权重三组属性独立可配，
+ * 后续补充更多标记物只需在此追加记录，模拟层会自动纳入条件判定与权重抽取。
+ */
+function markerTypesGroup(cfg) {
+  const list = h('div', { class: 'rule-list' });
+  cfg.markerTypes.forEach((t, i) => {
+    const body = [
+      row(
+        textBind(t, 'name', () => {}),
+        chkBind(t, 'enabled', () => onSimChange(), '启用'),
+        orderActions(
+          button('↑', () => { swap(cfg.markerTypes, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.markerTypes, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.markerTypes.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
+      ),
+      field('引用状态', select(t.state, typeStateOptions(), (v) => { t.state = v; onSimChange(); rebuildAll(); }),
+        '挂载到哪个元胞状态：蛇头进入该状态的格子即视为碰到本标记物'),
+      row(
+        field('触发权重', rangeBind(t, 'weight', () => onSimChange(), { min: 0, max: 1, step: 0.01, number: true }),
+          '同一状态下多个类型按权重占比抽取一个生效'),
+        markerConditionRow(t),
+      ),
+      row(
+        field('外观配色', row(
+          colorInput(t.color || '#ffd43b', (v) => { t.color = v; onSimChange(); }),
+          button('继承', () => { t.color = ''; onSimChange(); rebuildAll(); }, 'ghost small'),
+        ), '留空（点「继承」）表示沿用状态本身的颜色'),
+        field('外观符号', typeSymbolInput(t), '留空表示沿用状态符号'),
+        field('绘制方式', select(t.render || '', typeRenderOptions(), (v) => { t.render = v; onSimChange(); rebuildAll(); })),
+      ),
+      field('内置反馈', markerTypeEffectEditor(t), '开启后本类型使用自己的反馈参数，不再走「反馈规则表」'),
+    ];
+    list.appendChild(group(t.name || `标记物 ${i + 1}`, body, { open: false, badge: t.enabled ? '' : '停用', key: `mk:${t.id}` }));
+  });
+  return group('自定义标记物类型', [
+    h('div', { class: 'hint' }, '在「交互标记物状态」之上再挂一层「类型」：同一状态可拥有多个标记物类型，各自带外观样式、生效条件与触发权重。运行时先判条件、再按权重抽取一个生效；列表为空时行为与旧版完全一致（不启用类型层）。'),
+    list,
+    button('+ 添加标记物类型', () => {
+      if (cfg.markerTypes.length >= MAX_MARKER_TYPES) {
+        toast(`标记物类型最多 ${MAX_MARKER_TYPES} 个`, 'warn');
+        return;
+      }
+      const fallback = cfg.caMode.markerInteraction.states[0]
+        || (cfg.caMode.states.find((s) => s.name === 'marker') || {}).name
+        || cfg.caMode.states[1].name;
+      cfg.markerTypes.push({
+        id: `mk_${Math.random().toString(36).slice(2, 8)}`,
+        name: `标记物 ${cfg.markerTypes.length + 1}`,
+        enabled: true,
+        state: fallback,
+        weight: 1,
+        color: '',
+        symbol: '',
+        render: '',
+        condition: { type: 'always', value: 0 },
+        effect: null,
+      });
+      rebuildAll();
+    }, 'ghost'),
+  ], { open: false, badge: cfg.markerTypes.length ? `${cfg.markerTypes.length} 个` : '' });
+}
+
+/* ---------------- 自定义障碍物类型（含陷阱属性） ---------------- */
+
+/**
+ * 自定义障碍物类型编辑器。
+ * 除外观与引用状态外，每种障碍物可独立开启「陷阱」：先按触发概率判定是否触发，
+ * 触发后再按死亡概率判定蛇是否死亡，两级判定都可写日志，便于调参。
+ */
+function obstacleTypesGroup(cfg) {
+  const list = h('div', { class: 'rule-list' });
+  cfg.obstacleTypes.forEach((t, i) => {
+    const tr = t.trap;
+    const body = [
+      row(
+        textBind(t, 'name', () => {}),
+        chkBind(t, 'enabled', () => onSimChange(), '启用'),
+        orderActions(
+          button('↑', () => { swap(cfg.obstacleTypes, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.obstacleTypes, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.obstacleTypes.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
+      ),
+      row(
+        field('引用状态', select(t.state, typeStateOptions(), (v) => { t.state = v; onSimChange(); rebuildAll(); }),
+          '撞到这个状态的格子即视为撞上本障碍物类型'),
+        field('随机权重', numBind(t, 'weight', () => onSimChange(), { min: 0, step: 0.1 }),
+          '「随机放置」模式按权重占比抽取类型'),
+      ),
+      row(
+        field('外观配色', row(
+          colorInput(t.color || '#868e96', (v) => { t.color = v; onSimChange(); }),
+          button('继承', () => { t.color = ''; onSimChange(); rebuildAll(); }, 'ghost small'),
+        ), '留空（点「继承」）表示沿用状态本身的颜色'),
+        field('外观符号', typeSymbolInput(t), '留空表示沿用状态符号'),
+        field('绘制方式', select(t.render || '', typeRenderOptions(), (v) => { t.render = v; onSimChange(); rebuildAll(); })),
+      ),
+      h('div', { class: 'sub-title' }, '陷阱属性'),
+      switchField('启用陷阱', chkBind(tr, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用'),
+        '开启后：蛇尝试移动到本类型格子时先判「触发概率」，触发后再判「死亡概率」；格子会在画布上叠加危险标识'),
+      tr.enabled ? row(
+        field('触发概率', rangeBind(tr, 'triggerProbability', () => onSimChange(), { min: 0, max: 1, step: 0.01, number: true }),
+          '蛇尝试移动到陷阱格时触发判定的几率（0 = 从不触发）'),
+        field('死亡概率', rangeBind(tr, 'deathProbability', () => onSimChange(), { min: 0, max: 1, step: 0.01, number: true }),
+          '触发后判定为死亡的几率（1 = 必死，0 = 只触发不死）'),
+      ) : null,
+      tr.enabled ? switchField('记录判定日志', chkBind(tr, 'log', () => onSimChange(), '写入运行日志'),
+        '在「运行日志」中逐次记录触发 / 未触发 / 死亡判定，便于调试概率参数') : null,
+    ];
+    return list.appendChild(group(t.name || `障碍物 ${i + 1}`, body, {
+      open: false,
+      badge: tr.enabled ? '陷阱' : '',
+      key: `ob:${t.id}`,
+    }));
+  });
+  const trapCount = cfg.obstacleTypes.filter((t) => t.enabled && t.trap.enabled).length;
+  return group('自定义障碍物类型', [
+    h('div', { class: 'hint' }, '每种障碍物类型可独立配置外观、引用状态、随机权重与陷阱属性。列表至少保留一项（清空时会自动回退到内置「障碍物」）。'),
+    list,
+    button('+ 添加障碍物类型', () => {
+      if (cfg.obstacleTypes.length >= MAX_OBSTACLE_TYPES) {
+        toast(`障碍物类型最多 ${MAX_OBSTACLE_TYPES} 个`, 'warn');
+        return;
+      }
+      cfg.obstacleTypes.push({
+        id: `ob_${Math.random().toString(36).slice(2, 8)}`,
+        name: `障碍物 ${cfg.obstacleTypes.length + 1}`,
+        enabled: true,
+        state: 'obstacle',
+        weight: 1,
+        color: '',
+        symbol: '',
+        render: '',
+        trap: { enabled: false, triggerProbability: 1, deathProbability: 0.5, log: true },
+      });
+      rebuildAll();
+    }, 'ghost'),
+  ], { open: false, badge: trapCount ? `${trapCount} 个陷阱` : '' });
+}
+
+/* ---------------- 画布格子编辑器 ---------------- */
+
+/** 「随机池」选择区：为空表示全部启用的障碍物类型 */
+function obstaclePoolEditor(cfg) {
+  const ce = cfg.cellEditor;
+  const box = h('div', { class: 'chips' });
+  const candidates = cfg.obstacleTypes.filter((t) => t.enabled);
+  if (!candidates.length) box.appendChild(h('span', { class: 'mini-label' }, '没有启用的障碍物类型'));
+  for (const t of candidates) {
+    box.appendChild(h('button', {
+      type: 'button',
+      class: `chip${ce.randomPool.includes(t.id) ? ' on' : ''}`,
+      title: `随机权重：${t.weight}`,
+      onclick: () => {
+        const i = ce.randomPool.indexOf(t.id);
+        if (i >= 0) ce.randomPool.splice(i, 1);
+        else ce.randomPool.push(t.id);
+        onSimChange();
+        rebuildAll();
+      },
+    }, `${t.name} · 权重 ${t.weight}`));
+  }
+  return box;
+}
+
+/**
+ * 画布格子编辑器面板。
+ * 除「点击增删」总开关外，把编辑效率相关的可选项（画笔尺寸 / 拖拽连画 / 右键擦除 /
+ * 撤销历史 / 随机放置 / 一键散布）全部收敛到一处，每一项都可独立开关。
+ */
+function cellEditorGroup(cfg) {
+  const ce = cfg.cellEditor;
+  editorCountEl = h('div', { class: 'hint' }, '');
+  // 「已绘制格数 · 可撤销步数」读数：编辑过程中由 syncEditorCount 就地刷新
+  syncEditorCount();
+  const markerOptions = [
+    { value: '', label: '自动（交互标记物首项）' },
+    ...cfg.markerTypes.filter((t) => t.enabled).map((t) => ({ value: t.id, label: t.name })),
+  ];
+  const obstacleOptions = [
+    { value: '', label: '自动（首个启用的类型）' },
+    ...cfg.obstacleTypes.filter((t) => t.enabled).map((t) => ({ value: t.id, label: t.name })),
+  ];
+  const body = [
+    switchField('启用画布格子编辑', chkBind(ce, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用'),
+      '开启后：左键单击格子添加元素、再次单击同一格删除；关闭时点击画布仍是「跳到该格首次经过的步数」'),
+  ];
+  if (!ce.enabled) {
+    body.push(h('div', { class: 'hint' }, '未启用：画布点击保持「跳转到首次经过步数」的原行为。'));
+    return group('画布格子编辑器', body, { open: false });
+  }
+  body.push(
+    h('div', { class: 'sub-title' }, '放置工具'),
+    field('编辑工具', select(ce.tool, CELL_TOOLS.map((v) => ({ value: v, label: CELL_TOOL_LABELS[v] })), (v) => { ce.tool = v; onSimChange(); rebuildAll(); }),
+      '标记物 / 障碍物 / 擦除：擦除工具下点击即清空格子'),
+    ce.tool === 'marker'
+      ? field('标记物类型', select(ce.markerTypeId, markerOptions, (v) => { ce.markerTypeId = v; onSimChange(); rebuildAll(); }),
+        '选择要放置的标记物类型；选「自动」时使用交互标记物状态中的首项')
+      : null,
+    ce.tool === 'obstacle'
+      ? switchField('随机放置模式', chkBind(ce, 'randomObstacle', () => { onSimChange(); rebuildAll(); }, '启用'),
+        '开启后从「随机池」按权重抽取类型；关闭则用下方选中的类型精准放置')
+      : null,
+    ce.tool === 'obstacle' && !ce.randomObstacle
+      ? field('障碍物类型', select(ce.obstacleTypeId, obstacleOptions, (v) => { ce.obstacleTypeId = v; onSimChange(); rebuildAll(); }),
+        '先选类型再点击格子，实现精准放置')
+      : null,
+    ce.tool === 'obstacle' && ce.randomObstacle
+      ? field('随机池', obstaclePoolEditor(cfg), '未选择任何类型时表示「全部启用的障碍物类型」')
+      : null,
+    ce.tool === 'obstacle' && ce.randomObstacle
+      ? field('放置概率', rangeBind(ce, 'randomProbability', () => onSimChange(), { min: 0, max: 1, step: 0.01, number: true }),
+        '每次点击有多大概率真的放置（低于 1 时可能出现「点了没放」）')
+      : null,
+
+    h('div', { class: 'sub-title' }, '编辑效率'),
+    field('画笔尺寸', rangeBind(ce, 'brushSize', () => { onSimChange(); rebuildAll(); }, { min: 1, max: 9, step: 1, number: true }),
+      'n×n 方块：以点击格为中心一次改写多格（画布上会预览实际范围）'),
+    switchField('拖拽连画', chkBind(ce, 'drag', () => onSimChange(), '按住左键拖动连续绘制'),
+      '起手格已放置则本轮为连擦，否则为连画；整轮拖拽只记一条撤销历史'),
+    switchField('右键擦除', chkBind(ce, 'rightClickErase', () => onSimChange(), '右键单击直接清空格子'),
+      '仅在编辑模式下接管右键；关闭后右键恢复浏览器菜单'),
+    field('撤销历史上限', numBind(ce, 'historyLimit', () => onSimChange(), { min: 0, max: 1000 }),
+      '0 表示关闭历史记录；快捷键 Ctrl+Z 撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做'),
+    field('散布密度', rangeBind(ce, 'scatterDensity', () => onSimChange(), { min: 0, max: 1, step: 0.01 }),
+      '「一键随机散布」按此密度在整个网格上随机落点'),
+    row(
+      button('一键随机散布', scatterPainted, 'ghost'),
+      button('撤销', () => { if (!undoEdit()) toast('没有可撤销的编辑', 'info'); }, 'ghost'),
+      button('重做', () => { if (!redoEdit()) toast('没有可重做的编辑', 'info'); }, 'ghost'),
+      button('清空手绘', clearPainted, 'ghost danger'),
+    ),
+    editorCountEl,
+  );
+  return group('画布格子编辑器', body, { open: false, badge: `${ce.painted.length} 格` });
 }
 
 /** CA 快捷模板 → 预设 id 的映射：应用后同步场景名，使「预设模板」下拉正确回显 */

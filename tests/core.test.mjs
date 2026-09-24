@@ -13,6 +13,9 @@ import {
   LIFE_MIN, LIFE_MAX, TRAIL_COLOR_MODES,
   DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
   MAX_AGENT_SLOTS, agentSafetyEnabled,
+  MOVE_KEYS, MOVE_LABELS, CELL_TOOLS, CELL_TOOL_LABELS, MARKER_CONDITION_TYPES,
+  MAX_MARKER_TYPES, MAX_OBSTACLE_TYPES,
+  obstacleTypeForState, isTrapState, markerConditionMet, markerTypesForState,
 } from '../src/core/config.js';
 import {
   buildTrail, unwrapTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -4243,6 +4246,322 @@ section('逐蛇安全避撞 UI 与「场景与运行」选项卡扩充（源码�
   ok(/const v = state\.cfg \? Number\(state\.cfg\.frameCap\) : NaN;/.test(app)
     && /return Number\.isFinite\(v\) && v > 0 \? clampFrameCap\(v\) : DEFAULT_FRAME_CAP;/.test(app),
     '跨度取值与配置同样收敛到 [1, MAX_FRAME_CAP]，缺省时回退默认值');
+}
+
+/* ---------- 画布格子编辑 / 自定义标记物 / 障碍物陷阱 / 「停止」移动选项 ---------- */
+
+section('画布格子编辑器：配置规范化与幂等（自定义特性）');
+{
+  const d = defaultConfig();
+  eq(d.cellEditor.enabled, false, '格子编辑器默认关闭（点击画布仍为「跳转」语义）');
+  eq(d.cellEditor.tool, 'marker', '默认工具为「标记物」');
+  eq(d.cellEditor.brushSize, 1, '默认画笔为单格');
+  eq(d.cellEditor.rightClickErase, true, '右键擦除默认开启');
+  eq(d.cellEditor.painted.length, 0, '默认没有已绘制格子');
+  eq(CELL_TOOLS.length, 3, '提供「标记物 / 障碍物 / 擦除」三种工具');
+  ok(CELL_TOOLS.every((t) => !!CELL_TOOL_LABELS[t]), '每种工具都有中文文案');
+
+  const raw = {
+    ...d,
+    grid: { type: 'square', width: 8, height: 6, boundary: 'wrap' },
+    cellEditor: {
+      ...d.cellEditor,
+      enabled: true,
+      tool: '不存在的工具',
+      brushSize: 99,
+      randomProbability: 1.7,
+      scatterDensity: -1,
+      historyLimit: 1e6,
+      randomPool: ['a', 'a', 'b'],
+      painted: [
+        { col: 1, row: 1, state: 'obstacle' },
+        { col: 1, row: 1, state: 'marker' },   // 同坐标后写覆盖前写
+        { col: -1, row: 0, state: 'marker' },  // 越界剔除
+        { col: 0, row: 9, state: 'marker' },   // 越界剔除
+        { col: 2, row: 2, state: 'empty' },    // 空状态剔除
+        { col: 3, row: 3, state: 'nope' },     // 不存在的状态剔除
+        { col: 'x', row: 4, state: 'marker' }, // 非法坐标剔除
+      ],
+    },
+  };
+  const n = normalizeConfig(raw);
+  eq(n.cellEditor.tool, 'marker', '非法工具回退默认值');
+  eq(n.cellEditor.brushSize, 9, '画笔尺寸收敛到上限 9');
+  eq(n.cellEditor.randomProbability, 1, '放置概率夹取到 [0,1]');
+  eq(n.cellEditor.scatterDensity, 0, '散布密度夹取到 [0,1]');
+  eq(n.cellEditor.historyLimit, 1000, '撤销历史上限收敛到上限');
+  eq(n.cellEditor.randomPool.join(','), 'a,b', '随机池去重且保序');
+  eq(n.cellEditor.painted.length, 1, '越界 / 空状态 / 非法坐标被剔除，同坐标只保留最后一次绘制');
+  eq(n.cellEditor.painted[0].state, 'marker', '同坐标后写的状态胜出');
+  eq(JSON.stringify(normalizeConfig(JSON.parse(JSON.stringify(n)))), JSON.stringify(n),
+    '格子编辑器规范化幂等（JSON 往返一致）');
+
+  const back = decodeConfigFromToken(encodeConfigToToken(n));
+  eq(back.cellEditor.enabled, true, '格子编辑器开关可随分享链接往返');
+  eq(back.cellEditor.painted.length, 1, '已绘制格子可随分享链接往返');
+  eq(back.cellEditor.painted[0].state, 'marker', '已绘制格子的状态原样保留');
+}
+
+section('自定义标记物类型：规范化、生效条件与扩展接口');
+{
+  const d = defaultConfig();
+  eq(d.markerTypes.length, 0, '默认不含自定义标记物类型（旧场景行为不变）');
+  ok(MARKER_CONDITION_TYPES.includes('probability') && MARKER_CONDITION_TYPES.includes('minLength'),
+    '生效条件类型集合覆盖概率 / 长度门槛等维度');
+
+  const raw = {
+    ...d,
+    markerTypes: [
+      { id: 'm1', name: '增肥', state: '不存在的状态', weight: -3, condition: { type: '不存在的条件', value: 5 }, effect: null },
+      { id: 'm1', name: '重复 id 应被剔除', state: 'marker' },
+      { id: 'm2', name: '概率', state: 'marker', weight: 2, condition: { type: 'probability', value: 9 }, effect: { mode: 'delta', value: 2.6, probability: 3, consume: false } },
+      { id: 'm3', name: '长度门槛', state: 'marker', condition: { type: 'minLength', value: 8.7 } },
+    ],
+  };
+  const n = normalizeConfig(raw);
+  eq(n.markerTypes.length, 3, '重复 id 的类型被剔除');
+  eq(n.markerTypes[0].state, 'marker', '不存在的引用状态回退到默认标记物状态');
+  eq(n.markerTypes[0].weight, 0, '触发权重下限为 0');
+  eq(n.markerTypes[0].condition.type, 'always', '非法生效条件回退「始终生效」');
+  eq(n.markerTypes[0].effect, null, '未配置内置反馈时保留为空（沿用反馈规则表）');
+  eq(n.markerTypes[1].condition.value, 1, '概率型条件夹取到 [0,1]');
+  eq(n.markerTypes[1].effect.value, 3, '内置反馈数值被取整');
+  eq(n.markerTypes[1].effect.probability, 1, '内置反馈概率夹取到 [0,1]');
+  eq(n.markerTypes[1].effect.consume, false, '内置反馈的「消耗标记物」可关闭');
+  eq(n.markerTypes[2].condition.value, 9, '长度门槛取整');
+  eq(JSON.stringify(normalizeConfig(JSON.parse(JSON.stringify(n)))), JSON.stringify(n),
+    '自定义标记物类型规范化幂等');
+  ok(n.markerTypes.length <= MAX_MARKER_TYPES, '类型数量受上限约束');
+  ok(MAX_OBSTACLE_TYPES > 0, '障碍物类型同样保留数量上限（留给后续扩展）');
+
+  // 扩展接口：运行期只依赖「按状态筛选 + 条件判定 + 权重抽取」，追加一条记录即可生效
+  eq(markerTypesForState(n, 'marker').length, 3, '按状态筛选出全部启用类型');
+  eq(markerTypesForState({ markerTypes: [{ ...n.markerTypes[0], enabled: false }] }, 'marker').length, 0,
+    '停用的类型不参与抽取');
+  const rc = () => new RNG(7);
+  ok(markerConditionMet({ condition: { type: 'always' } }, { length: 1, steps: 0, rng: rc() }), '「始终生效」条件恒为真');
+  ok(!markerConditionMet({ condition: { type: 'minLength', value: 10 } }, { length: 3, steps: 0, rng: rc() }), '长度未达门槛时不生效');
+  ok(markerConditionMet({ condition: { type: 'minLength', value: 3 } }, { length: 3, steps: 0, rng: rc() }), '长度达到门槛即生效');
+  ok(markerConditionMet({ condition: { type: 'probability', value: 1 } }, { length: 1, steps: 0, rng: rc() }), '概率 1 必定生效');
+  ok(!markerConditionMet({ condition: { type: 'probability', value: 0 } }, { length: 1, steps: 0, rng: rc() }), '概率 0 从不生效');
+}
+
+/* 行为级场景的公共底稿：短步数、直线移动、关闭安全避撞与多余结束规则，保证可复现 */
+function editorScene(over = {}) {
+  const c = defaultConfig();
+  c.grid = { type: 'square', width: 12, height: 12, boundary: 'wrap' };
+  c.start = { col: 2, row: 2, direction: 'right' };
+  c.body = { ...c.body, initialLength: 3 };
+  c.moveRules = { left: 0, straight: 1, right: 0, stop: 0 };
+  c.safety = { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false };
+  c.multiSnake = { ...c.multiSnake, enabled: false };
+  c.endConditions = {
+    ...c.endConditions,
+    maxSteps: 10, wall: false, outOfBounds: false, selfCollision: false,
+    noMove: false, obstacle: false, ruleEnd: false,
+  };
+  return applyPatch(c, over);
+}
+
+const TRAP_TYPE = (trap) => ([{
+  id: 'ob_trap', name: '致命陷阱', enabled: true, state: 'obstacle', weight: 1,
+  color: '', symbol: '', render: '', trap,
+}]);
+
+section('格子绘制 / 障碍物陷阱 / 「停止」移动选项（行为级）');
+{
+  /* 1) 点击绘制的格子真的写入初始环境 */
+  const blocked = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'obstacle' }] },
+    endConditions: { obstacle: true },
+  });
+  const rBlocked = new Simulation(blocked).run();
+  eq(rBlocked.endReason.code, 'obstacle', '绘制的障碍物挡在移动体前方（绘制格写入了初始世界）');
+  eq(rBlocked.stats.steps, 1, '第一步即判定为撞障碍物');
+
+  /* 2) 陷阱：触发 + 判定致命 → 以「踩中陷阱」结束，并留下完整日志 */
+  const lethal = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'obstacle' }] },
+    obstacleTypes: TRAP_TYPE({ enabled: true, triggerProbability: 1, deathProbability: 1, log: true }),
+  });
+  const rLethal = new Simulation(lethal).run();
+  eq(rLethal.endReason.code, 'trap', '尝试移动到陷阱且死亡判定通过时以「踩中陷阱」结束');
+  eq(END_LABELS.trap, '踩中陷阱', '结束原因文案为「踩中陷阱」');
+  eq(rLethal.stats.trapTriggers, 1, '记录一次陷阱触发');
+  eq(rLethal.stats.trapDeaths, 1, '记录一次陷阱死亡');
+  ok(rLethal.logs.some((l) => l.ruleId === 'trap' && l.trigger === 'trapDeath'), '陷阱触发与死亡判定写入运行日志');
+
+  /* 3) 陷阱：触发但死亡判定未通过 → 退回普通障碍物阻塞 */
+  const soft = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'obstacle' }] },
+    obstacleTypes: TRAP_TYPE({ enabled: true, triggerProbability: 1, deathProbability: 0, log: true }),
+    endConditions: { obstacle: true },
+  });
+  const rSoft = new Simulation(soft).run();
+  eq(rSoft.stats.trapTriggers, 1, '陷阱被触发');
+  eq(rSoft.stats.trapDeaths, 0, '死亡判定未通过时不计入陷阱死亡');
+  eq(rSoft.endReason.code, 'obstacle', '未致命时退回普通障碍物阻塞（仍遵循「撞到障碍物」结束规则）');
+  ok(rSoft.logs.some((l) => l.trigger === 'trapTriggered'), '未致命时同样记录陷阱日志');
+
+  /* 4) 触发概率为 0 → 陷阱从不触发，也不写日志 */
+  const muted = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'obstacle' }] },
+    obstacleTypes: TRAP_TYPE({ enabled: true, triggerProbability: 0, deathProbability: 1, log: true }),
+    endConditions: { obstacle: true },
+  });
+  const rMuted = new Simulation(muted).run();
+  eq(rMuted.stats.trapTriggers, 0, '触发概率为 0 时陷阱从不触发');
+  eq(rMuted.endReason.code, 'obstacle', '未触发时按普通障碍物处理');
+  ok(!rMuted.logs.some((l) => l.ruleId === 'trap'), '未触发时不写陷阱日志');
+
+  /* 5) 陷阱识别入口与概率夹取 */
+  ok(isTrapState(lethal, 'obstacle'), '启用了陷阱的障碍物状态被识别为陷阱格');
+  ok(!isTrapState(muted, 'obstacle'), '触发概率为 0 的陷阱不算有效陷阱格');
+  eq(obstacleTypeForState(lethal, 'obstacle').name, '致命陷阱', '按状态取到对应障碍物类型（陷阱判定的唯一入口）');
+  eq(obstacleTypeForState(lethal, 'marker'), null, '无对应障碍物类型时返回空');
+  const clampTrap = normalizeConfig({
+    ...defaultConfig(),
+    obstacleTypes: TRAP_TYPE({ enabled: true, triggerProbability: 9, deathProbability: -2, log: false }),
+  });
+  eq(clampTrap.obstacleTypes[0].trap.triggerProbability, 1, '触发概率夹取到上限 1');
+  eq(clampTrap.obstacleTypes[0].trap.deathProbability, 0, '死亡概率夹取到下限 0');
+  eq(clampTrap.obstacleTypes[0].trap.log, false, '陷阱日志开关可关闭');
+  eq(JSON.stringify(normalizeConfig(JSON.parse(JSON.stringify(clampTrap)))), JSON.stringify(clampTrap),
+    '障碍物类型规范化幂等');
+  eq(defaultConfig().obstacleTypes.length >= 1, true, '默认内置一条障碍物类型');
+  eq(defaultConfig().obstacleTypes[0].trap.enabled, false, '内置障碍物的陷阱默认关闭（旧场景行为不变）');
+
+  /* 6)「停止」移动选项 */
+  eq(MOVE_KEYS.includes('stop'), true, '移动方向选项包含「停止」');
+  eq(MOVE_LABELS.stop, '停止', '「停止」有中文文案');
+  eq(defaultConfig().moveRules.stop, 0, '「停止」默认权重为 0（默认行为与旧版一致）');
+  eq(normalizeConfig({ ...defaultConfig(), moveRules: { left: 1, straight: 1, right: 1 } }).moveRules.stop, 0,
+    '旧配置不含 stop 字段时补齐为 0（向后兼容）');
+  eq(normalizeConfig({ ...defaultConfig(), moveRules: { left: 1, straight: 1, right: 1, stop: -5 } }).moveRules.stop, 0,
+    '负权重收敛到 0');
+
+  const rDefault = new Simulation(editorScene()).run();
+  eq(rDefault.stats.stops, 0, '权重为 0 时「停止」从不被选中');
+  eq(rDefault.stats.trapTriggers, 0, '默认配置（陷阱关闭）下不触发陷阱');
+
+  const stopCfg = editorScene({ moveRules: { left: 0, straight: 0, right: 0, stop: 1 }, endConditions: { maxSteps: 10 } });
+  const rStop = new Simulation(stopCfg).run();
+  eq(rStop.stats.steps, 10, '「停止」不产生位移，运行持续到步数上限');
+  eq(rStop.stats.stops, 10, '每一步都记录一次「停止」');
+  eq(rStop.summary.stops, 10, '统计汇总包含「停止」次数');
+  const head0 = rStop.frames[0].agents[0].segments[0];
+  const headN = rStop.frames[rStop.frames.length - 1].agents[0].segments[0];
+  eq(head0.join(','), '2,2', '起点按配置落位');
+  eq(headN.join(','), head0.join(','), '「停止」不产生任何有效位移（位置始终不变）');
+  ok(rStop.stats.collisions >= 10, '「停止」计入碰撞统计（与撞障碍物口径一致）');
+
+  const stopEnd = editorScene({ moveRules: { left: 0, straight: 0, right: 0, stop: 1 }, endConditions: { obstacle: true } });
+  const rStopEnd = new Simulation(stopEnd).run();
+  eq(rStopEnd.endReason.code, 'obstacle', '「停止」的收尾与「尝试移动到障碍物」完全一致');
+  eq(rStopEnd.stats.steps, 1, '第一步即按撞障碍物规则收尾');
+}
+
+section('自定义标记物类型：类型层内置反馈（行为级）');
+{
+  const cfg = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'marker' }] },
+    caMode: { markerInteraction: { enabled: true, states: ['marker'] } },
+    body: { lengthPolicy: { mode: 'variable' } },
+    markerTypes: [{
+      id: 'mk_big', name: '大补', enabled: true, state: 'marker', weight: 1,
+      condition: { type: 'always', value: 0 },
+      effect: { mode: 'delta', value: 3, probability: 1, consume: true, consumeTo: 'empty', color: '' },
+    }],
+    endConditions: { maxSteps: 1 },
+  });
+  const r = new Simulation(cfg).run();
+  eq(r.stats.markerInteractions, 1, '踏入自定义标记物触发一次反馈');
+  eq(r.stats.maxLength, 6, '类型层内置反馈生效（长度 3 → 6）');
+
+  const gate = editorScene({
+    cellEditor: { enabled: true, painted: [{ col: 3, row: 2, state: 'marker' }] },
+    caMode: { markerInteraction: { enabled: true, states: ['marker'] } },
+    body: { lengthPolicy: { mode: 'variable' } },
+    markerTypes: [{
+      id: 'mk_gate', name: '需要长度', enabled: true, state: 'marker', weight: 1,
+      condition: { type: 'minLength', value: 50 },
+      effect: { mode: 'delta', value: 3, probability: 1, consume: true, consumeTo: 'empty', color: '' },
+    }],
+    endConditions: { maxSteps: 1 },
+  });
+  const rGate = new Simulation(gate).run();
+  eq(rGate.stats.markerInteractions, 0, '生效条件不满足时该类型不介入（无任何反馈）');
+}
+
+section('格子交互 / 自定义标记物 / 陷阱 的界面与差异比对（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const canvas = readFileSync(new URL('../src/ui/canvas.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+
+  /* 1) 点击编辑：命中反查 + 增删 + 拖拽 + 右键擦除 + 撤销重做 */
+  ok(/function cellEditorActive\(\)/.test(app) && /function applyEditAt\(col, row/.test(app),
+    '画布点击编辑走「命中反查 → 应用编辑」链路');
+  ok(/renderer\.hitTest\(e\.clientX, e\.clientY\)/.test(app), '点击坐标经 renderer.hitTest 反查格子（无交互偏移）');
+  ok(/function undoEdit\(\)/.test(app) && /function redoEdit\(\)/.test(app), '提供撤销 / 重做');
+  ok(/function paintByDrag\(/.test(app) && /function commitPainted\(/.test(app), '支持拖拽连画与批量提交');
+  ok(/rightClickErase/.test(app) && /contextmenu/.test(app), '支持右键擦除');
+  ok(/function scatterPainted\(\)/.test(app) && /scatterDensity/.test(app), '支持按密度一键随机散布');
+  ok(/function syncEditorCount\(\)/.test(app), '面板实时回显已绘制格子数量');
+
+  /* 2) 标记物说明浮层（问号图标 + 逐条说明） */
+  ok(/function markerStateTip\(/.test(app) && /function markerStateChips\(/.test(app),
+    '标记物状态 chips 带说明浮层生成器');
+  ok(/chip-help/.test(app) && /chip-help/.test(css), '问号入口有独立样式（与 chips 同行排列）');
+  ok(/功能<\/b>：/.test(app) && /生效规则<\/b>：/.test(app) && /使用场景<\/b>：/.test(app),
+    '说明面板逐项解释功能 / 生效规则 / 使用场景');
+  ok(/function escHtml\(/.test(app), '自定义名称经转义后写入浮层（避免破坏 HTML）');
+
+  /* 3) 自定义标记物 / 障碍物类型编辑器 */
+  ok(/function markerTypesGroup\(cfg\)/.test(app) && /function obstacleTypesGroup\(cfg\)/.test(app),
+    '提供自定义标记物类型与障碍物类型分组');
+  ok(/panels\.get\('extend'\)\.append\([\s\S]{0,200}markerTypesGroup\(cfg\)/.test(app)
+    && /obstacleTypesGroup\(cfg\)/.test(app), '两组装配进「扩展」选项卡');
+  ok(/function cellEditorGroup\(cfg\)/.test(app) && /panels\.get\('core'\)\.append\([\s\S]{0,400}cellEditorGroup\(cfg\)/.test(app),
+    '格子编辑器装配进「核心」选项卡');
+  ok(/randomObstacle/.test(app) && /obstaclePoolEditor\(cfg\)/.test(app),
+    '障碍物随机放置模式与随机池编辑器齐备');
+
+  /* 4) 移动权重面板纳入「停止」 */
+  ok(/MOVE_KEYS\.map\(/.test(app) && /MOVE_LABELS\[/.test(app),
+    '移动权重滑条按「左 / 直 / 右 / 停止」统一生成（含条件概率规则）');
+
+  /* 5) 陷阱可视化 */
+  ok(/trapStates/.test(app) && /trapStates/.test(canvas), '陷阱格标识状态已注入渲染器');
+  ok(/showTraps/.test(canvas) && /trapColor/.test(canvas), '渲染器支持陷阱标识开关与颜色');
+  ok(/isTrapState/.test(app), '界面按 isTrapState 判断陷阱格（与核心判定同一入口）');
+
+  /* 6) 差异比对的中文标签与分组 */
+  ok(/stop: '停止权重'/.test(diffSrc), '「停止」权重在差异比对中有中文标签');
+  ok(/obstacleTypes: '自定义障碍物类型'/.test(diffSrc) && /markerTypes: '自定义标记物类型'/.test(diffSrc)
+    && /cellEditor: '画布格子编辑器'/.test(diffSrc), '新增配置分组在差异比对中有中文名称');
+  ok(/trap: '陷阱属性'/.test(diffSrc) && /triggerProbability: '触发概率'/.test(diffSrc)
+    && /deathProbability: '死亡概率'/.test(diffSrc), '陷阱两级概率在差异比对中有中文标签');
+  ok(/showTraps: '陷阱格标识'/.test(diffSrc) && /trapColor: '陷阱标识色'/.test(diffSrc),
+    '陷阱可视化字段在差异比对中有中文标签');
+
+  const base = normalizeConfig(defaultConfig());
+  const next = normalizeConfig({
+    ...defaultConfig(),
+    moveRules: { ...base.moveRules, stop: 0.4 },
+    cellEditor: { ...base.cellEditor, enabled: true, brushSize: 3 },
+    obstacleTypes: TRAP_TYPE({ enabled: true, triggerProbability: 0.5, deathProbability: 0.25, log: true }),
+  });
+  const groups = summarizeConfigChanges(diffConfigs(base, next));
+  const titles = groups.map((g) => g.title).join(' · ');
+  ok(titles.includes('移动规则'), '差异比对识别到移动规则分组');
+  ok(titles.includes('画布格子编辑器'), '差异比对识别到画布格子编辑器分组');
+  ok(titles.includes('自定义障碍物类型'), '差异比对识别到自定义障碍物类型分组');
+  const items = groups.flatMap((g) => g.items).join(' \n ');
+  ok(items.includes('停止权重'), '差异条目使用「停止权重」而非原始字段名');
+  ok(items.includes('画笔尺寸'), '差异条目使用「画笔尺寸」而非原始字段名');
+  ok(items.includes('启用'), '格子编辑器开关在差异条目中可读');
 }
 
 /* ---------- 结果 ---------- */

@@ -125,7 +125,9 @@ html, body {
   font-size: 12px;
   margin-bottom: 3px;
 }
-.tooltip .tip-desc { display: block; color: var(--text); }
+/* line-height 放宽：标记物类型说明是多行分点文案（用 <br> 分行），需要更松的行距 */
+.tooltip .tip-desc { display: block; color: var(--text); line-height: 1.55; }
+.tooltip .tip-desc b { color: var(--accent); font-weight: 600; }
 
 /* ---------------- 控件 ---------------- */
 
@@ -363,6 +365,24 @@ html, body {
 }
 .chip.on { background: #1c3b5a; border-color: var(--accent); color: #d7ecff; }
 .chips-line { display: flex; gap: 12px; flex-wrap: wrap; }
+/* 标记物 chip 与其「?」说明入口同行排列（说明浮层复用画布 tooltip，不占布局空间） */
+.chip-item { display: inline-flex; align-items: center; gap: 2px; }
+.chip-help {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: #0d1117;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+.chip-help:hover, .chip-help:focus-visible { color: var(--text); border-color: var(--accent); }
 
 /* ---------------- 规则编辑 ---------------- */
 
