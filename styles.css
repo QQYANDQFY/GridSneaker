@@ -203,8 +203,38 @@ html, body {
 .field-hint { display: block; color: #6f7d8c; font-size: 11px; margin-top: 3px; }
 
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
-.row > .field { flex: 1 1 96px; }
-.row > .check-wrap { padding-bottom: 4px; }
+.row > .field { flex: 1 1 96px; min-width: 0; }
+.row > .check-wrap { padding-bottom: 4px; min-width: 0; }
+
+/*
+ * 排序 / 删除按钮簇（↑ ↓ ✕）：
+ * 整簇作为一个不可拆分的 flex 项（flex: 0 0 auto + nowrap），
+ * 空间足够时贴右显示；空间不足时整簇一起换行，
+ * 绝不会出现「↑ 留在上一行、↓ 被挤到下一行」的错位。
+ */
+.row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+/*
+ * 统一簇内按钮的盒模型：↑ ↓ 是窄字形、✕ 是宽字形，若按内容撑高会在同一行内
+ * 产生 2px 上下的错位。固定行高 + 居中对齐后三个按钮的盒子完全一致。
+ */
+.row-actions .btn {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 6px;
+  line-height: 1;
+}
 .hint { color: #6f7d8c; font-size: 11px; margin: 4px 0; }
 .mini-label { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .sub-title { color: var(--accent); font-size: 12px; margin: 10px 0 2px; font-weight: 600; }
@@ -289,10 +319,14 @@ html, body {
   from { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0); }
   to { box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.32); }
 }
-.end-row .field { margin: 0; flex: 0 0 118px; }
+.end-row .field { margin: 0; flex: 0 1 118px; min-width: 54px; }
 .end-row .field-label { margin-bottom: 1px; }
+/* 优先级行：勾选项可收缩，按钮簇不换行（详见 .row-actions） */
+.end-row > .check-wrap { flex: 1 1 auto; min-width: 0; }
+.end-row .row-actions { align-items: center; }
 .speed-wrap { width: auto; flex: 0 1 320px; }
 .priority-no {
+  flex: 0 0 auto;
   width: 18px;
   text-align: center;
   color: var(--muted);
@@ -387,6 +421,28 @@ html, body {
   .query-item { grid-template-columns: 84px 1fr; }
   .query-item .query-meta { grid-column: 2; }
 }
+
+/* ---------------- 轨迹快照对比 ---------------- */
+
+.compare-stat { white-space: pre-line; }
+.compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1117;
+  padding: 5px 7px;
+}
+.compare-item {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-item:first-child { color: var(--text); }
 
 .frame-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .end-label {

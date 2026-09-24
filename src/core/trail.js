@@ -208,3 +208,90 @@ export function trailCellsToText(cells) {
     .map((c) => `(${c.col}, ${c.row}) 次序 #${c.order} 首次第 ${c.first} 步 经过 ${c.visits} 次`)
     .join('\n');
 }
+
+/* ------------------------------------------------------------------ */
+/* 轨迹快照与多轨迹对比                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把当前轨迹模型冻结成一份可长期保存的快照（纯数据，不持有渲染资源）。
+ * 之后重跑模拟即可用 compareSnapshots 做「多轨迹对比」：
+ * 同一坐标被两条轨迹同时经过 = 稳定路径；只被其中一条经过 = 差异路径。
+ */
+export function snapshotTrail(trail, grid, label = '') {
+  return {
+    label,
+    grid: grid ? { type: grid.type, width: grid.width, height: grid.height } : null,
+    takenAtTick: trail.maxTick,
+    /** 头部行驶路径（按时间升序），用于叠加绘制虚线参考轨迹 */
+    path: trail.path.map((p) => ({ index: p.index, tick: p.tick, agent: p.agent })),
+    /** 逐格聚合信息，用于集合对比与导出 */
+    cells: trail.order.map((index) => {
+      const c = trail.info.get(index);
+      return { index, col: c.col, row: c.row, order: c.order, visits: c.visits, first: c.first, last: c.last };
+    }),
+  };
+}
+
+/** 快照是否可用于当前网格（尺寸/类型不一致时对比无意义） */
+export function snapshotMatchesGrid(snap, grid) {
+  if (!snap || !snap.grid || !grid) return false;
+  return snap.grid.type === grid.type && snap.grid.width === grid.width && snap.grid.height === grid.height;
+}
+
+/**
+ * 两条轨迹的坐标集合对比。
+ * @returns {{baseCount:number, otherCount:number, shared:number[], onlyBase:number[], onlyOther:number[],
+ *            union:number, overlapRatio:number, maxTickBase:number, maxTickOther:number}}
+ */
+export function compareSnapshots(base, other) {
+  const baseCells = (base && base.cells) || [];
+  const otherCells = (other && other.cells) || [];
+  const a = new Set(baseCells.map((c) => c.index));
+  const b = new Set(otherCells.map((c) => c.index));
+  const shared = [];
+  const onlyBase = [];
+  const onlyOther = [];
+  for (const i of a) (b.has(i) ? shared : onlyBase).push(i);
+  for (const i of b) if (!a.has(i)) onlyOther.push(i);
+  const union = shared.length + onlyBase.length + onlyOther.length;
+  return {
+    baseCount: a.size,
+    otherCount: b.size,
+    shared,
+    onlyBase,
+    onlyOther,
+    union,
+    overlapRatio: union ? shared.length / union : 1,
+    maxTickBase: (base && base.takenAtTick) || 0,
+    maxTickOther: (other && other.takenAtTick) || 0,
+  };
+}
+
+const COMPARE_STATUS = { shared: '共有', onlyBase: '仅基准', onlyOther: '仅当前' };
+
+/** 对比结果导出为 CSV（逐格列出状态，便于在表格里进一步分析） */
+export function compareToCSV(diff) {
+  const rows = [['col', 'row', 'status']];
+  const grid = diff.grid;
+  const emit = (list, status) => {
+    for (const index of list) {
+      rows.push([index % grid.width, Math.floor(index / grid.width), COMPARE_STATUS[status]]);
+    }
+  };
+  emit(diff.onlyBase, 'onlyBase');
+  emit(diff.onlyOther, 'onlyOther');
+  emit(diff.shared, 'shared');
+  return rows.map((r) => r.join(',')).join('\n');
+}
+
+/** 对比结果的可读摘要 */
+export function compareToText(diff) {
+  const pct = (diff.overlapRatio * 100).toFixed(1);
+  return [
+    `基准轨迹：第 ${diff.maxTickBase} 步 · 覆盖 ${diff.baseCount} 格`,
+    `当前轨迹：第 ${diff.maxTickOther} 步 · 覆盖 ${diff.otherCount} 格`,
+    `重合 ${diff.shared.length} 格 · 仅基准 ${diff.onlyBase.length} 格 · 仅当前 ${diff.onlyOther.length} 格`,
+    `重合率 ${pct}%（重合 / 并集，共 ${diff.union} 格）`,
+  ].join('\n');
+}

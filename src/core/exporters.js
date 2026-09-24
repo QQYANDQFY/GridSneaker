@@ -2,6 +2,7 @@
  * 导出能力：配置 JSON、轨迹 CSV/JSON、规则日志、SVG 矢量图、PNG 截图
  */
 import { dirNames } from './grid.js';
+import { buildTrail } from './trail.js';
 
 export function toJSON(obj, pretty = true) {
   return JSON.stringify(obj, null, pretty ? 2 : 0);
@@ -216,6 +217,143 @@ function lerpColor(a, b, t) {
   const pb = [1, 3, 5].map((i) => parseInt(b.substr(i, 2), 16));
   const p = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
   return `#${p.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/* --------------------------- 纯轨迹 SVG --------------------------- */
+
+/**
+ * 纯轨迹 SVG：网格轮廓 + 按亮度渐隐的轨迹折线 + 起点/终点/头部标记。
+ * 与 frameToSVG（连环境单元、日志标注一起画）不同，这里只输出轨迹本身，
+ * 适合直接放进论文 / 设计稿，且是矢量、可无损缩放。
+ *
+ * 渐隐规则与画面渲染保持一致：按「离开头部的步数」衰减，
+ * fadeMode = linear 线性 · exponential 指数，走满 fadeLength 步后完全淡出。
+ */
+export function trailToSVG(result, styleOverride = {}) {
+  const style = { ...SVG_DEFAULT, ...(result.config.style || {}), ...styleOverride };
+  const grid = result.grid;
+  const size = grid.canvasSize(style.cellSize, style.gap, 16);
+  const bg = style.darkMode ? '#0e1116' : '#f7f9fc';
+  const fg = style.darkMode ? '#e6e1f3' : '#1f2933';
+  const gridLine = style.darkMode ? '#232b36' : '#d7dee7';
+  const trailA = style.darkMode ? '#1d4e89' : '#a9c8e8';
+  const trailB = style.darkMode ? '#63b3ed' : '#2b6cb0';
+  const trail = buildTrail(grid, result.frames);
+  const spec = svgFadeSpec(style);
+  const pitch = style.cellSize + style.gap;
+
+  const parts = [];
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${size.width.toFixed(1)}" height="${size.height.toFixed(1)}" viewBox="0 0 ${size.width.toFixed(1)} ${size.height.toFixed(1)}" font-family="system-ui, sans-serif">`);
+  parts.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
+
+  if (style.showGrid) {
+    for (let row = 0; row < grid.height; row++) {
+      for (let col = 0; col < grid.width; col++) {
+        const p = grid.toPixel({ col, row }, style.cellSize, style.gap);
+        parts.push(cellShape(grid, style, p.x, p.y, gridLine, 'none', 1));
+      }
+    }
+  }
+
+  // 轨迹：按「步数连续 + 同一移动体 + 像素间距」切段，段内按亮度分档合并成 polyline
+  const baseWidth = Math.max(1.5, (style.cellSize - style.gap) * 0.4);
+  for (const run of svgTrailRuns(grid, trail.path, trail.maxTick, style, pitch)) {
+    if (!run.length) continue;
+    if (run.length === 1) {
+      const st = svgFadeStyle(run[0].t, trailA, trailB, baseWidth);
+      parts.push(`<circle cx="${run[0].x.toFixed(1)}" cy="${run[0].y.toFixed(1)}" r="${(baseWidth * 0.5).toFixed(1)}" fill="${st.color}" fill-opacity="${st.alpha.toFixed(3)}"/>`);
+      continue;
+    }
+    let start = 0;
+    let bucket = svgFadeBucket((run[0].t + run[1].t) / 2);
+    for (let k = 1; k < run.length; k++) {
+      const next = k + 1 < run.length ? svgFadeBucket((run[k].t + run[k + 1].t) / 2) : -1;
+      if (next === bucket) continue;
+      const st = svgFadeStyle((run[start].t + run[k].t) / 2, trailA, trailB, baseWidth);
+      const pts = [];
+      for (let j = start; j <= k; j++) pts.push(`${run[j].x.toFixed(1)},${run[j].y.toFixed(1)}`);
+      parts.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="${st.color}" stroke-width="${st.width.toFixed(2)}" stroke-opacity="${st.alpha.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+      start = k;
+      bucket = next;
+    }
+  }
+
+  // 起点 / 终点 / 头部
+  const first = result.frames[0] && result.frames[0].agents[0];
+  const last = result.frames[result.frames.length - 1];
+  const head = last && last.agents[0] && last.agents[0].segments[0];
+  const r = style.cellSize / 4;
+  if (first) {
+    const p = grid.toPixel({ col: first.segments[0][0], row: first.segments[0][1] }, style.cellSize, style.gap);
+    parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="#51cf66" stroke-width="2"/>`);
+  }
+  if (head) {
+    const p = grid.toPixel({ col: head[0], row: head[1] }, style.cellSize, style.gap);
+    parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${(r * 0.8).toFixed(1)}" fill="#ffd43b" fill-opacity="0.9"/>`);
+  }
+
+  const fadeLabel = style.trailFade ? `渐隐 ${spec.mode === 'exponential' ? '指数' : '线性'} / ${spec.len} 步` : '轨迹不渐隐';
+  parts.push(`<text x="${size.margin.toFixed(1)}" y="${(size.margin * 0.9).toFixed(1)}" fill="${fg}" font-size="12" opacity="0.7">轨迹 ${trail.order.length} 格 · 第 ${trail.maxTick} 步 · ${fadeLabel} · 种子 ${result.seed}</text>`);
+  parts.push('</svg>');
+  return parts.join('\n');
+}
+
+const SVG_FADE_BUCKETS = 16;
+const SVG_EXP_K = 6;
+
+function svgFadeSpec(style) {
+  const len = Number.isFinite(style.fadeLength) ? Math.max(1, style.fadeLength) : 60;
+  return { on: style.trailFade !== false, len, mode: style.fadeMode === 'exponential' ? 'exponential' : 'linear' };
+}
+
+function svgFadeProgress(age, spec) {
+  const p = Math.max(0, Math.min(1, age / spec.len));
+  if (spec.mode === 'exponential') {
+    return (Math.exp(-SVG_EXP_K * p) - Math.exp(-SVG_EXP_K)) / (1 - Math.exp(-SVG_EXP_K));
+  }
+  return 1 - p;
+}
+
+function svgFadeBucket(t) {
+  return Math.max(0, Math.min(SVG_FADE_BUCKETS - 1, Math.floor(Math.max(0, Math.min(1, t)) * SVG_FADE_BUCKETS)));
+}
+
+function svgFadeStyle(t, a, b, baseWidth) {
+  const k = Math.max(0, Math.min(1, t));
+  return {
+    alpha: 0.62 * k,
+    color: lerpColor(a, b, k),
+    width: Math.max(0.5, baseWidth * (0.45 + 0.55 * k)),
+  };
+}
+
+/** 轨迹路径 → 像素连续段（同一移动体、步数连续、像素间距不过大） */
+function svgTrailRuns(grid, path, maxTick, style, pitch) {
+  const spec = svgFadeSpec(style);
+  const runs = [];
+  let run = [];
+  let prev = null;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i];
+    const t = svgFadeProgress(maxTick - p.tick, spec);
+    if (spec.on && t <= 0) {
+      if (run.length) runs.push(run);
+      run = [];
+      prev = null;
+      continue;
+    }
+    const px = grid.toPixel({ col: p.index % grid.width, row: Math.floor(p.index / grid.width) }, style.cellSize, style.gap);
+    const brk = prev && (p.tick - prev.tick !== 1 || p.agent !== prev.agent
+      || Math.hypot(px.x - prev.x, px.y - prev.y) > pitch * 1.7);
+    if (brk && run.length) {
+      runs.push(run);
+      run = [];
+    }
+    run.push({ x: px.x, y: px.y, t: spec.on ? t : 1 });
+    prev = { x: px.x, y: px.y, tick: p.tick, agent: p.agent };
+  }
+  if (run.length) runs.push(run);
+  return runs;
 }
 
 /* --------------------------- 文件下载 --------------------------- */

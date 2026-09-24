@@ -5,9 +5,11 @@ import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES,
+  FADE_LENGTH_LIMIT,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
+  snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
 } from '../core/trail.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
@@ -18,7 +20,7 @@ import { SUBJECT_LABELS, TRIGGER_LABELS } from '../core/rules.js';
 import { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } from '../core/ca.js';
 import { OBJECT_LABELS, STAT_LABELS } from '../core/conditions.js';
 import {
-  configToJSON, trailToCSV, trailToJSON, logsToCSV, logsToJSON,
+  configToJSON, trailToCSV, trailToJSON, trailToSVG, logsToCSV, logsToJSON,
   frameToSVG, downloadText, downloadCanvasPNG, downloadSVG,
 } from '../core/exporters.js';
 import {
@@ -111,6 +113,10 @@ const state = {
   trailFilter: null,
   /** 最近一次筛选命中的轨迹点（含次序 / 次数 / 首末步） */
   trailCells: [],
+  /** 多轨迹对比：基准快照（冻结的轨迹数据） */
+  trailSnapshot: null,
+  /** 多轨迹对比：基准快照与当前运行结果的坐标差异 */
+  compareDiff: null,
 };
 
 const els = {};
@@ -344,6 +350,7 @@ function recompute(opts = {}) {
   updateControls();
   draw();
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
+  refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
 }
 
@@ -940,6 +947,10 @@ function renderSidePanel() {
       button('当前帧 PNG', () => withResult(() => downloadCanvasPNG(renderer.canvas, `frame-${state.frameIndex}.png`))),
       button('当前帧 SVG', () => withResult((r) => downloadSVG(frameToSVG(r, state.frameIndex, state.cfg.style), `frame-${state.frameIndex}.svg`))),
     ),
+    row(
+      button('纯轨迹 SVG', () => withResult((r) => downloadSVG(trailToSVG(r, state.cfg.style), `trail-${r.seed}.svg`))),
+      button('轨迹明细 CSV', () => withResult((r) => downloadText(`trail-cells-${r.seed}.csv`, trailCellsFullCSV(), 'text/csv;charset=utf-8'))),
+    ),
   ], { open: false }));
 
   els.logHost = h('div', { class: 'log-list' });
@@ -952,10 +963,15 @@ function renderSidePanel() {
 
   side.appendChild(trailQueryGroup());
 
+  side.appendChild(trailCompareGroup());
+
   side.appendChild(group('规则触发日志', [
     row(filterSel, els.logCount),
     els.logHost,
   ], { open: true }));
+
+  // 面板重建后统计节点是全新的，需要用当前快照/差异重新填充
+  updateCompareStat();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1088,6 +1104,111 @@ function refreshTrailFilter() {
 function withResult(fn) {
   if (!state.result) { toast('尚未运行模拟', 'warn'); return; }
   fn(state.result);
+}
+
+/** 逐格轨迹明细（列 / 行 / 经过次序 / 次数 / 首末步），比「轨迹 CSV」更细） */
+function trailCellsFullCSV() {
+  if (!renderer || !renderer.trail) return '';
+  return trailCellsToCSV(renderer.trail.order.map((i) => renderer.trail.info.get(i)));
+}
+
+/* ------------------------------------------------------------------ */
+/* 多轨迹对比（轨迹快照）                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 轨迹快照对比：
+ * 「保存基准快照」把当前完整运行的轨迹冻结成基准数据；之后改动种子 / 参数 / 规则并重跑，
+ * 面板给出与基准的坐标差异，画面上叠加基准虚线轨迹与三类差异格：
+ *   黄 = 两条轨迹都经过（稳定路径）· 红 = 仅基准经过 · 绿 = 仅当前经过。
+ */
+function trailCompareGroup() {
+  els.compareStat = h('div', { class: 'hint compare-stat' }, '尚未保存基准快照');
+  els.compareList = h('div', { class: 'compare-list' });
+  return group('轨迹快照对比', [
+    h('div', { class: 'hint' }, '保存基准快照后重新运行（换种子 / 参数 / 规则），即可对比两条轨迹的坐标差异：重合率高说明路径稳定，红色格是基准走过而本次没走的路径。'),
+    row(
+      button('保存基准快照', takeTrailSnapshot, 'primary'),
+      button('清除快照', clearTrailSnapshot, 'ghost'),
+    ),
+    row(
+      button('复制对比摘要', () => {
+        if (!state.compareDiff) { toast('请先保存快照并运行一次', 'warn'); return; }
+        copyText(compareToText(state.compareDiff), '对比摘要已复制');
+      }),
+      button('导出对比 CSV', () => {
+        if (!state.compareDiff) { toast('请先保存快照并运行一次', 'warn'); return; }
+        downloadText(`trail-compare-${state.result.seed}.csv`, compareToCSV(state.compareDiff), 'text/csv;charset=utf-8');
+      }),
+    ),
+    els.compareStat,
+    els.compareList,
+  ], { key: 'trail-compare', open: false });
+}
+
+/** 保存基准快照：冻结当前轨迹模型的纯数据副本 */
+function takeTrailSnapshot() {
+  if (!state.result || !renderer || !renderer.trail) { toast('尚未运行模拟', 'warn'); return; }
+  const grid = state.result.grid;
+  const label = `${state.cfg.meta.name || '未命名'} · 种子 ${state.result.seed} · 第 ${renderer.trail.maxTick} 步`;
+  state.trailSnapshot = snapshotTrail(renderer.trail, grid, label);
+  refreshCompare();
+  toast(`已保存基准快照（${state.trailSnapshot.cells.length} 格）`, 'success');
+}
+
+function clearTrailSnapshot() {
+  state.trailSnapshot = null;
+  state.compareDiff = null;
+  if (renderer) renderer.setCompare(null);
+  updateCompareStat();
+  drawFrameOnly();
+}
+
+/**
+ * 重算对比结果并交给渲染器叠加。
+ * 网格类别 / 尺寸与快照不一致时对比无意义，直接关闭叠加层并给出提示。
+ */
+function refreshCompare() {
+  if (!renderer) return;
+  const grid = state.result && state.result.grid;
+  const snap = state.trailSnapshot;
+  if (!snap) {
+    state.compareDiff = null;
+    renderer.setCompare(null);
+    updateCompareStat();
+    return;
+  }
+  if (!grid || !snapshotMatchesGrid(snap, grid)) {
+    state.compareDiff = null;
+    renderer.setCompare(null);
+    updateCompareStat('基准快照与当前网格不一致（需同为相同类型与尺寸），已暂停叠加对比');
+    return;
+  }
+  const current = snapshotTrail(renderer.trail, grid, 'current');
+  const diff = compareSnapshots(snap, current);
+  diff.grid = grid; // 供 compareToCSV 把格下标还原成行列
+  state.compareDiff = diff;
+  renderer.setCompare({ snapshot: snap, diff });
+  updateCompareStat();
+}
+
+/** 对比统计与逐格列表（列表与画面高亮同源，便于点选核对） */
+function updateCompareStat(override) {
+  const stat = els.compareStat;
+  const list = els.compareList;
+  if (!stat) return;
+  if (list) clear(list);
+  if (override) { stat.textContent = override; return; }
+  const snap = state.trailSnapshot;
+  const diff = state.compareDiff;
+  if (!snap) { stat.textContent = '尚未保存基准快照'; return; }
+  stat.textContent = `基准：${snap.label}`;
+  if (!diff) return;
+  if (list) {
+    for (const line of compareToText(diff).split('\n').slice(1)) {
+      list.appendChild(h('div', { class: 'compare-item' }, line));
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1381,9 +1502,11 @@ function moveRulesGroup(cfg) {
       row(
         textBind(r, 'name', () => {}),
         chkBind(r, 'enabled', () => onSimChange(), '启用'),
-        button('↑', () => { swap(cfg.advancedRules, index, index - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(cfg.advancedRules, index, index + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { cfg.advancedRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(cfg.advancedRules, index, index - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.advancedRules, index, index + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.advancedRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       field('条件', conditionEditor(r.condition, () => onSimChange(), () => rebuildAll()), '条件满足时使用下面的权重'),
       field('左转权重', rangeBind(r.moves, 'left', updWeights, { min: 0, max: 1, step: 0.01, number: true })),
@@ -1593,9 +1716,11 @@ function envRulesGroup(cfg) {
         textBind(rule, 'name', () => { renderSidePanel(); }),
         chkBind(rule, 'enabled', () => onSimChange(), '启用'),
         button('测试', () => testRule(rule), 'ghost small'),
-        button('↑', () => { swap(cfg.environmentRules, index, index - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(cfg.environmentRules, index, index + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { cfg.environmentRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(cfg.environmentRules, index, index - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.environmentRules, index, index + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.environmentRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       row(
         field('规则主体', selBind(rule, 'subject', () => { onSimChange(); rebuildAll(); }, Object.entries(SUBJECT_LABELS).map(([value, label]) => ({ value, label })))),
@@ -1655,9 +1780,11 @@ function actionEditor(rule, action, index) {
       Object.assign(action, defaultAction(v));
       rebuild();
     }),
-    button('↑', () => { swap(rule.actions, index, index - 1); rebuild(); }, 'icon small'),
-    button('↓', () => { swap(rule.actions, index, index + 1); rebuild(); }, 'icon small'),
-    button('✕', () => { rule.actions.splice(index, 1); rebuild(); }, 'icon small danger'),
+    orderActions(
+      button('↑', () => { swap(rule.actions, index, index - 1); rebuild(); }, 'icon small'),
+      button('↓', () => { swap(rule.actions, index, index + 1); rebuild(); }, 'icon small'),
+      button('✕', () => { rule.actions.splice(index, 1); rebuild(); }, 'icon small danger'),
+    ),
   ));
 
   switch (action.type) {
@@ -1781,9 +1908,11 @@ function clauseEditor(parent, clause, index, onChange, rebuild) {
       rebuild();
     }),
     checkbox(clause.invert, (v) => { clause.invert = v; onChange(); }, '取反'),
-    button('↑', () => { swap(parent.clauses, index, index - 1); rebuild(); }, 'icon small'),
-    button('↓', () => { swap(parent.clauses, index, index + 1); rebuild(); }, 'icon small'),
-    button('✕', () => { parent.clauses.splice(index, 1); rebuild(); }, 'icon small danger'),
+    orderActions(
+      button('↑', () => { swap(parent.clauses, index, index - 1); rebuild(); }, 'icon small'),
+      button('↓', () => { swap(parent.clauses, index, index + 1); rebuild(); }, 'icon small'),
+      button('✕', () => { parent.clauses.splice(index, 1); rebuild(); }, 'icon small danger'),
+    ),
   ));
 
   const neighborhoodFields = () => row(
@@ -2026,9 +2155,11 @@ function markerInteractionEditor(ca) {
       row(
         textBind(fx, 'name', () => {}),
         chkBind(fx, 'enabled', () => onSimChange(), '启用'),
-        button('↑', () => { swap(mi.effects, i, i - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(mi.effects, i, i + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { mi.effects.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(mi.effects, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(mi.effects, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { mi.effects.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       row(
         field('作用状态', select(fx.state, stateOptions(), (v) => { fx.state = v; onSimChange(); })),
@@ -2082,9 +2213,11 @@ function caRulesEditor(ca) {
         textBind(rule, 'name', () => {}),
         chkBind(rule, 'enabled', () => onSimChange(), '启用'),
         select(rule.kind, [{ value: 'count', label: '计数规则' }, { value: 'traffic', label: '方向移动' }], (v) => { rule.kind = v; rebuildAll(); }),
-        button('↑', () => { swap(ca.rules, i, i - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(ca.rules, i, i + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { ca.rules.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(ca.rules, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(ca.rules, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { ca.rules.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
     ];
     rows.push(field('当前状态（from）', h('div', { class: 'chips' },
@@ -2286,8 +2419,10 @@ function endGroup(cfg) {
         onSimChange();
       }, END_LABELS[code] || code),
       ...paramFields,
-      button('↑', () => { swap(ec.priority, i, i - 1); rebuildAll(); }, 'icon small'),
-      button('↓', () => { swap(ec.priority, i, i + 1); rebuildAll(); }, 'icon small'),
+      orderActions(
+        button('↑', () => { swap(ec.priority, i, i - 1); rebuildAll(); }, 'icon small'),
+        button('↓', () => { swap(ec.priority, i, i + 1); rebuildAll(); }, 'icon small'),
+      ),
     ];
     rows.push(h('div', {
       class: `end-row${isOn ? ' on' : ''}`,
@@ -2332,6 +2467,13 @@ function styleGroup(cfg) {
       selBind(s, 'bodyJoin', () => onStyleChange(), JOIN_OPTIONS),
     ), '曲线：贝塞尔平滑 · 直线：直线段折线 · 预设角度：按指定夹角切角连接的直线型折线'),
     field('切角角度', rangeBind(s, 'trailAngle', () => onStyleChange(), { min: 5, max: 85, step: 1 }), '仅「预设角度」连接方式生效：连接线与进入方向的夹角（度）'),
+    field('轨迹衰减模式', selBind(s, 'fadeMode', () => onStyleChange(), [
+      { value: 'linear', label: '线性（等速变暗）' },
+      { value: 'exponential', label: '指数（先急后缓）' },
+    ]), '轨迹亮度按「离开头部的步数」衰减；未勾选「轨迹渐隐」时此项不生效'),
+    field('衰减步长（步）', rangeBind(s, 'fadeLength', () => onStyleChange(), {
+      min: FADE_LENGTH_LIMIT.min, max: FADE_LENGTH_LIMIT.max, step: 1, number: true,
+    }), '轨迹点离开头部多少步后完全淡出；步长越大尾巴拖得越长，越小则越快消失'),
     field('渲染效果', row(
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
       checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
@@ -2350,6 +2492,15 @@ function swap(arr, i, j) {
   const t = arr[i];
   arr[i] = arr[j];
   arr[j] = t;
+}
+
+/**
+ * 排序 / 删除按钮簇（↑ ↓ ✕）。
+ * 必须包成一个不换行的容器再放进行里：否则每个按钮都是独立的 flex 项，
+ * 行宽不足时会各自换行，出现「↑ 在上一行、↓ 在下一行」的错位。
+ */
+function orderActions(...buttons) {
+  return h('div', { class: 'row-actions' }, ...buttons.filter(Boolean));
 }
 
 /** 原生 range 输入（返回 input 元素本身，便于外部读写 value/max） */

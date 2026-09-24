@@ -212,8 +212,38 @@ html, body {
 .field-hint { display: block; color: #6f7d8c; font-size: 11px; margin-top: 3px; }
 
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
-.row > .field { flex: 1 1 96px; }
-.row > .check-wrap { padding-bottom: 4px; }
+.row > .field { flex: 1 1 96px; min-width: 0; }
+.row > .check-wrap { padding-bottom: 4px; min-width: 0; }
+
+/*
+ * 排序 / 删除按钮簇（↑ ↓ ✕）：
+ * 整簇作为一个不可拆分的 flex 项（flex: 0 0 auto + nowrap），
+ * 空间足够时贴右显示；空间不足时整簇一起换行，
+ * 绝不会出现「↑ 留在上一行、↓ 被挤到下一行」的错位。
+ */
+.row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+/*
+ * 统一簇内按钮的盒模型：↑ ↓ 是窄字形、✕ 是宽字形，若按内容撑高会在同一行内
+ * 产生 2px 上下的错位。固定行高 + 居中对齐后三个按钮的盒子完全一致。
+ */
+.row-actions .btn {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 6px;
+  line-height: 1;
+}
 .hint { color: #6f7d8c; font-size: 11px; margin: 4px 0; }
 .mini-label { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .sub-title { color: var(--accent); font-size: 12px; margin: 10px 0 2px; font-weight: 600; }
@@ -298,10 +328,14 @@ html, body {
   from { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0); }
   to { box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.32); }
 }
-.end-row .field { margin: 0; flex: 0 0 118px; }
+.end-row .field { margin: 0; flex: 0 1 118px; min-width: 54px; }
 .end-row .field-label { margin-bottom: 1px; }
+/* 优先级行：勾选项可收缩，按钮簇不换行（详见 .row-actions） */
+.end-row > .check-wrap { flex: 1 1 auto; min-width: 0; }
+.end-row .row-actions { align-items: center; }
 .speed-wrap { width: auto; flex: 0 1 320px; }
 .priority-no {
+  flex: 0 0 auto;
   width: 18px;
   text-align: center;
   color: var(--muted);
@@ -396,6 +430,28 @@ html, body {
   .query-item { grid-template-columns: 84px 1fr; }
   .query-item .query-meta { grid-column: 2; }
 }
+
+/* ---------------- 轨迹快照对比 ---------------- */
+
+.compare-stat { white-space: pre-line; }
+.compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1117;
+  padding: 5px 7px;
+}
+.compare-item {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-item:first-child { color: var(--text); }
 
 .frame-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .end-label {
@@ -1739,13 +1795,19 @@ function defaultConfig() {
       highlightRules: true,
       showStartEnd: true,
       trailFade: true,
+      /**
+       * 轨迹亮度衰减：按「离开头部的步数（age）」衰减，走满 fadeLength 步后完全淡出。
+       * fadeMode = linear 线性 · exponential 指数（先急后缓）
+       */
+      fadeMode: 'linear',
+      fadeLength: 60,
       /** 蛇头眼睛默认隐藏，需在「展示样式 → 渲染效果」中主动开启 */
       showEyes: false,
       showEffects: true,
       glow: false,
       /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
-      trailJoin: 'curve',
-      bodyJoin: 'curve',
+      trailJoin: 'line',
+      bodyJoin: 'line',
       /** angle 模式下的预设角度（度）：连接线与进入方向的夹角 */
       trailAngle: 45,
       /** 由连接方式派生，保留以兼容旧配置与导出 */
@@ -2022,6 +2084,12 @@ function normCaRules(raw) {
 /** 轨迹 / 蛇身的连接方式 */
 const JOIN_MODES = ['curve', 'line', 'angle'];
 
+/** 轨迹亮度衰减模式：线性 / 指数 */
+const FADE_MODES = ['linear', 'exponential'];
+
+/** 轨迹衰减步长的允许范围（步） */
+const FADE_LENGTH_LIMIT = { min: 2, max: 2000 };
+
 /**
  * 连接方式规范化：
  * 优先读取 trailJoin / bodyJoin；旧配置只有 smoothTrail / smoothBody 布尔值时按
@@ -2053,6 +2121,8 @@ function normalizeStyle(raw = {}) {
     highlightRules: bool(raw.highlightRules, d.highlightRules),
     showStartEnd: bool(raw.showStartEnd, d.showStartEnd),
     trailFade: bool(raw.trailFade, d.trailFade),
+    fadeMode: FADE_MODES.includes(raw.fadeMode) ? raw.fadeMode : d.fadeMode,
+    fadeLength: clamp(num(raw.fadeLength, d.fadeLength), FADE_LENGTH_LIMIT.min, FADE_LENGTH_LIMIT.max),
     axisLabels: bool(raw.axisLabels, d.axisLabels),
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),
@@ -2727,7 +2797,7 @@ function readConfigFromLocation() {
     return null;
   }
 }
-return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES };
+return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES, FADE_LENGTH_LIMIT };
 })();
 
 /* ===== src/core/trail.js ===== */
@@ -2942,7 +3012,94 @@ function trailCellsToText(cells) {
     .map((c) => `(${c.col}, ${c.row}) 次序 #${c.order} 首次第 ${c.first} 步 经过 ${c.visits} 次`)
     .join('\n');
 }
-return { buildTrail, defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText };
+
+/* ------------------------------------------------------------------ */
+/* 轨迹快照与多轨迹对比                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把当前轨迹模型冻结成一份可长期保存的快照（纯数据，不持有渲染资源）。
+ * 之后重跑模拟即可用 compareSnapshots 做「多轨迹对比」：
+ * 同一坐标被两条轨迹同时经过 = 稳定路径；只被其中一条经过 = 差异路径。
+ */
+function snapshotTrail(trail, grid, label = '') {
+  return {
+    label,
+    grid: grid ? { type: grid.type, width: grid.width, height: grid.height } : null,
+    takenAtTick: trail.maxTick,
+    /** 头部行驶路径（按时间升序），用于叠加绘制虚线参考轨迹 */
+    path: trail.path.map((p) => ({ index: p.index, tick: p.tick, agent: p.agent })),
+    /** 逐格聚合信息，用于集合对比与导出 */
+    cells: trail.order.map((index) => {
+      const c = trail.info.get(index);
+      return { index, col: c.col, row: c.row, order: c.order, visits: c.visits, first: c.first, last: c.last };
+    }),
+  };
+}
+
+/** 快照是否可用于当前网格（尺寸/类型不一致时对比无意义） */
+function snapshotMatchesGrid(snap, grid) {
+  if (!snap || !snap.grid || !grid) return false;
+  return snap.grid.type === grid.type && snap.grid.width === grid.width && snap.grid.height === grid.height;
+}
+
+/**
+ * 两条轨迹的坐标集合对比。
+ * @returns {{baseCount:number, otherCount:number, shared:number[], onlyBase:number[], onlyOther:number[],
+ *            union:number, overlapRatio:number, maxTickBase:number, maxTickOther:number}}
+ */
+function compareSnapshots(base, other) {
+  const baseCells = (base && base.cells) || [];
+  const otherCells = (other && other.cells) || [];
+  const a = new Set(baseCells.map((c) => c.index));
+  const b = new Set(otherCells.map((c) => c.index));
+  const shared = [];
+  const onlyBase = [];
+  const onlyOther = [];
+  for (const i of a) (b.has(i) ? shared : onlyBase).push(i);
+  for (const i of b) if (!a.has(i)) onlyOther.push(i);
+  const union = shared.length + onlyBase.length + onlyOther.length;
+  return {
+    baseCount: a.size,
+    otherCount: b.size,
+    shared,
+    onlyBase,
+    onlyOther,
+    union,
+    overlapRatio: union ? shared.length / union : 1,
+    maxTickBase: (base && base.takenAtTick) || 0,
+    maxTickOther: (other && other.takenAtTick) || 0,
+  };
+}
+
+const COMPARE_STATUS = { shared: '共有', onlyBase: '仅基准', onlyOther: '仅当前' };
+
+/** 对比结果导出为 CSV（逐格列出状态，便于在表格里进一步分析） */
+function compareToCSV(diff) {
+  const rows = [['col', 'row', 'status']];
+  const grid = diff.grid;
+  const emit = (list, status) => {
+    for (const index of list) {
+      rows.push([index % grid.width, Math.floor(index / grid.width), COMPARE_STATUS[status]]);
+    }
+  };
+  emit(diff.onlyBase, 'onlyBase');
+  emit(diff.onlyOther, 'onlyOther');
+  emit(diff.shared, 'shared');
+  return rows.map((r) => r.join(',')).join('\n');
+}
+
+/** 对比结果的可读摘要 */
+function compareToText(diff) {
+  const pct = (diff.overlapRatio * 100).toFixed(1);
+  return [
+    `基准轨迹：第 ${diff.maxTickBase} 步 · 覆盖 ${diff.baseCount} 格`,
+    `当前轨迹：第 ${diff.maxTickOther} 步 · 覆盖 ${diff.otherCount} 格`,
+    `重合 ${diff.shared.length} 格 · 仅基准 ${diff.onlyBase.length} 格 · 仅当前 ${diff.onlyOther.length} 格`,
+    `重合率 ${pct}%（重合 / 并集，共 ${diff.union} 格）`,
+  ].join('\n');
+}
+return { buildTrail, defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText, snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText };
 })();
 
 /* ===== src/core/presets.js ===== */
@@ -5770,6 +5927,12 @@ const STYLE_DEFAULTS = {
   highlightRules: true,
   showStartEnd: true,
   trailFade: true,
+  /**
+   * 轨迹亮度衰减：按「离开头部的步数（age）」衰减，走满 fadeLength 步后完全淡出。
+   * mode = linear 线性（等速变暗） · exponential 指数（先急后缓，观感更接近余晖）
+   */
+  fadeMode: 'linear',
+  fadeLength: 60,
   /** 蛇头眼睛默认隐藏，仅在用户主动开启「展示样式 → 蛇头眼睛」时按朝向绘制 */
   showEyes: false,
   /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
@@ -5777,8 +5940,8 @@ const STYLE_DEFAULTS = {
   /** 蛇身发光，突出移动体位置 */
   glow: false,
   /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
-  trailJoin: 'curve',
-  bodyJoin: 'curve',
+  trailJoin: 'line',
+  bodyJoin: 'line',
   /** angle 模式下的预设角度（度） */
   trailAngle: 45,
   /** 由连接方式派生，保留以兼容旧配置 */
@@ -5796,10 +5959,20 @@ const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentD
 const FADE_BUCKETS = 16;
 /** 轨迹采样点之间的最大像素间距，超过则断开（避免跨边界/换移动体时连出直线） */
 const RUN_GAP_CELLS = 1.7;
+/** 轨迹最亮处（紧贴头部）的不透明度：向尾部一路衰减到 0，保证完全淡出 */
+const FADE_MAX_ALPHA = 0.62;
+/** 指数衰减的陡峭度：越大越「先急后缓」；两端归一后仍然精确到 0 */
+const EXP_FADE_K = 6;
 
 /** 坐标筛选高亮的填充与描边色 */
 const FILTER_FILL = 'rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR = 'rgba(255, 212, 59, 0.95)';
+
+/** 多轨迹对比：基准轨迹虚线色 + 三类差异格配色 */
+const COMPARE_BASE_COLOR = 'rgba(147, 161, 177, 0.9)';
+const COMPARE_SHARED = { fill: 'rgba(255, 212, 59, 0.16)', stroke: 'rgba(255, 212, 59, 0.85)' };
+const COMPARE_ONLY_BASE = { fill: 'rgba(255, 107, 107, 0.18)', stroke: 'rgba(255, 107, 107, 0.9)' };
+const COMPARE_ONLY_OTHER = { fill: 'rgba(81, 207, 102, 0.18)', stroke: 'rgba(81, 207, 102, 0.9)' };
 
 const THEME = {
   dark: { bg: '#0e1116', gridLine: '#232b36', fg: '#e6edf3', axis: '#7d8b9c', trailA: '#1d4e89', trailB: '#63b3ed' },
@@ -5825,6 +5998,10 @@ class Renderer {
     this.filterSet = null;
     this.filterLayer = null;
     this.filterDirty = true;
+    /** 多轨迹对比叠加层：{ snapshot, diff }（同样走离屏层缓存） */
+    this.compare = null;
+    this.compareLayer = null;
+    this.compareDirty = true;
     this.collisionPoints = [];
     this.startCoord = null;
     this.endCoord = null;
@@ -5856,6 +6033,15 @@ class Renderer {
   setFilter(indices) {
     this.filterSet = indices && indices.length ? new Set(indices) : null;
     this.filterDirty = true;
+  }
+
+  /**
+   * 多轨迹对比叠加层。
+   * @param {?{snapshot: object, diff: object}} compare 传入 null 关闭
+   */
+  setCompare(compare) {
+    this.compare = compare || null;
+    this.compareDirty = true;
   }
 
   /**
@@ -5933,6 +6119,7 @@ class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.pixDirty = true;
     this.filterDirty = true;
+    this.compareDirty = true;
   }
 
   theme() {
@@ -5983,6 +6170,7 @@ class Renderer {
     if (s.showGrid) this.drawGrid(th);
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th, tickF);
+    this.drawCompare();
     this.drawFilterHighlight();
     if (s.showEffects) this.drawEffects(i0);
     if (s.highlightRules) this.drawHighlights(frame);
@@ -6088,36 +6276,75 @@ class Renderer {
   /**
    * 取 [0, lo) 范围内的轨迹点，并按连续段切分。
    * 段内保证步数连续、同一移动体、像素间距不过大（跨边界 / 换体时断开，避免连出穿图直线）。
+   *
+   * 亮度按「离开头部走过的步数 age = tick - 该点步数」衰减，而非按整段运行时长归一化：
+   *   - 无论总步数是 50 还是 5000，尾巴都在固定 fadeLength 步内完整淡出；
+   *   - age ≥ fadeLength 的点 alpha 已为 0，直接跳过（同时用二分把起点后移），
+   *     高步数下不会再去遍历、量化、描边上万个早已看不见的点。
    */
-  trailRunsUpTo(lo, span) {
+  trailRunsUpTo(lo, tick) {
     const runs = [];
     const src = this.trailRuns;
+    const spec = this.fadeSpec();
+    const minTick = spec.on ? tick - spec.len : -Infinity;
+    const path = this.trail.path;
     for (let ri = 0; ri < src.length; ri++) {
       const a = src[ri][0];
       if (a >= lo) break;
       const b = Math.min(src[ri][1], lo - 1);
+      if (path[b].tick < minTick) continue; // 整段都已淡出，整段跳过
+      let from = a;
+      if (spec.on) {
+        // 段内二分：第一个 age ≤ fadeLength 的点
+        let loI = a;
+        let hiI = b + 1;
+        while (loI < hiI) {
+          const mid = (loI + hiI) >> 1;
+          if (path[mid].tick >= minTick) hiI = mid;
+          else loI = mid + 1;
+        }
+        from = loI;
+      }
       const run = [];
-      for (let k = a; k <= b; k++) {
-        const tp = this.trail.path[k];
-        run.push({
-          x: this.trailPix[k * 2],
-          y: this.trailPix[k * 2 + 1],
-          gi: k,
-          t: Math.max(0, Math.min(1, tp.tick / span)),
-        });
+      for (let k = from; k <= b; k++) {
+        const t = this.fadeProgress(tick - path[k].tick, spec);
+        if (t <= 0) continue; // 已完全淡出，不产生任何绘制
+        run.push({ x: this.trailPix[k * 2], y: this.trailPix[k * 2 + 1], gi: k, t });
       }
       if (run.length) runs.push(run);
     }
     return runs;
   }
 
-  /** 按渐隐位置 t 计算描边参数（越接近 1 越新：越亮、越粗） */
+  /** 轨迹渐隐参数（衰减开关 / 步长 / 模式） */
+  fadeSpec() {
+    const s = this.style;
+    const len = Math.max(1, Number.isFinite(s.fadeLength) ? s.fadeLength : STYLE_DEFAULTS.fadeLength);
+    return { on: !!s.trailFade, len, mode: s.fadeMode === 'exponential' ? 'exponential' : 'linear' };
+  }
+
+  /**
+   * 亮度进度 t ∈ [0,1]：1 = 紧贴头部（最亮、最粗），0 = 已完全淡出。
+   * 两种模式都在 age ≥ fadeLength 处精确归零（而非留一个最小不透明度），
+   * 因此高步数下尾巴会被彻底擦掉，不会出现「整条轨迹常亮」。
+   */
+  fadeProgress(age, spec) {
+    const p = Math.max(0, Math.min(1, age / spec.len));
+    if (spec.mode === 'exponential') {
+      const k = EXP_FADE_K;
+      return (Math.exp(-k * p) - Math.exp(-k)) / (1 - Math.exp(-k));
+    }
+    return 1 - p;
+  }
+
+  /** 按亮度进度 t 计算描边参数（越接近 1 越新：越亮、越粗；t = 0 时 alpha 为 0） */
   fadeAt(th, t, baseWidth) {
-    const fade = this.style.trailFade;
+    if (!this.style.trailFade) return { alpha: 0.34, color: th.trailB, width: baseWidth };
+    const a = Math.max(0, Math.min(1, t));
     return {
-      alpha: fade ? 0.16 + 0.38 * t : 0.34,
-      color: fade ? lerpColor(th.trailA, th.trailB, t) : th.trailB,
-      width: baseWidth * (fade ? 0.7 + 0.5 * t : 1),
+      alpha: FADE_MAX_ALPHA * a,
+      color: lerpColor(th.trailA, th.trailB, a),
+      width: Math.max(0.5, baseWidth * (0.45 + 0.55 * a)),
     };
   }
 
@@ -6131,7 +6358,7 @@ class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -6145,7 +6372,7 @@ class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -6190,7 +6417,7 @@ class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -6278,6 +6505,106 @@ class Renderer {
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.9;
+    ctx.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, this.size.width, this.size.height);
+    ctx.restore();
+  }
+
+  /* --------------------------- 多轨迹对比 --------------------------- */
+
+  /**
+   * 多轨迹对比离屏层：基准快照的虚线轨迹 + 三类差异格（共有 / 仅基准 / 仅当前）。
+   * 与坐标筛选一样做图层缓存，快照与结果都不变时每帧只有一次 drawImage。
+   */
+  ensureCompareLayer() {
+    if (!this.compareDirty && this.compareLayer) return;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const w = this.size.width;
+    const h = this.size.height;
+    let layer = this.compareLayer;
+    if (!layer) {
+      layer = document.createElement('canvas');
+      this.compareLayer = layer;
+    }
+    const pw = Math.max(1, Math.round(w * dpr));
+    const ph = Math.max(1, Math.round(h * dpr));
+    if (layer.width !== pw || layer.height !== ph) {
+      layer.width = pw;
+      layer.height = ph;
+    }
+    const lctx = layer.getContext('2d');
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lctx.clearRect(0, 0, w, h);
+    this.compareDirty = false;
+    const cmp = this.compare;
+    if (!cmp || !cmp.snapshot) return;
+
+    const { cellSize, gap } = this.style;
+    const pitch = cellSize + gap;
+    const half = (cellSize - gap) / 2;
+
+    // 1) 基准轨迹：虚线折线（按像素间距断开，避免跨边界连出穿图直线）
+    const path = cmp.snapshot.path || [];
+    if (path.length > 1) {
+      lctx.save();
+      lctx.setLineDash([Math.max(3, cellSize * 0.26), Math.max(2, cellSize * 0.2)]);
+      lctx.lineWidth = Math.max(1, cellSize * 0.14);
+      lctx.strokeStyle = COMPARE_BASE_COLOR;
+      lctx.globalAlpha = 0.85;
+      lctx.lineCap = 'round';
+      lctx.beginPath();
+      let px = NaN;
+      let py = NaN;
+      for (let i = 0; i < path.length; i++) {
+        const idx = path[i].index;
+        const p = this.center({ col: idx % this.grid.width, row: (idx / this.grid.width) | 0 });
+        if (i === 0 || Math.hypot(p.x - px, p.y - py) > pitch * RUN_GAP_CELLS) {
+          if (i > 0) lctx.stroke();
+          lctx.beginPath();
+          lctx.moveTo(p.x, p.y);
+        } else {
+          lctx.lineTo(p.x, p.y);
+        }
+        px = p.x;
+        py = p.y;
+      }
+      lctx.stroke();
+      lctx.restore();
+    }
+
+    // 2) 差异格：共有（黄）· 仅基准（红）· 仅当前（绿）
+    const diff = cmp.diff;
+    if (diff) {
+      const groups = [
+        [diff.onlyBase, COMPARE_ONLY_BASE],
+        [diff.onlyOther, COMPARE_ONLY_OTHER],
+        [diff.shared, COMPARE_SHARED],
+      ];
+      for (const [list, color] of groups) {
+        if (!list || !list.length) continue;
+        lctx.save();
+        lctx.fillStyle = color.fill;
+        lctx.strokeStyle = color.stroke;
+        lctx.lineWidth = Math.max(1, cellSize * 0.08);
+        for (const index of list) {
+          const p = this.center({ col: index % this.grid.width, row: (index / this.grid.width) | 0 });
+          if (this.grid.type === 'hex') pathHex(lctx, p.x, p.y, half * 0.72);
+          else roundRect(lctx, p.x - half * 0.72, p.y - half * 0.72, half * 1.44, half * 1.44, cellSize * 0.2);
+          lctx.fill();
+          lctx.stroke();
+        }
+        lctx.restore();
+      }
+    }
+  }
+
+  /** 绘制多轨迹对比叠加层（在轨迹之上、筛选高亮之下） */
+  drawCompare() {
+    if (!this.compare || !this.compare.snapshot) return;
+    this.ensureCompareLayer();
+    const layer = this.compareLayer;
+    if (!layer) return;
+    const ctx = this.ctx;
+    ctx.save();
     ctx.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, this.size.width, this.size.height);
     ctx.restore();
   }
@@ -6949,6 +7276,7 @@ __MODULES["src/core/exporters.js"] = (function () {
  * 导出能力：配置 JSON、轨迹 CSV/JSON、规则日志、SVG 矢量图、PNG 截图
  */
 const { dirNames } = __MODULES["src/core/grid.js"];
+const { buildTrail } = __MODULES["src/core/trail.js"];
 
 function toJSON(obj, pretty = true) {
   return JSON.stringify(obj, null, pretty ? 2 : 0);
@@ -7165,6 +7493,143 @@ function lerpColor(a, b, t) {
   return `#${p.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/* --------------------------- 纯轨迹 SVG --------------------------- */
+
+/**
+ * 纯轨迹 SVG：网格轮廓 + 按亮度渐隐的轨迹折线 + 起点/终点/头部标记。
+ * 与 frameToSVG（连环境单元、日志标注一起画）不同，这里只输出轨迹本身，
+ * 适合直接放进论文 / 设计稿，且是矢量、可无损缩放。
+ *
+ * 渐隐规则与画面渲染保持一致：按「离开头部的步数」衰减，
+ * fadeMode = linear 线性 · exponential 指数，走满 fadeLength 步后完全淡出。
+ */
+function trailToSVG(result, styleOverride = {}) {
+  const style = { ...SVG_DEFAULT, ...(result.config.style || {}), ...styleOverride };
+  const grid = result.grid;
+  const size = grid.canvasSize(style.cellSize, style.gap, 16);
+  const bg = style.darkMode ? '#0e1116' : '#f7f9fc';
+  const fg = style.darkMode ? '#e6e1f3' : '#1f2933';
+  const gridLine = style.darkMode ? '#232b36' : '#d7dee7';
+  const trailA = style.darkMode ? '#1d4e89' : '#a9c8e8';
+  const trailB = style.darkMode ? '#63b3ed' : '#2b6cb0';
+  const trail = buildTrail(grid, result.frames);
+  const spec = svgFadeSpec(style);
+  const pitch = style.cellSize + style.gap;
+
+  const parts = [];
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${size.width.toFixed(1)}" height="${size.height.toFixed(1)}" viewBox="0 0 ${size.width.toFixed(1)} ${size.height.toFixed(1)}" font-family="system-ui, sans-serif">`);
+  parts.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
+
+  if (style.showGrid) {
+    for (let row = 0; row < grid.height; row++) {
+      for (let col = 0; col < grid.width; col++) {
+        const p = grid.toPixel({ col, row }, style.cellSize, style.gap);
+        parts.push(cellShape(grid, style, p.x, p.y, gridLine, 'none', 1));
+      }
+    }
+  }
+
+  // 轨迹：按「步数连续 + 同一移动体 + 像素间距」切段，段内按亮度分档合并成 polyline
+  const baseWidth = Math.max(1.5, (style.cellSize - style.gap) * 0.4);
+  for (const run of svgTrailRuns(grid, trail.path, trail.maxTick, style, pitch)) {
+    if (!run.length) continue;
+    if (run.length === 1) {
+      const st = svgFadeStyle(run[0].t, trailA, trailB, baseWidth);
+      parts.push(`<circle cx="${run[0].x.toFixed(1)}" cy="${run[0].y.toFixed(1)}" r="${(baseWidth * 0.5).toFixed(1)}" fill="${st.color}" fill-opacity="${st.alpha.toFixed(3)}"/>`);
+      continue;
+    }
+    let start = 0;
+    let bucket = svgFadeBucket((run[0].t + run[1].t) / 2);
+    for (let k = 1; k < run.length; k++) {
+      const next = k + 1 < run.length ? svgFadeBucket((run[k].t + run[k + 1].t) / 2) : -1;
+      if (next === bucket) continue;
+      const st = svgFadeStyle((run[start].t + run[k].t) / 2, trailA, trailB, baseWidth);
+      const pts = [];
+      for (let j = start; j <= k; j++) pts.push(`${run[j].x.toFixed(1)},${run[j].y.toFixed(1)}`);
+      parts.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="${st.color}" stroke-width="${st.width.toFixed(2)}" stroke-opacity="${st.alpha.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+      start = k;
+      bucket = next;
+    }
+  }
+
+  // 起点 / 终点 / 头部
+  const first = result.frames[0] && result.frames[0].agents[0];
+  const last = result.frames[result.frames.length - 1];
+  const head = last && last.agents[0] && last.agents[0].segments[0];
+  const r = style.cellSize / 4;
+  if (first) {
+    const p = grid.toPixel({ col: first.segments[0][0], row: first.segments[0][1] }, style.cellSize, style.gap);
+    parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="#51cf66" stroke-width="2"/>`);
+  }
+  if (head) {
+    const p = grid.toPixel({ col: head[0], row: head[1] }, style.cellSize, style.gap);
+    parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${(r * 0.8).toFixed(1)}" fill="#ffd43b" fill-opacity="0.9"/>`);
+  }
+
+  const fadeLabel = style.trailFade ? `渐隐 ${spec.mode === 'exponential' ? '指数' : '线性'} / ${spec.len} 步` : '轨迹不渐隐';
+  parts.push(`<text x="${size.margin.toFixed(1)}" y="${(size.margin * 0.9).toFixed(1)}" fill="${fg}" font-size="12" opacity="0.7">轨迹 ${trail.order.length} 格 · 第 ${trail.maxTick} 步 · ${fadeLabel} · 种子 ${result.seed}</text>`);
+  parts.push('</svg>');
+  return parts.join('\n');
+}
+
+const SVG_FADE_BUCKETS = 16;
+const SVG_EXP_K = 6;
+
+function svgFadeSpec(style) {
+  const len = Number.isFinite(style.fadeLength) ? Math.max(1, style.fadeLength) : 60;
+  return { on: style.trailFade !== false, len, mode: style.fadeMode === 'exponential' ? 'exponential' : 'linear' };
+}
+
+function svgFadeProgress(age, spec) {
+  const p = Math.max(0, Math.min(1, age / spec.len));
+  if (spec.mode === 'exponential') {
+    return (Math.exp(-SVG_EXP_K * p) - Math.exp(-SVG_EXP_K)) / (1 - Math.exp(-SVG_EXP_K));
+  }
+  return 1 - p;
+}
+
+function svgFadeBucket(t) {
+  return Math.max(0, Math.min(SVG_FADE_BUCKETS - 1, Math.floor(Math.max(0, Math.min(1, t)) * SVG_FADE_BUCKETS)));
+}
+
+function svgFadeStyle(t, a, b, baseWidth) {
+  const k = Math.max(0, Math.min(1, t));
+  return {
+    alpha: 0.62 * k,
+    color: lerpColor(a, b, k),
+    width: Math.max(0.5, baseWidth * (0.45 + 0.55 * k)),
+  };
+}
+
+/** 轨迹路径 → 像素连续段（同一移动体、步数连续、像素间距不过大） */
+function svgTrailRuns(grid, path, maxTick, style, pitch) {
+  const spec = svgFadeSpec(style);
+  const runs = [];
+  let run = [];
+  let prev = null;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i];
+    const t = svgFadeProgress(maxTick - p.tick, spec);
+    if (spec.on && t <= 0) {
+      if (run.length) runs.push(run);
+      run = [];
+      prev = null;
+      continue;
+    }
+    const px = grid.toPixel({ col: p.index % grid.width, row: Math.floor(p.index / grid.width) }, style.cellSize, style.gap);
+    const brk = prev && (p.tick - prev.tick !== 1 || p.agent !== prev.agent
+      || Math.hypot(px.x - prev.x, px.y - prev.y) > pitch * 1.7);
+    if (brk && run.length) {
+      runs.push(run);
+      run = [];
+    }
+    run.push({ x: px.x, y: px.y, t: spec.on ? t : 1 });
+    prev = { x: px.x, y: px.y, tick: p.tick, agent: p.agent };
+  }
+  if (run.length) runs.push(run);
+  return runs;
+}
+
 /* --------------------------- 文件下载 --------------------------- */
 
 function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {
@@ -7192,7 +7657,7 @@ function downloadCanvasPNG(canvas, filename = 'screenshot.png') {
 function downloadSVG(svgText, filename = 'frame.svg') {
   downloadText(filename, svgText, 'image/svg+xml;charset=utf-8');
 }
-return { configToJSON, trailToCSV, trailToJSON, logsToCSV, logsToJSON, frameToSVG, downloadText, downloadCanvasPNG, downloadSVG };
+return { configToJSON, trailToCSV, trailToJSON, trailToSVG, logsToCSV, logsToJSON, frameToSVG, downloadText, downloadCanvasPNG, downloadSVG };
 })();
 
 /* ===== src/ui/forms.js ===== */
@@ -7434,8 +7899,8 @@ __MODULES["src/ui/app.js"] = (function () {
 /**
  * 应用主体：配置面板、规则编辑器、播放控制、统计与日志、导入导出
  */
-const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT, isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES } = __MODULES["src/core/config.js"];
-const { defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText } = __MODULES["src/core/trail.js"];
+const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT, isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, JOIN_MODES, FADE_LENGTH_LIMIT } = __MODULES["src/core/config.js"];
+const { defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText, snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText } = __MODULES["src/core/trail.js"];
 const { PRESETS, buildPresetConfig } = __MODULES["src/core/presets.js"];
 const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } = __MODULES["src/core/simulation.js"];
 const { Renderer } = __MODULES["src/ui/canvas.js"];
@@ -7444,7 +7909,7 @@ const { ACTION_LABELS, TURN_LABELS } = __MODULES["src/core/actions.js"];
 const { SUBJECT_LABELS, TRIGGER_LABELS } = __MODULES["src/core/rules.js"];
 const { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } = __MODULES["src/core/ca.js"];
 const { OBJECT_LABELS, STAT_LABELS } = __MODULES["src/core/conditions.js"];
-const { configToJSON, trailToCSV, trailToJSON, logsToCSV, logsToJSON, frameToSVG, downloadText, downloadCanvasPNG, downloadSVG } = __MODULES["src/core/exporters.js"];
+const { configToJSON, trailToCSV, trailToJSON, trailToSVG, logsToCSV, logsToJSON, frameToSVG, downloadText, downloadCanvasPNG, downloadSVG } = __MODULES["src/core/exporters.js"];
 const { h, clear, group, field, row, button, numberInput, textInput, textArea, select, checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind, colorBind, toast, formatNumber } = __MODULES["src/ui/forms.js"];
 
 /* ------------------------------------------------------------------ */
@@ -7531,6 +7996,10 @@ const state = {
   trailFilter: null,
   /** 最近一次筛选命中的轨迹点（含次序 / 次数 / 首末步） */
   trailCells: [],
+  /** 多轨迹对比：基准快照（冻结的轨迹数据） */
+  trailSnapshot: null,
+  /** 多轨迹对比：基准快照与当前运行结果的坐标差异 */
+  compareDiff: null,
 };
 
 const els = {};
@@ -7764,6 +8233,7 @@ function recompute(opts = {}) {
   updateControls();
   draw();
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
+  refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
 }
 
@@ -8360,6 +8830,10 @@ function renderSidePanel() {
       button('当前帧 PNG', () => withResult(() => downloadCanvasPNG(renderer.canvas, `frame-${state.frameIndex}.png`))),
       button('当前帧 SVG', () => withResult((r) => downloadSVG(frameToSVG(r, state.frameIndex, state.cfg.style), `frame-${state.frameIndex}.svg`))),
     ),
+    row(
+      button('纯轨迹 SVG', () => withResult((r) => downloadSVG(trailToSVG(r, state.cfg.style), `trail-${r.seed}.svg`))),
+      button('轨迹明细 CSV', () => withResult((r) => downloadText(`trail-cells-${r.seed}.csv`, trailCellsFullCSV(), 'text/csv;charset=utf-8'))),
+    ),
   ], { open: false }));
 
   els.logHost = h('div', { class: 'log-list' });
@@ -8372,10 +8846,15 @@ function renderSidePanel() {
 
   side.appendChild(trailQueryGroup());
 
+  side.appendChild(trailCompareGroup());
+
   side.appendChild(group('规则触发日志', [
     row(filterSel, els.logCount),
     els.logHost,
   ], { open: true }));
+
+  // 面板重建后统计节点是全新的，需要用当前快照/差异重新填充
+  updateCompareStat();
 }
 
 /* ------------------------------------------------------------------ */
@@ -8508,6 +8987,111 @@ function refreshTrailFilter() {
 function withResult(fn) {
   if (!state.result) { toast('尚未运行模拟', 'warn'); return; }
   fn(state.result);
+}
+
+/** 逐格轨迹明细（列 / 行 / 经过次序 / 次数 / 首末步），比「轨迹 CSV」更细） */
+function trailCellsFullCSV() {
+  if (!renderer || !renderer.trail) return '';
+  return trailCellsToCSV(renderer.trail.order.map((i) => renderer.trail.info.get(i)));
+}
+
+/* ------------------------------------------------------------------ */
+/* 多轨迹对比（轨迹快照）                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 轨迹快照对比：
+ * 「保存基准快照」把当前完整运行的轨迹冻结成基准数据；之后改动种子 / 参数 / 规则并重跑，
+ * 面板给出与基准的坐标差异，画面上叠加基准虚线轨迹与三类差异格：
+ *   黄 = 两条轨迹都经过（稳定路径）· 红 = 仅基准经过 · 绿 = 仅当前经过。
+ */
+function trailCompareGroup() {
+  els.compareStat = h('div', { class: 'hint compare-stat' }, '尚未保存基准快照');
+  els.compareList = h('div', { class: 'compare-list' });
+  return group('轨迹快照对比', [
+    h('div', { class: 'hint' }, '保存基准快照后重新运行（换种子 / 参数 / 规则），即可对比两条轨迹的坐标差异：重合率高说明路径稳定，红色格是基准走过而本次没走的路径。'),
+    row(
+      button('保存基准快照', takeTrailSnapshot, 'primary'),
+      button('清除快照', clearTrailSnapshot, 'ghost'),
+    ),
+    row(
+      button('复制对比摘要', () => {
+        if (!state.compareDiff) { toast('请先保存快照并运行一次', 'warn'); return; }
+        copyText(compareToText(state.compareDiff), '对比摘要已复制');
+      }),
+      button('导出对比 CSV', () => {
+        if (!state.compareDiff) { toast('请先保存快照并运行一次', 'warn'); return; }
+        downloadText(`trail-compare-${state.result.seed}.csv`, compareToCSV(state.compareDiff), 'text/csv;charset=utf-8');
+      }),
+    ),
+    els.compareStat,
+    els.compareList,
+  ], { key: 'trail-compare', open: false });
+}
+
+/** 保存基准快照：冻结当前轨迹模型的纯数据副本 */
+function takeTrailSnapshot() {
+  if (!state.result || !renderer || !renderer.trail) { toast('尚未运行模拟', 'warn'); return; }
+  const grid = state.result.grid;
+  const label = `${state.cfg.meta.name || '未命名'} · 种子 ${state.result.seed} · 第 ${renderer.trail.maxTick} 步`;
+  state.trailSnapshot = snapshotTrail(renderer.trail, grid, label);
+  refreshCompare();
+  toast(`已保存基准快照（${state.trailSnapshot.cells.length} 格）`, 'success');
+}
+
+function clearTrailSnapshot() {
+  state.trailSnapshot = null;
+  state.compareDiff = null;
+  if (renderer) renderer.setCompare(null);
+  updateCompareStat();
+  drawFrameOnly();
+}
+
+/**
+ * 重算对比结果并交给渲染器叠加。
+ * 网格类别 / 尺寸与快照不一致时对比无意义，直接关闭叠加层并给出提示。
+ */
+function refreshCompare() {
+  if (!renderer) return;
+  const grid = state.result && state.result.grid;
+  const snap = state.trailSnapshot;
+  if (!snap) {
+    state.compareDiff = null;
+    renderer.setCompare(null);
+    updateCompareStat();
+    return;
+  }
+  if (!grid || !snapshotMatchesGrid(snap, grid)) {
+    state.compareDiff = null;
+    renderer.setCompare(null);
+    updateCompareStat('基准快照与当前网格不一致（需同为相同类型与尺寸），已暂停叠加对比');
+    return;
+  }
+  const current = snapshotTrail(renderer.trail, grid, 'current');
+  const diff = compareSnapshots(snap, current);
+  diff.grid = grid; // 供 compareToCSV 把格下标还原成行列
+  state.compareDiff = diff;
+  renderer.setCompare({ snapshot: snap, diff });
+  updateCompareStat();
+}
+
+/** 对比统计与逐格列表（列表与画面高亮同源，便于点选核对） */
+function updateCompareStat(override) {
+  const stat = els.compareStat;
+  const list = els.compareList;
+  if (!stat) return;
+  if (list) clear(list);
+  if (override) { stat.textContent = override; return; }
+  const snap = state.trailSnapshot;
+  const diff = state.compareDiff;
+  if (!snap) { stat.textContent = '尚未保存基准快照'; return; }
+  stat.textContent = `基准：${snap.label}`;
+  if (!diff) return;
+  if (list) {
+    for (const line of compareToText(diff).split('\n').slice(1)) {
+      list.appendChild(h('div', { class: 'compare-item' }, line));
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -8801,9 +9385,11 @@ function moveRulesGroup(cfg) {
       row(
         textBind(r, 'name', () => {}),
         chkBind(r, 'enabled', () => onSimChange(), '启用'),
-        button('↑', () => { swap(cfg.advancedRules, index, index - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(cfg.advancedRules, index, index + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { cfg.advancedRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(cfg.advancedRules, index, index - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.advancedRules, index, index + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.advancedRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       field('条件', conditionEditor(r.condition, () => onSimChange(), () => rebuildAll()), '条件满足时使用下面的权重'),
       field('左转权重', rangeBind(r.moves, 'left', updWeights, { min: 0, max: 1, step: 0.01, number: true })),
@@ -9013,9 +9599,11 @@ function envRulesGroup(cfg) {
         textBind(rule, 'name', () => { renderSidePanel(); }),
         chkBind(rule, 'enabled', () => onSimChange(), '启用'),
         button('测试', () => testRule(rule), 'ghost small'),
-        button('↑', () => { swap(cfg.environmentRules, index, index - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(cfg.environmentRules, index, index + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { cfg.environmentRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(cfg.environmentRules, index, index - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(cfg.environmentRules, index, index + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { cfg.environmentRules.splice(index, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       row(
         field('规则主体', selBind(rule, 'subject', () => { onSimChange(); rebuildAll(); }, Object.entries(SUBJECT_LABELS).map(([value, label]) => ({ value, label })))),
@@ -9075,9 +9663,11 @@ function actionEditor(rule, action, index) {
       Object.assign(action, defaultAction(v));
       rebuild();
     }),
-    button('↑', () => { swap(rule.actions, index, index - 1); rebuild(); }, 'icon small'),
-    button('↓', () => { swap(rule.actions, index, index + 1); rebuild(); }, 'icon small'),
-    button('✕', () => { rule.actions.splice(index, 1); rebuild(); }, 'icon small danger'),
+    orderActions(
+      button('↑', () => { swap(rule.actions, index, index - 1); rebuild(); }, 'icon small'),
+      button('↓', () => { swap(rule.actions, index, index + 1); rebuild(); }, 'icon small'),
+      button('✕', () => { rule.actions.splice(index, 1); rebuild(); }, 'icon small danger'),
+    ),
   ));
 
   switch (action.type) {
@@ -9201,9 +9791,11 @@ function clauseEditor(parent, clause, index, onChange, rebuild) {
       rebuild();
     }),
     checkbox(clause.invert, (v) => { clause.invert = v; onChange(); }, '取反'),
-    button('↑', () => { swap(parent.clauses, index, index - 1); rebuild(); }, 'icon small'),
-    button('↓', () => { swap(parent.clauses, index, index + 1); rebuild(); }, 'icon small'),
-    button('✕', () => { parent.clauses.splice(index, 1); rebuild(); }, 'icon small danger'),
+    orderActions(
+      button('↑', () => { swap(parent.clauses, index, index - 1); rebuild(); }, 'icon small'),
+      button('↓', () => { swap(parent.clauses, index, index + 1); rebuild(); }, 'icon small'),
+      button('✕', () => { parent.clauses.splice(index, 1); rebuild(); }, 'icon small danger'),
+    ),
   ));
 
   const neighborhoodFields = () => row(
@@ -9446,9 +10038,11 @@ function markerInteractionEditor(ca) {
       row(
         textBind(fx, 'name', () => {}),
         chkBind(fx, 'enabled', () => onSimChange(), '启用'),
-        button('↑', () => { swap(mi.effects, i, i - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(mi.effects, i, i + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { mi.effects.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(mi.effects, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(mi.effects, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { mi.effects.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
       row(
         field('作用状态', select(fx.state, stateOptions(), (v) => { fx.state = v; onSimChange(); })),
@@ -9502,9 +10096,11 @@ function caRulesEditor(ca) {
         textBind(rule, 'name', () => {}),
         chkBind(rule, 'enabled', () => onSimChange(), '启用'),
         select(rule.kind, [{ value: 'count', label: '计数规则' }, { value: 'traffic', label: '方向移动' }], (v) => { rule.kind = v; rebuildAll(); }),
-        button('↑', () => { swap(ca.rules, i, i - 1); rebuildAll(); }, 'icon small'),
-        button('↓', () => { swap(ca.rules, i, i + 1); rebuildAll(); }, 'icon small'),
-        button('✕', () => { ca.rules.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        orderActions(
+          button('↑', () => { swap(ca.rules, i, i - 1); rebuildAll(); }, 'icon small'),
+          button('↓', () => { swap(ca.rules, i, i + 1); rebuildAll(); }, 'icon small'),
+          button('✕', () => { ca.rules.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+        ),
       ),
     ];
     rows.push(field('当前状态（from）', h('div', { class: 'chips' },
@@ -9706,8 +10302,10 @@ function endGroup(cfg) {
         onSimChange();
       }, END_LABELS[code] || code),
       ...paramFields,
-      button('↑', () => { swap(ec.priority, i, i - 1); rebuildAll(); }, 'icon small'),
-      button('↓', () => { swap(ec.priority, i, i + 1); rebuildAll(); }, 'icon small'),
+      orderActions(
+        button('↑', () => { swap(ec.priority, i, i - 1); rebuildAll(); }, 'icon small'),
+        button('↓', () => { swap(ec.priority, i, i + 1); rebuildAll(); }, 'icon small'),
+      ),
     ];
     rows.push(h('div', {
       class: `end-row${isOn ? ' on' : ''}`,
@@ -9752,6 +10350,13 @@ function styleGroup(cfg) {
       selBind(s, 'bodyJoin', () => onStyleChange(), JOIN_OPTIONS),
     ), '曲线：贝塞尔平滑 · 直线：直线段折线 · 预设角度：按指定夹角切角连接的直线型折线'),
     field('切角角度', rangeBind(s, 'trailAngle', () => onStyleChange(), { min: 5, max: 85, step: 1 }), '仅「预设角度」连接方式生效：连接线与进入方向的夹角（度）'),
+    field('轨迹衰减模式', selBind(s, 'fadeMode', () => onStyleChange(), [
+      { value: 'linear', label: '线性（等速变暗）' },
+      { value: 'exponential', label: '指数（先急后缓）' },
+    ]), '轨迹亮度按「离开头部的步数」衰减；未勾选「轨迹渐隐」时此项不生效'),
+    field('衰减步长（步）', rangeBind(s, 'fadeLength', () => onStyleChange(), {
+      min: FADE_LENGTH_LIMIT.min, max: FADE_LENGTH_LIMIT.max, step: 1, number: true,
+    }), '轨迹点离开头部多少步后完全淡出；步长越大尾巴拖得越长，越小则越快消失'),
     field('渲染效果', row(
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
       checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
@@ -9770,6 +10375,15 @@ function swap(arr, i, j) {
   const t = arr[i];
   arr[i] = arr[j];
   arr[j] = t;
+}
+
+/**
+ * 排序 / 删除按钮簇（↑ ↓ ✕）。
+ * 必须包成一个不换行的容器再放进行里：否则每个按钮都是独立的 flex 项，
+ * 行宽不足时会各自换行，出现「↑ 在上一行、↓ 在下一行」的错位。
+ */
+function orderActions(...buttons) {
+  return h('div', { class: 'row-actions' }, ...buttons.filter(Boolean));
 }
 
 /** 原生 range 输入（返回 input 元素本身，便于外部读写 value/max） */

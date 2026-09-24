@@ -323,13 +323,19 @@ export function defaultConfig() {
       highlightRules: true,
       showStartEnd: true,
       trailFade: true,
+      /**
+       * 轨迹亮度衰减：按「离开头部的步数（age）」衰减，走满 fadeLength 步后完全淡出。
+       * fadeMode = linear 线性 · exponential 指数（先急后缓）
+       */
+      fadeMode: 'linear',
+      fadeLength: 60,
       /** 蛇头眼睛默认隐藏，需在「展示样式 → 渲染效果」中主动开启 */
       showEyes: false,
       showEffects: true,
       glow: false,
       /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
-      trailJoin: 'curve',
-      bodyJoin: 'curve',
+      trailJoin: 'line',
+      bodyJoin: 'line',
       /** angle 模式下的预设角度（度）：连接线与进入方向的夹角 */
       trailAngle: 45,
       /** 由连接方式派生，保留以兼容旧配置与导出 */
@@ -606,6 +612,12 @@ function normCaRules(raw) {
 /** 轨迹 / 蛇身的连接方式 */
 export const JOIN_MODES = ['curve', 'line', 'angle'];
 
+/** 轨迹亮度衰减模式：线性 / 指数 */
+export const FADE_MODES = ['linear', 'exponential'];
+
+/** 轨迹衰减步长的允许范围（步） */
+export const FADE_LENGTH_LIMIT = { min: 2, max: 2000 };
+
 /**
  * 连接方式规范化：
  * 优先读取 trailJoin / bodyJoin；旧配置只有 smoothTrail / smoothBody 布尔值时按
@@ -637,6 +649,8 @@ function normalizeStyle(raw = {}) {
     highlightRules: bool(raw.highlightRules, d.highlightRules),
     showStartEnd: bool(raw.showStartEnd, d.showStartEnd),
     trailFade: bool(raw.trailFade, d.trailFade),
+    fadeMode: FADE_MODES.includes(raw.fadeMode) ? raw.fadeMode : d.fadeMode,
+    fadeLength: clamp(num(raw.fadeLength, d.fadeLength), FADE_LENGTH_LIMIT.min, FADE_LENGTH_LIMIT.max),
     axisLabels: bool(raw.axisLabels, d.axisLabels),
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),

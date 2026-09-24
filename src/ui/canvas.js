@@ -20,6 +20,12 @@ export const STYLE_DEFAULTS = {
   highlightRules: true,
   showStartEnd: true,
   trailFade: true,
+  /**
+   * 轨迹亮度衰减：按「离开头部的步数（age）」衰减，走满 fadeLength 步后完全淡出。
+   * mode = linear 线性（等速变暗） · exponential 指数（先急后缓，观感更接近余晖）
+   */
+  fadeMode: 'linear',
+  fadeLength: 60,
   /** 蛇头眼睛默认隐藏，仅在用户主动开启「展示样式 → 蛇头眼睛」时按朝向绘制 */
   showEyes: false,
   /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
@@ -27,8 +33,8 @@ export const STYLE_DEFAULTS = {
   /** 蛇身发光，突出移动体位置 */
   glow: false,
   /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
-  trailJoin: 'curve',
-  bodyJoin: 'curve',
+  trailJoin: 'line',
+  bodyJoin: 'line',
   /** angle 模式下的预设角度（度） */
   trailAngle: 45,
   /** 由连接方式派生，保留以兼容旧配置 */
@@ -46,10 +52,20 @@ const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentD
 const FADE_BUCKETS = 16;
 /** 轨迹采样点之间的最大像素间距，超过则断开（避免跨边界/换移动体时连出直线） */
 const RUN_GAP_CELLS = 1.7;
+/** 轨迹最亮处（紧贴头部）的不透明度：向尾部一路衰减到 0，保证完全淡出 */
+const FADE_MAX_ALPHA = 0.62;
+/** 指数衰减的陡峭度：越大越「先急后缓」；两端归一后仍然精确到 0 */
+const EXP_FADE_K = 6;
 
 /** 坐标筛选高亮的填充与描边色 */
 const FILTER_FILL = 'rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR = 'rgba(255, 212, 59, 0.95)';
+
+/** 多轨迹对比：基准轨迹虚线色 + 三类差异格配色 */
+const COMPARE_BASE_COLOR = 'rgba(147, 161, 177, 0.9)';
+const COMPARE_SHARED = { fill: 'rgba(255, 212, 59, 0.16)', stroke: 'rgba(255, 212, 59, 0.85)' };
+const COMPARE_ONLY_BASE = { fill: 'rgba(255, 107, 107, 0.18)', stroke: 'rgba(255, 107, 107, 0.9)' };
+const COMPARE_ONLY_OTHER = { fill: 'rgba(81, 207, 102, 0.18)', stroke: 'rgba(81, 207, 102, 0.9)' };
 
 const THEME = {
   dark: { bg: '#0e1116', gridLine: '#232b36', fg: '#e6edf3', axis: '#7d8b9c', trailA: '#1d4e89', trailB: '#63b3ed' },
@@ -75,6 +91,10 @@ export class Renderer {
     this.filterSet = null;
     this.filterLayer = null;
     this.filterDirty = true;
+    /** 多轨迹对比叠加层：{ snapshot, diff }（同样走离屏层缓存） */
+    this.compare = null;
+    this.compareLayer = null;
+    this.compareDirty = true;
     this.collisionPoints = [];
     this.startCoord = null;
     this.endCoord = null;
@@ -106,6 +126,15 @@ export class Renderer {
   setFilter(indices) {
     this.filterSet = indices && indices.length ? new Set(indices) : null;
     this.filterDirty = true;
+  }
+
+  /**
+   * 多轨迹对比叠加层。
+   * @param {?{snapshot: object, diff: object}} compare 传入 null 关闭
+   */
+  setCompare(compare) {
+    this.compare = compare || null;
+    this.compareDirty = true;
   }
 
   /**
@@ -183,6 +212,7 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.pixDirty = true;
     this.filterDirty = true;
+    this.compareDirty = true;
   }
 
   theme() {
@@ -233,6 +263,7 @@ export class Renderer {
     if (s.showGrid) this.drawGrid(th);
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th, tickF);
+    this.drawCompare();
     this.drawFilterHighlight();
     if (s.showEffects) this.drawEffects(i0);
     if (s.highlightRules) this.drawHighlights(frame);
@@ -338,36 +369,75 @@ export class Renderer {
   /**
    * 取 [0, lo) 范围内的轨迹点，并按连续段切分。
    * 段内保证步数连续、同一移动体、像素间距不过大（跨边界 / 换体时断开，避免连出穿图直线）。
+   *
+   * 亮度按「离开头部走过的步数 age = tick - 该点步数」衰减，而非按整段运行时长归一化：
+   *   - 无论总步数是 50 还是 5000，尾巴都在固定 fadeLength 步内完整淡出；
+   *   - age ≥ fadeLength 的点 alpha 已为 0，直接跳过（同时用二分把起点后移），
+   *     高步数下不会再去遍历、量化、描边上万个早已看不见的点。
    */
-  trailRunsUpTo(lo, span) {
+  trailRunsUpTo(lo, tick) {
     const runs = [];
     const src = this.trailRuns;
+    const spec = this.fadeSpec();
+    const minTick = spec.on ? tick - spec.len : -Infinity;
+    const path = this.trail.path;
     for (let ri = 0; ri < src.length; ri++) {
       const a = src[ri][0];
       if (a >= lo) break;
       const b = Math.min(src[ri][1], lo - 1);
+      if (path[b].tick < minTick) continue; // 整段都已淡出，整段跳过
+      let from = a;
+      if (spec.on) {
+        // 段内二分：第一个 age ≤ fadeLength 的点
+        let loI = a;
+        let hiI = b + 1;
+        while (loI < hiI) {
+          const mid = (loI + hiI) >> 1;
+          if (path[mid].tick >= minTick) hiI = mid;
+          else loI = mid + 1;
+        }
+        from = loI;
+      }
       const run = [];
-      for (let k = a; k <= b; k++) {
-        const tp = this.trail.path[k];
-        run.push({
-          x: this.trailPix[k * 2],
-          y: this.trailPix[k * 2 + 1],
-          gi: k,
-          t: Math.max(0, Math.min(1, tp.tick / span)),
-        });
+      for (let k = from; k <= b; k++) {
+        const t = this.fadeProgress(tick - path[k].tick, spec);
+        if (t <= 0) continue; // 已完全淡出，不产生任何绘制
+        run.push({ x: this.trailPix[k * 2], y: this.trailPix[k * 2 + 1], gi: k, t });
       }
       if (run.length) runs.push(run);
     }
     return runs;
   }
 
-  /** 按渐隐位置 t 计算描边参数（越接近 1 越新：越亮、越粗） */
+  /** 轨迹渐隐参数（衰减开关 / 步长 / 模式） */
+  fadeSpec() {
+    const s = this.style;
+    const len = Math.max(1, Number.isFinite(s.fadeLength) ? s.fadeLength : STYLE_DEFAULTS.fadeLength);
+    return { on: !!s.trailFade, len, mode: s.fadeMode === 'exponential' ? 'exponential' : 'linear' };
+  }
+
+  /**
+   * 亮度进度 t ∈ [0,1]：1 = 紧贴头部（最亮、最粗），0 = 已完全淡出。
+   * 两种模式都在 age ≥ fadeLength 处精确归零（而非留一个最小不透明度），
+   * 因此高步数下尾巴会被彻底擦掉，不会出现「整条轨迹常亮」。
+   */
+  fadeProgress(age, spec) {
+    const p = Math.max(0, Math.min(1, age / spec.len));
+    if (spec.mode === 'exponential') {
+      const k = EXP_FADE_K;
+      return (Math.exp(-k * p) - Math.exp(-k)) / (1 - Math.exp(-k));
+    }
+    return 1 - p;
+  }
+
+  /** 按亮度进度 t 计算描边参数（越接近 1 越新：越亮、越粗；t = 0 时 alpha 为 0） */
   fadeAt(th, t, baseWidth) {
-    const fade = this.style.trailFade;
+    if (!this.style.trailFade) return { alpha: 0.34, color: th.trailB, width: baseWidth };
+    const a = Math.max(0, Math.min(1, t));
     return {
-      alpha: fade ? 0.16 + 0.38 * t : 0.34,
-      color: fade ? lerpColor(th.trailA, th.trailB, t) : th.trailB,
-      width: baseWidth * (fade ? 0.7 + 0.5 * t : 1),
+      alpha: FADE_MAX_ALPHA * a,
+      color: lerpColor(th.trailA, th.trailB, a),
+      width: Math.max(0.5, baseWidth * (0.45 + 0.55 * a)),
     };
   }
 
@@ -381,7 +451,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -395,7 +465,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -440,7 +510,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
-    const runs = this.trailRunsUpTo(lo, Math.max(1, tick));
+    const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -528,6 +598,106 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.9;
+    ctx.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, this.size.width, this.size.height);
+    ctx.restore();
+  }
+
+  /* --------------------------- 多轨迹对比 --------------------------- */
+
+  /**
+   * 多轨迹对比离屏层：基准快照的虚线轨迹 + 三类差异格（共有 / 仅基准 / 仅当前）。
+   * 与坐标筛选一样做图层缓存，快照与结果都不变时每帧只有一次 drawImage。
+   */
+  ensureCompareLayer() {
+    if (!this.compareDirty && this.compareLayer) return;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const w = this.size.width;
+    const h = this.size.height;
+    let layer = this.compareLayer;
+    if (!layer) {
+      layer = document.createElement('canvas');
+      this.compareLayer = layer;
+    }
+    const pw = Math.max(1, Math.round(w * dpr));
+    const ph = Math.max(1, Math.round(h * dpr));
+    if (layer.width !== pw || layer.height !== ph) {
+      layer.width = pw;
+      layer.height = ph;
+    }
+    const lctx = layer.getContext('2d');
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lctx.clearRect(0, 0, w, h);
+    this.compareDirty = false;
+    const cmp = this.compare;
+    if (!cmp || !cmp.snapshot) return;
+
+    const { cellSize, gap } = this.style;
+    const pitch = cellSize + gap;
+    const half = (cellSize - gap) / 2;
+
+    // 1) 基准轨迹：虚线折线（按像素间距断开，避免跨边界连出穿图直线）
+    const path = cmp.snapshot.path || [];
+    if (path.length > 1) {
+      lctx.save();
+      lctx.setLineDash([Math.max(3, cellSize * 0.26), Math.max(2, cellSize * 0.2)]);
+      lctx.lineWidth = Math.max(1, cellSize * 0.14);
+      lctx.strokeStyle = COMPARE_BASE_COLOR;
+      lctx.globalAlpha = 0.85;
+      lctx.lineCap = 'round';
+      lctx.beginPath();
+      let px = NaN;
+      let py = NaN;
+      for (let i = 0; i < path.length; i++) {
+        const idx = path[i].index;
+        const p = this.center({ col: idx % this.grid.width, row: (idx / this.grid.width) | 0 });
+        if (i === 0 || Math.hypot(p.x - px, p.y - py) > pitch * RUN_GAP_CELLS) {
+          if (i > 0) lctx.stroke();
+          lctx.beginPath();
+          lctx.moveTo(p.x, p.y);
+        } else {
+          lctx.lineTo(p.x, p.y);
+        }
+        px = p.x;
+        py = p.y;
+      }
+      lctx.stroke();
+      lctx.restore();
+    }
+
+    // 2) 差异格：共有（黄）· 仅基准（红）· 仅当前（绿）
+    const diff = cmp.diff;
+    if (diff) {
+      const groups = [
+        [diff.onlyBase, COMPARE_ONLY_BASE],
+        [diff.onlyOther, COMPARE_ONLY_OTHER],
+        [diff.shared, COMPARE_SHARED],
+      ];
+      for (const [list, color] of groups) {
+        if (!list || !list.length) continue;
+        lctx.save();
+        lctx.fillStyle = color.fill;
+        lctx.strokeStyle = color.stroke;
+        lctx.lineWidth = Math.max(1, cellSize * 0.08);
+        for (const index of list) {
+          const p = this.center({ col: index % this.grid.width, row: (index / this.grid.width) | 0 });
+          if (this.grid.type === 'hex') pathHex(lctx, p.x, p.y, half * 0.72);
+          else roundRect(lctx, p.x - half * 0.72, p.y - half * 0.72, half * 1.44, half * 1.44, cellSize * 0.2);
+          lctx.fill();
+          lctx.stroke();
+        }
+        lctx.restore();
+      }
+    }
+  }
+
+  /** 绘制多轨迹对比叠加层（在轨迹之上、筛选高亮之下） */
+  drawCompare() {
+    if (!this.compare || !this.compare.snapshot) return;
+    this.ensureCompareLayer();
+    const layer = this.compareLayer;
+    if (!layer) return;
+    const ctx = this.ctx;
+    ctx.save();
     ctx.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, this.size.width, this.size.height);
     ctx.restore();
   }

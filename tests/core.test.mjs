@@ -7,12 +7,14 @@ import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
   normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
-  isBodyEnabled, JOIN_MODES, END_PRIORITY_DEFAULT, END_LABELS,
+  isBodyEnabled, JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
 } from '../src/core/config.js';
 import {
   buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
   trailQueryLabel, trailCellsToCSV, trailCellsToText,
+  snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
 } from '../src/core/trail.js';
+import { trailToSVG } from '../src/core/exporters.js';
 import { World, Agent } from '../src/core/world.js';
 import { evaluateClause, describeClause } from '../src/core/conditions.js';
 import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
@@ -1182,8 +1184,10 @@ section('视觉升级与配色配置');
   eq(d.showEyes, false, '默认隐藏蛇头眼睛');
   eq(d.showEffects, true, '默认开启交互特效');
   eq(d.glow, false, '默认不发光');
-  eq(d.smoothTrail, true, '默认启用轨迹贝塞尔平滑');
-  eq(d.smoothBody, true, '默认启用蛇身曲线连接');
+  eq(d.trailJoin, 'line', '默认轨迹连接方式为直线型');
+  eq(d.bodyJoin, 'line', '默认蛇身连接方式为直线型');
+  eq(d.smoothTrail, false, '直线型派生的 smoothTrail 为 false');
+  eq(d.smoothBody, false, '直线型派生的 smoothBody 为 false');
   const st2 = normalizeConfig({ style: { smoothTrail: false, smoothBody: false } }).style;
   eq(st2.smoothTrail, false, '轨迹平滑可关闭');
   eq(st2.smoothBody, false, '蛇身曲线连接可关闭');
@@ -1317,8 +1321,8 @@ section('轨迹 / 蛇身连接方式');
   eq(JOIN_MODES.join(','), 'curve,line,angle', '连接方式枚举为 曲线 / 直线 / 预设角度');
 
   const d = defaultConfig();
-  eq(d.style.trailJoin, 'curve', '默认轨迹连接方式为曲线');
-  eq(d.style.bodyJoin, 'curve', '默认蛇身连接方式为曲线');
+  eq(d.style.trailJoin, 'line', '默认轨迹连接方式为直线型');
+  eq(d.style.bodyJoin, 'line', '默认蛇身连接方式为直线型');
 
   const line = normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'line' } });
   eq(line.style.trailJoin, 'line', '轨迹可配置为直线连接');
@@ -1330,7 +1334,7 @@ section('轨迹 / 蛇身连接方式');
   eq(angle.style.trailAngle, 30, '保留预设角度');
   eq(normalizeConfig({ ...d, style: { ...d.style, trailAngle: 200 } }).style.trailAngle, 85, '预设角度上限收敛到 85');
   eq(normalizeConfig({ ...d, style: { ...d.style, trailAngle: 1 } }).style.trailAngle, 5, '预设角度下限收敛到 5');
-  eq(normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'zigzag' } }).style.trailJoin, 'curve', '非法连接方式回退为默认曲线');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailJoin: 'zigzag' } }).style.trailJoin, 'line', '非法连接方式回退为默认直线');
 
   // 旧配置兼容：只有布尔 smoothTrail / smoothBody 时按「开=曲线，关=直线」换算
   const legacy = normalizeConfig({
@@ -1493,6 +1497,265 @@ section('跨缝渲染调用（裁剪到网格区域，两侧分段绘制）');
   const restores = calls.filter((c) => c.name === 'restore').length;
   ok(saves > 0 && saves === restores, 'save / restore 配对，裁剪状态不会泄漏到后续绘制',
     `save ${saves} 次，restore ${restores} 次`);
+}
+
+/* ---------- 轨迹亮度衰减 ---------- */
+
+/** 记录型假 ctx：把每次方法调用与属性赋值都记下来，用于无头环境断言绘制行为 */
+function recordingCtx() {
+  const calls = [];
+  const sets = [];
+  const ctx = new Proxy({}, {
+    get(target, key) {
+      if (key in target) return target[key];
+      return (...args) => { calls.push({ name: String(key), args }); };
+    },
+    set(target, key, value) { target[key] = value; sets.push({ name: String(key), value }); return true; },
+  });
+  return { ctx, calls, sets };
+}
+
+/** 不依赖 DOM 的渲染上下文（跳过 resize 中对 window 的访问） */
+function headlessRenderer(style = {}) {
+  const { ctx, calls, sets } = recordingCtx();
+  const r = Object.create(Renderer.prototype);
+  r.ctx = ctx;
+  r.canvas = { width: 1, height: 1, style: {} };
+  r.style = { ...STYLE_DEFAULTS, ...style };
+  r.body = null;
+  r.result = null;
+  r.trail = { path: [], order: [], info: new Map(), maxTick: 0 };
+  r.trailInfo = r.trail.info;
+  r.trailPix = null;
+  r.trailRuns = [];
+  r.pixDirty = true;
+  r.filterSet = null;
+  r.filterLayer = null;
+  r.compare = null;
+  r.compareLayer = null;
+  r.collisionPoints = [];
+  r.startCoord = null;
+  r.endCoord = null;
+  r._scratchA = { x: 0, y: 0 };
+  r._scratchB = { x: 0, y: 0 };
+  r._scratchC = { x: 0, y: 0 };
+  return { r, calls, sets };
+}
+
+/** 用真实模拟结果装配无头渲染器 */
+function attachResult(r, result) {
+  r.result = result;
+  r.grid = result.grid;
+  r.states = result.states;
+  r.body = result.config.body;
+  r.trail = buildTrail(result.grid, result.frames);
+  r.trailInfo = r.trail.info;
+  r.pixDirty = true;
+  r.size = result.grid.canvasSize(r.style.cellSize, r.style.gap, Math.max(16, Math.round(r.style.cellSize * 0.9)));
+  return r;
+}
+
+section('轨迹亮度衰减（按步长衰减并完全淡出）');
+{
+  const { r } = headlessRenderer({ cellSize: 20, gap: 2 });
+  r.grid = new Grid({ type: 'square', width: 60, height: 4, boundary: 'wrap' });
+  r.size = r.grid.canvasSize(r.style.cellSize, r.style.gap, 18);
+
+  const linear = { on: true, len: 40, mode: 'linear' };
+  near(r.fadeProgress(0, linear), 1, 1e-9, '线性衰减：刚离开头部时亮度为 1');
+  near(r.fadeProgress(20, linear), 0.5, 1e-9, '线性衰减：走满一半步长时亮度为 0.5');
+  eq(r.fadeProgress(40, linear), 0, '线性衰减：走满衰减步长后精确归零（完全淡出）');
+  eq(r.fadeProgress(9999, linear), 0, '线性衰减：远超衰减步长后仍为 0，不会回升');
+  ok(r.fadeProgress(10, linear) > r.fadeProgress(30, linear), '线性衰减：越老的轨迹越暗（单调递减）');
+
+  const exp = { on: true, len: 40, mode: 'exponential' };
+  near(r.fadeProgress(0, exp), 1, 1e-9, '指数衰减：新点亮度为 1');
+  eq(r.fadeProgress(40, exp), 0, '指数衰减：走满衰减步长后精确归零');
+  ok(r.fadeProgress(10, exp) < r.fadeProgress(10, linear), '指数衰减在前期比线性更快变暗（先急后缓）');
+  ok(r.fadeProgress(38, exp) < r.fadeProgress(38, linear), '指数衰减在尾端比线性更暗，尾巴收得更干净');
+
+  const th = r.theme();
+  eq(r.fadeAt(th, 0, 6).alpha, 0, '亮度进度为 0 时不透明度为 0（彻底淡出，不再保留恒亮的长尾）');
+  near(r.fadeAt(th, 1, 6).alpha, 0.62, 1e-9, '亮度进度为 1 时达到最亮不透明度');
+  ok(r.fadeAt(th, 1, 6).alpha > r.fadeAt(th, 0.5, 6).alpha, '不透明度随亮度进度递增');
+  ok(r.fadeAt(th, 1, 6).width > r.fadeAt(th, 0.2, 6).width, '越新的轨迹越粗');
+  ok(r.fadeAt(th, 0.2, 6).width >= 0.5, '描边宽度有下限，细线段仍可见');
+  near(r.fadeAt({ trailA: '#000000', trailB: '#ffffff' }, 0.5, 4).alpha, 0.31, 1e-9, '线性中段不透明度为最亮值的一半');
+}
+
+section('高步数场景：衰减窗口裁剪（100 步以上不再整条常亮）');
+{
+  const runFor = (steps) => {
+    const cfg = defaultConfig();
+    cfg.grid = { ...cfg.grid, type: 'square', width: 120, height: 30, boundary: 'wrap' };
+    cfg.start = { col: 60, row: 15, direction: 'right' };
+    cfg.endConditions.maxSteps = steps;
+    cfg.endConditions.wall = false;
+    cfg.style = { ...cfg.style, cellSize: 10, gap: 1, trailFade: true, fadeMode: 'linear', fadeLength: 40, trailJoin: 'line' };
+    return new Simulation(cfg, { frameCap: 20000 }).run();
+  };
+  const measure = (steps) => {
+    const result = runFor(steps);
+    const { r, calls, sets } = headlessRenderer({ cellSize: 10, gap: 1, trailFade: true, fadeMode: 'linear', fadeLength: 40, trailJoin: 'line' });
+    attachResult(r, result);
+    const last = result.frames[result.frames.length - 1];
+    r.drawTrail(last, r.theme(), last.tick);
+    const pts = calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo');
+    // 分桶会把相邻段拆成多条折线，折线衔接处会重复传一次坐标，因此另取去重点数作为「窗口内真实轨迹点数」
+    const unique = new Set(pts.map((c) => `${Math.round(c.args[0])},${Math.round(c.args[1])}`)).size;
+    // drawTrailLine 结尾会把 globalAlpha 复位为 1，这里排除掉，只看真正用于描边的亮度
+    const alphas = sets.filter((s) => s.name === 'globalAlpha' && s.value !== 1).map((s) => s.value);
+    // 衰减窗口内的轨迹点数（真实应绘制上限，与总步数无关）
+    const win = r.trail.path.filter((p) => p.tick >= last.tick - 40 && p.tick <= last.tick).length;
+    return { tick: last.tick, trailTick: r.trail.maxTick, segments: pts.length, unique, alphas, win, pathLen: r.trail.path.length };
+  };
+
+  const small = measure(120);
+  const large = measure(600);
+  ok(small.tick >= 100, `多步数场景确实跑到 100 步以上（实际 ${small.tick} 步）`);
+  ok(large.tick >= 500, `对照场景步数更高（实际 ${large.tick} 步）`);
+  ok(small.pathLen > 40, `轨迹总点数远大于衰减窗口（${small.pathLen} 个点）`);
+  ok(small.win === 41 && large.win === 41, `衰减窗口固定为 41 个点，不随总步数变化（${small.win} / ${large.win}）`);
+  ok(small.unique <= small.win && large.unique <= large.win,
+    `只绘制衰减窗口内的点，不再整条常亮（120 步 ${small.unique} 个 / 600 步 ${large.unique} 个真实点）`);
+  ok(small.segments <= small.win * 2 && large.segments <= large.win * 2,
+    `分桶拆段只带来常数级开销（${small.segments} / ${large.segments} 次描点，窗口 ${small.win} 点）`);
+  ok(large.segments * 6 < large.pathLen,
+    `高步数下绘制量远小于轨迹总长（${large.segments} 次描点 vs ${large.pathLen} 个轨迹点）`);
+
+  const minAlpha = Math.min(...small.alphas);
+  const maxAlpha = Math.max(...small.alphas);
+  ok(minAlpha < 0.05, `最老的轨迹点不透明度已接近 0（实际 ${minAlpha.toFixed(4)}），尾巴能完全淡出`);
+  // 分桶描边取的是「档内两端点的平均亮度」，因此最亮档略低于理论峰值 0.62，但仍应明显亮于中段
+  ok(maxAlpha > 0.55, `紧贴头部的轨迹点保持最亮（实际 ${maxAlpha.toFixed(4)}，峰值须明显高于阈值）`);
+  ok(maxAlpha - minAlpha > 0.5, `同一帧内存在明显的亮度落差（${maxAlpha.toFixed(4)} → ${minAlpha.toFixed(4)}），不再是一片常亮`);
+  ok(!small.alphas.includes(0), '不绘制不透明度为 0 的线段（已淡出的点直接跳过）');
+
+  // 关闭渐隐时不做裁剪，且整条轨迹亮度一致
+  const { r, calls, sets } = headlessRenderer({ cellSize: 10, gap: 1, trailFade: false, trailJoin: 'line' });
+  const result = runFor(120);
+  attachResult(r, result);
+  const last = result.frames[result.frames.length - 1];
+  r.drawTrail(last, r.theme(), last.tick);
+  const points = calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo').length;
+  const alphas = sets.filter((s) => s.name === 'globalAlpha' && s.value !== 1).map((s) => s.value);
+  ok(points > 41, `关闭「轨迹渐隐」时保留完整轨迹（${points} 个点）`);
+  ok(alphas.length > 0 && alphas.every((a) => Math.abs(a - 0.34) < 1e-9), `关闭渐隐时全部轨迹点使用同一不透明度（${alphas.length} 段）`);
+}
+
+section('自定义衰减参数（模式 / 步长）');
+{
+  eq(FADE_MODES.join(','), 'linear,exponential', '衰减模式枚举为 线性 / 指数');
+  const d = defaultConfig();
+  eq(d.style.fadeMode, 'linear', '默认衰减模式为线性');
+  eq(d.style.fadeLength, 60, '默认衰减步长为 60 步');
+
+  const n1 = normalizeConfig({ ...d, style: { ...d.style, fadeMode: 'exponential', fadeLength: 300 } });
+  eq(n1.style.fadeMode, 'exponential', '可配置为指数衰减');
+  eq(n1.style.fadeLength, 300, '可自定义衰减步长');
+
+  eq(normalizeConfig({ ...d, style: { ...d.style, fadeMode: 'zigzag' } }).style.fadeMode, 'linear', '非法衰减模式回退为线性');
+  eq(normalizeConfig({ ...d, style: { ...d.style, fadeLength: 99999 } }).style.fadeLength, FADE_LENGTH_LIMIT.max, '衰减步长上限收敛');
+  eq(normalizeConfig({ ...d, style: { ...d.style, fadeLength: 0 } }).style.fadeLength, FADE_LENGTH_LIMIT.min, '衰减步长下限收敛');
+  eq(normalizeConfig({ ...d, style: { ...d.style, fadeLength: -5 } }).style.fadeLength, FADE_LENGTH_LIMIT.min, '负数衰减步长收敛到下限');
+
+  // 分享链接需要完整保留衰减参数
+  const round = decodeConfigFromToken(encodeConfigToToken(n1));
+  eq(round.style.fadeMode, 'exponential', '分享链接保留衰减模式');
+  eq(round.style.fadeLength, 300, '分享链接保留衰减步长');
+
+  // 预设模板跟随默认直线型配置
+  const preset = buildPresetConfig('random-walk');
+  eq(preset.style.trailJoin, 'line', '预设模板继承默认直线型轨迹');
+  eq(preset.style.bodyJoin, 'line', '预设模板继承默认直线型蛇身');
+}
+
+section('轨迹快照与多轨迹对比');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { ...cfg.grid, type: 'square', width: 24, height: 18, boundary: 'wrap' };
+  cfg.start = { col: 12, row: 9, direction: 'up' };
+  cfg.endConditions.maxSteps = 80;
+  cfg.endConditions.wall = false;
+  const r1 = new Simulation(JSON.parse(JSON.stringify(cfg)), { frameCap: 20000 }).run();
+  const cfg2 = JSON.parse(JSON.stringify(cfg));
+  cfg2.seed = cfg.seed + 7;
+  const r2 = new Simulation(cfg2, { frameCap: 20000 }).run();
+
+  const t1 = buildTrail(r1.grid, r1.frames);
+  const t2 = buildTrail(r2.grid, r2.frames);
+  const s1 = snapshotTrail(t1, r1.grid, '基准');
+  const s2 = snapshotTrail(t2, r2.grid, '当前');
+
+  eq(s1.cells.length, t1.order.length, '快照保存全部轨迹格');
+  eq(s1.path.length, t1.path.length, '快照保存完整头部路径（供叠加虚线轨迹）');
+  eq(s1.cells[0].order, 1, '快照保留经过次序');
+  eq(s1.takenAtTick, t1.maxTick, '快照记录冻结时的步数');
+  ok(snapshotMatchesGrid(s1, r2.grid), '同类型同尺寸网格可对比');
+  ok(!snapshotMatchesGrid(s1, new Grid({ type: 'hex', width: 24, height: 18 })), '网格类型不同时不可对比');
+  ok(!snapshotMatchesGrid(s1, new Grid({ type: 'square', width: 25, height: 18 })), '网格尺寸不同时不可对比');
+  ok(!snapshotMatchesGrid(null, r2.grid), '空快照判定为不可对比');
+
+  const self = compareSnapshots(s1, s1);
+  eq(self.shared.length, s1.cells.length, '同一轨迹自比：全部格都在交集');
+  eq(self.onlyBase.length, 0, '同一轨迹自比：没有仅基准的格');
+  eq(self.onlyOther.length, 0, '同一轨迹自比：没有仅当前的格');
+  eq(self.overlapRatio, 1, '同一轨迹自比：重合率为 1');
+  eq(compareSnapshots(null, null).overlapRatio, 1, '空输入不产生 NaN 重合率');
+
+  const diff = compareSnapshots(s1, s2);
+  eq(diff.shared.length + diff.onlyBase.length + diff.onlyOther.length, diff.union, '三类格子之和等于并集格数');
+  eq(diff.baseCount, s1.cells.length, '基准覆盖格数取自快照');
+  eq(diff.otherCount, s2.cells.length, '当前覆盖格数取自当前轨迹');
+  ok(diff.overlapRatio > 0 && diff.overlapRatio < 1, '不同种子下既有重合路径也有差异路径');
+  ok(diff.maxTickBase === t1.maxTick && diff.maxTickOther === t2.maxTick, '对比结果带上两条轨迹各自的步数');
+
+  const csv = compareToCSV({ ...diff, grid: r1.grid });
+  const lines = csv.split('\n');
+  eq(lines.length, diff.union + 1, '对比 CSV 行数 = 并集格数 + 表头');
+  eq(lines[0], 'col,row,status', '对比 CSV 带表头');
+  ok(lines.slice(1).every((l) => /^\d+,\d+,(共有|仅基准|仅当前)$/.test(l)), '对比 CSV 每行是坐标 + 状态');
+
+  const text = compareToText(diff);
+  ok(text.includes('重合率'), '对比摘要包含重合率');
+  ok(text.includes('仅基准') && text.includes('仅当前'), '对比摘要分别给出两类差异格数');
+}
+
+section('纯轨迹 SVG 导出');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { ...cfg.grid, type: 'square', width: 20, height: 14, boundary: 'wrap' };
+  cfg.start = { col: 10, row: 7, direction: 'right' };
+  cfg.endConditions.maxSteps = 120;
+  cfg.endConditions.wall = false;
+  cfg.style = { ...cfg.style, cellSize: 16, gap: 2, showGrid: true, trailFade: true, fadeMode: 'linear', fadeLength: 40 };
+  const result = new Simulation(cfg, { frameCap: 20000 }).run();
+
+  const svg = trailToSVG(result, cfg.style);
+  ok(svg.startsWith('<svg'), 'SVG 以 <svg 开头');
+  ok(svg.trimEnd().endsWith('</svg>'), 'SVG 正常闭合');
+  ok(!svg.includes('NaN'), 'SVG 中不含 NaN 坐标');
+  ok(!svg.includes('undefined'), 'SVG 中不含 undefined');
+  const polys = svg.match(/<polyline /g) || [];
+  ok(polys.length > 0, 'SVG 含轨迹折线');
+  ok(polys.length <= 64, `折线数量受衰减窗口与色阶限制，高步数下不爆炸（${polys.length} 条）`);
+  const opacities = [...svg.matchAll(/stroke-opacity="([\d.]+)"/g)].map((m) => Number(m[1]));
+  ok(new Set(opacities).size >= 3, '轨迹折线带多档渐变不透明度');
+  ok(Math.min(...opacities) < 0.05, '最老的轨迹段接近完全透明（尾巴淡出）');
+  ok(Math.max(...opacities) > 0.6, '最亮的轨迹段保持清晰');
+  ok(svg.includes('线性'), '标注当前衰减模式');
+  ok(svg.includes('渐隐'), '标注渐隐参数');
+  ok(/<circle[^>]*#51cf66/.test(svg), '标出起点');
+  ok(/<circle[^>]*#ffd43b/.test(svg), '标出头部位置');
+  eq((svg.match(/<rect /g) || []).length, 1 + cfg.grid.width * cfg.grid.height, '网格轮廓为每格一个 rect（外加背景）');
+
+  const noFade = trailToSVG(result, { ...cfg.style, trailFade: false });
+  const opacities2 = [...noFade.matchAll(/stroke-opacity="([\d.]+)"/g)].map((m) => Number(m[1]));
+  ok(opacities2.length > 0 && opacities2.every((o) => Math.abs(o - 0.62) < 1e-9), '关闭渐隐时所有轨迹段亮度一致');
+  ok(noFade.includes('轨迹不渐隐'), '关闭渐隐时标注为不渐隐');
+
+  const expSvg = trailToSVG(result, { ...cfg.style, fadeMode: 'exponential' });
+  ok(expSvg.includes('指数'), '可导出指数衰减模式');
 }
 
 /* ---------- 结果 ---------- */
