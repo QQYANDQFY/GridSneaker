@@ -1049,9 +1049,11 @@ export function normalizeConfig(rawInput = {}) {
   cfg.transform = normTransform(raw.transform, cfg.caMode.states);
   // 生命机制的增减生命状态同样依赖最终状态集合
   cfg.life = normLife(raw.life, cfg.caMode.states);
-  // 自撞规则互斥绑定：开启「自撞即判定死亡」时，「撞到自身」结束规则被自动禁用（只读）。
-  // 这里刻意不改写 endConditions.selfCollision 的原始值——关闭前者后该规则原样恢复。
-  cfg.endConditions.selfCollisionLocked = !!(cfg.transform.enabled && cfg.transform.dieOnSelfCollision);
+  // 自撞规则互斥（自动关闭）：「自撞即判定死亡」与结束规则「撞到自身」语义相反——
+  // 前者让自撞只令该移动体消失、整轮运行继续，后者让自撞立即终止整轮运行，两者不能同时生效。
+  // 规范化时若前者已生效（transform.enabled && dieOnSelfCollision），就把后者关闭；
+  // 用户在面板上勾选开关时的即时反向联动由界面完成（src/ui/app.js 的 syncSelfCollisionExclusive）。
+  if (cfg.transform.enabled && cfg.transform.dieOnSelfCollision) cfg.endConditions.selfCollision = false;
   return cfg;
 }
 
@@ -1439,15 +1441,17 @@ export function diagnoseConfig(rawInput = {}) {
       ],
     });
   }
-  if (cfg.transform.enabled && cfg.transform.dieOnSelfCollision && cfg.endConditions.selfCollision) {
+  // 互斥自动关闭：原始配置同时要求「自撞即判定死亡」与「撞到自身」时，后者被规范化关闭并在此说明
+  const rawEndObj = (raw.endConditions && typeof raw.endConditions === 'object') ? raw.endConditions : {};
+  if (cfg.transform.enabled && cfg.transform.dieOnSelfCollision && rawEndObj.selfCollision) {
     out.push({
       level: 'info',
       code: 'transformOverridesSelfCollisionEnd',
-      title: '「撞到自身」结束规则已因互斥绑定自动禁用',
-      message: '已开启「自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发结束规则「撞到自身」，因此该规则被自动禁用且不可手动修改；关闭「自撞即判定死亡」即可恢复编辑。',
+      title: '「撞到自身」已因互斥自动关闭',
+      message: '「自撞即判定死亡」与结束规则「撞到自身」互斥：开启前者时后者会被自动取消勾选，自撞只会让该移动体消失（或按生命机制扣命重生），不会终止整轮运行。反向勾选「撞到自身」则自动关闭「自撞即判定死亡」。',
       suggestions: [
-        { label: '关闭「自撞即判定死亡」以恢复该结束规则', patch: { transform: { dieOnSelfCollision: false } } },
-        { label: '改用「所有移动体均已消失」收尾', patch: { endConditions: { allAgentsGone: true } } },
+        { label: '改由「撞到自身」终止运行', patch: { transform: { dieOnSelfCollision: false }, endConditions: { selfCollision: true } } },
+        { label: '保持互斥：改用「所有移动体均已消失」收尾', patch: { endConditions: { allAgentsGone: true } } },
       ],
     });
   }

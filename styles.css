@@ -385,10 +385,16 @@ html, body {
   from { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0); }
   to { box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.32); }
 }
-/* 互斥禁用行：与「蛇死亡转化 → 自撞即判定死亡」冲突的结束规则不可手动修改 */
-.end-row.locked { opacity: 0.6; border-color: var(--line); border-style: dashed; }
-.end-row.locked > .check-wrap,
-.end-row.locked .checkbox { cursor: not-allowed; }
+/* 由「查看结束规则」跳转到的分组：用于「生命耗尽」「蛇已全部转化为环境」这类
+   不属于结束规则列表的原因，直接定位到真正控制它的分组 */
+details.group.target {
+  outline: 2px solid #ffd166;
+  outline-offset: 2px;
+  border-radius: 8px;
+  animation: end-row-flash 0.5s ease-in-out 4 alternate;
+}
+/* 结束规则行内的互斥提示：说明文字与「一键切换」按钮同排 */
+.end-hint-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .end-row .field { margin: 0; flex: 0 1 118px; min-width: 54px; }
 .end-row .field-label { margin-bottom: 1px; }
 /* 优先级行：勾选项可收缩，按钮簇不换行（详见 .row-actions） */

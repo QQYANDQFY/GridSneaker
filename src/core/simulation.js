@@ -1598,9 +1598,8 @@ export class Simulation {
       outOfBounds: () => tickEvents.some((e) => e.type === 'wall' && e.outOfBounds && !e.absorbed),
       // 转化模式下的自撞属于「蛇死亡」而非「结束运行」：带 transformed 标志的事件不计入结束判定，
       // 否则一旦启用转化，主移动体自撞仍会按「撞到自身」结束规则终止整轮运行。
-      // 互斥绑定：开启「自撞即判定死亡」时该规则被自动锁定禁用（selfCollisionLocked）。
-      selfCollision: () => !ec.selfCollisionLocked
-        && tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other' && !e.transformed && !e.absorbed),
+      // 互斥保证：「自撞即判定死亡」生效时，「撞到自身」已在配置规范化阶段被自动关闭。
+      selfCollision: () => tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other' && !e.transformed && !e.absorbed),
       selfCollisionTotal: () => stats.selfCollisions >= ec.selfCollisionTotalN,
       selfCollisionConsecutive: () => stats.selfCollisionsConsecutive >= ec.selfCollisionConsecutiveN,
       obstacle: () => tickEvents.some((e) => e.type === 'obstacle' && !e.absorbed),

@@ -2621,31 +2621,34 @@ section('生命机制：多生命 / 扣命重生 / 生命耗尽 / 死亡即停 /
       '诊断：未启用生命机制时不提示增减来源缺失');
   }
 
-  // 3) 自撞规则互斥绑定：开启「自撞即判定死亡」时「撞到自身」自动锁定且原值不被改写
+  // 3) 自撞规则互斥（自动关闭）：两项同时开启时，规范化由「自撞即判定死亡」胜出并关闭「撞到自身」
   {
-    eq(defaultConfig().endConditions.selfCollisionLocked, undefined, '互斥锁定字段是派生值，不写入默认配置');
+    ok(!('selfCollisionLocked' in normalizeConfig({}).endConditions),
+      '旧的「互斥锁定」派生字段已移除，改由自动关闭机制实现互斥');
+    eq(normalizeConfig({}).endConditions.selfCollision, true,
+      '未启用「蛇死亡转化」时不关闭「撞到自身」（默认行为零变化）');
     const on = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } });
-    eq(on.endConditions.selfCollisionLocked, true, '开启「自撞即判定死亡」时「撞到自身」被锁定');
-    eq(on.endConditions.selfCollision, true, '互斥绑定不改写「撞到自身」的原始值（关闭后原样恢复）');
+    eq(on.endConditions.selfCollision, false, '「自撞即判定死亡」生效时「撞到自身」被自动关闭');
+    eq(on.transform.dieOnSelfCollision, true, '互斥关闭是单向的：不会反过来改动「自撞即判定死亡」');
     const off = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: false }, endConditions: { selfCollision: true } });
-    eq(off.endConditions.selfCollisionLocked, false, '关闭「自撞即判定死亡」后锁定解除');
-    eq(off.endConditions.selfCollision, true, '解锁后「撞到自身」恢复可编辑且原值保留');
-    eq(normalizeConfig({ transform: { enabled: false, dieOnSelfCollision: true }, endConditions: { selfCollision: true } }).endConditions.selfCollisionLocked,
-      false, '未启用「蛇死亡转化」时不锁定');
-    const notChecked = normalizeConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: false } });
-    eq(notChecked.endConditions.selfCollision, false, '锁定态不会把未勾选的规则自动打开');
-    ok(diagnoseConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } })
-      .some((d) => d.code === 'transformOverridesSelfCollisionEnd'), '诊断：互斥绑定有对应提示');
+    eq(off.endConditions.selfCollision, true, '关闭「自撞即判定死亡」后「撞到自身」保持原值');
+    eq(normalizeConfig({ transform: { enabled: false, dieOnSelfCollision: true }, endConditions: { selfCollision: true } }).endConditions.selfCollision,
+      true, '「蛇死亡转化」总开关未启用时不触发互斥关闭');
+    const diag = diagnoseConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } });
+    ok(diag.some((d) => d.code === 'transformOverridesSelfCollisionEnd'), '诊断：互斥自动关闭有对应提示');
+    const fix = diag.find((d) => d.code === 'transformOverridesSelfCollisionEnd');
+    ok(fix.suggestions.some((s) => s.patch.transform?.dieOnSelfCollision === false && s.patch.endConditions?.selfCollision === true),
+      '诊断：给出「改由撞到自身结束运行」的一键方案');
 
-    // 行为验证：互斥绑定下自撞按生命机制扣命，而不是以「撞到自身」收尾
+    // 行为验证：互斥生效时自撞按生命机制扣命，而不是以「撞到自身」收尾
     const r = new Simulation(loopLife({
       transform: { enabled: true, dieOnSelfCollision: true, globalProbability: 0, segmentProbability: 0 },
       life: { initialLives: 2 },
     })).run();
-    eq(r.stats.lifeLosses, 2, '互斥绑定下自撞按生命机制逐次扣命');
+    eq(r.stats.lifeLosses, 2, '互斥生效时自撞按生命机制逐次扣命');
     eq(r.stats.respawns, 1, '还有剩余生命时原地重生');
     eq(r.stats.finalDeaths, 1, '生命耗尽才记录最终死亡');
-    ok(r.endReason.code !== 'selfCollision', '互斥绑定下自撞不以「撞到自身」收尾', `实际 ${r.endReason.code}`);
+    ok(r.endReason.code !== 'selfCollision', '互斥生效时自撞不以「撞到自身」收尾', `实际 ${r.endReason.code}`);
     eq(r.stats.transformDeaths, 1, '生命耗尽后转入「蛇死亡转化」流程');
   }
 
@@ -3131,6 +3134,30 @@ section('默认关闭：排行榜第 1 名提示（保留开关）；界面措�
   ok(!/自适应难度/.test(app), '界面代码中不再残留「自适应难度」措辞');
   const diff = readFileSync(new URL('../src/core/difficulty.js', import.meta.url), 'utf8');
   ok(!/自适应难度/.test(diff), '动态难度模块注释同样使用「自适应速度」措辞');
+}
+
+/* ---------- 自撞规则互斥：自动关闭联动（源码级回归） ---------- */
+section('自撞规则互斥：勾选即时自动关闭（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const cfgSrc = readFileSync(new URL('../src/core/config.js', import.meta.url), 'utf8');
+  const simSrc = readFileSync(new URL('../src/core/simulation.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+  ok(/function syncSelfCollisionExclusive\(source\)/.test(app), '存在统一的互斥联动函数 syncSelfCollisionExclusive');
+  ok(/syncSelfCollisionExclusive\('selfCollision'\)/.test(app), '勾选「撞到自身」时即时关闭「自撞即判定死亡」');
+  ok(/syncExclusive\('die'\)/.test(app) && /syncExclusive\('enable'\)/.test(app),
+    '「自撞即判定死亡」与「蛇死亡转化」总开关都接入互斥联动');
+  ok(/syncSelfCollisionExclusive\('enable'\);\s*\n\s*syncControlBar/.test(app),
+    '重建面板前兜底收敛互斥状态（载入模板 / 导入配置同样生效）');
+  ok(!/selfCollisionLocked/.test(app) && !/selfCollisionLocked/.test(simSrc) && !/selfCollisionLocked/.test(cfgSrc),
+    '「强制锁定」实现已彻底移除');
+  ok(!/\.end-row\.locked/.test(css) && !/互斥禁用/.test(css), '锁定态样式已移除');
+  ok(/已自动关闭结束规则「撞到自身」|已自动关闭「自撞即判定死亡」/.test(app), '互斥自动关闭时给出即时提示');
+  ok(/一键改为「撞到自身」结束/.test(app), '结束规则分组内提供反手一键切换，无需跳到其它配置页');
+  ok(/已启用 \$\{enabledCount\} 项/.test(app), '结束规则分组徽标显示当前启用条数');
+  ok(/END_REASON_GROUP/.test(app) && /生命机制（多生命）/.test(app),
+    '「生命耗尽」「全部转化为环境」等原因可定位到真正控制它的分组');
 }
 
 /* ---------- 结果 ---------- */

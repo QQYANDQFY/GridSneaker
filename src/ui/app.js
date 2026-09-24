@@ -185,6 +185,32 @@ function notifyEndConditionSync(code, on) {
   for (const fn of endConditionSyncers.get(code) || []) fn(on);
 }
 
+/**
+ * 「自撞即判定死亡」（扩展机制 → 蛇死亡转化）与结束规则「撞到自身」互斥的即时联动。
+ *
+ * 二者语义相反：前者让自撞只令该移动体消失、整轮运行继续；后者让自撞立即终止整轮运行。
+ * 因此只允许其中一项开启——用户勾选任一项时，这里立刻取消并关闭另一项，
+ * 无需再跳到另一个配置页手动修改。这里改的是工作配置 state.cfg，
+ * 与配置规范化阶段（src/core/config.js）的自动关闭保持同一约束。
+ *
+ * @param {'selfCollision'|'die'|'enable'} source 本次由哪个开关触发
+ * @returns {''|'selfCollision'|'die'} 被自动关闭的那一项，'' 表示无冲突、未做改动
+ */
+function syncSelfCollisionExclusive(source) {
+  const t = state.cfg.transform;
+  const ec = state.cfg.endConditions;
+  if (source === 'selfCollision') {
+    if (!(ec.selfCollision && t.dieOnSelfCollision)) return '';
+    t.dieOnSelfCollision = false;
+    return 'die';
+  }
+  // 来源为「自撞即判定死亡」或「蛇死亡转化」总开关：前者处于开启态时，「撞到自身」让位
+  if (!(source === 'die' ? t.dieOnSelfCollision : (t.enabled && t.dieOnSelfCollision))) return '';
+  if (!ec.selfCollision) return '';
+  ec.selfCollision = false;
+  return 'selfCollision';
+}
+
 /* ------------------------------------------------------------------ */
 /* 启动                                                                */
 /* ------------------------------------------------------------------ */
@@ -1355,6 +1381,23 @@ function continueRun() {
   toast(`步数上限已提升至 ${next} 步并继续运行`, 'success');
 }
 
+/**
+ * 结束原因 → 真正控制它的配置分组。
+ * 「生命耗尽」「蛇已全部转化为环境」这类原因不在结束规则列表里，
+ * 点「查看结束规则」时应直接带到控制它的分组，而不是笼统提示「不属于结束规则列表项」。
+ */
+const END_REASON_GROUP = {
+  lifeDepleted: '生命机制（多生命）',
+  transformDone: '蛇死亡转化',
+};
+
+/** 给配置分组一个短暂的定位高亮（与结束规则行的 .target 高亮同款） */
+function flashCfgGroup(el) {
+  if (!el) return;
+  el.classList.add('target');
+  setTimeout(() => el.classList.remove('target'), 2600);
+}
+
 /** 打开「结束规则」选项卡并高亮本次命中的结束条件 */
 function focusEndReason() {
   const reason = state.result?.endReason;
@@ -1364,6 +1407,15 @@ function focusEndReason() {
   if (!reason) return;
   const row = details.querySelector(`[data-end-code="${reason.code}"]`);
   if (!row) {
+    // 非结束规则项（如生命耗尽 / 全部转化为环境）：跳到真正控制它的分组
+    const ownerKey = END_REASON_GROUP[reason.code];
+    const owner = ownerKey ? revealConfigGroup(ownerKey) : null;
+    if (owner) {
+      owner.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      flashCfgGroup(owner);
+      toast(`「${reason.label}」由「${ownerKey}」控制，已跳转到该分组`, 'info');
+      return;
+    }
     toast(`「${reason.label}」不属于结束规则列表项`, 'info');
     return;
   }
@@ -2736,6 +2788,9 @@ function safeName(name) {
 
 function rebuildAll() {
   state.dirty = true; // 配置即将变化：隐藏上一轮的运行期诊断，避免渲染顺序造成残留
+  // 互斥约束兜底：载入模板 / 导入配置 / 载入分享链接可能同时带上两项互斥规则，
+  // 这里在渲染前统一收敛，保证面板显示的勾选状态与实际运行语义一致。
+  syncSelfCollisionExclusive('enable');
   syncControlBar();   // 载入模板 / 恢复配置后，控制条上的速度与「跟随移动体」同步为新配置
   renderConfigPanel();
   renderSidePanel();
@@ -3328,14 +3383,14 @@ function collisionGroup(cfg) {
   const sp = cfg.selfCollisionPolicy;
   // 「连续自撞上限」只在「结束规则 → 撞到自身」勾选时才参与结束判定，
   // 因此这里跟随该结束规则的可编辑状态联动置灰。
-  // 另外，「自撞即判定死亡」开启时该结束规则被互斥禁用，本项同样失效。
+  // 「自撞即判定死亡」与「撞到自身」互斥（开启前者会自动关闭后者），故只需看后者。
   const maxConsecutiveInput = numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 });
   const syncMaxConsecutive = (on) => {
     maxConsecutiveInput.disabled = !on;
     maxConsecutiveInput.title = on ? '' : '需先勾选「结束规则 → 撞到自身」，该项才会生效';
   };
   bindEndConditionSync('selfCollision', syncMaxConsecutive);
-  syncMaxConsecutive(!!cfg.endConditions.selfCollision && !(cfg.transform.enabled && cfg.transform.dieOnSelfCollision));
+  syncMaxConsecutive(!!cfg.endConditions.selfCollision);
   return group('碰撞与自撞处理', [
     field('视为碰撞', h('div', { class: 'chips-line' },
       chkBind(c, 'headIntoBody', () => onSimChange(), '头撞身体'),
@@ -4153,9 +4208,14 @@ function transformGroup(cfg) {
     estimate.textContent = `按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`;
   };
   syncEstimate();
-  // 自撞规则互斥绑定：本组的两项开关共同决定「结束规则 → 撞到自身」的锁定态，
-  // 而锁定态是派生值、只在面板重建时重新计算，因此改动后整体重建面板以同步禁用状态。
-  const syncSelfCollisionLock = () => rebuildAll();
+  // 互斥联动：本组的「启用」/「自撞即判定死亡」一旦让「自撞即判定死亡」生效，
+  // 结束规则「撞到自身」就会被自动取消勾选。该规则的复选框位于另一个分组
+  //（核心规则 → 结束规则），因此这里重建面板，让两处的勾选状态即时同步。
+  const syncExclusive = (source) => {
+    const closed = syncSelfCollisionExclusive(source);
+    if (closed) toast('已自动关闭结束规则「撞到自身」：它与「自撞即判定死亡」互斥', 'info');
+    rebuildAll();
+  };
   const onProbChange = () => { syncEstimate(); onSimChange(); };
 
   /** 蒙特卡洛试算：用与模拟层相同的判定顺序（先全局、再逐节）抽样，读出实际触发率与转化节数 */
@@ -4180,10 +4240,10 @@ function transformGroup(cfg) {
 
   return group('蛇死亡转化', [
     field('启用', h('div', { class: 'chips-line' },
-      chkBind(t, 'enabled', () => syncSelfCollisionLock(), '自撞致死后按概率并入环境')),
+      chkBind(t, 'enabled', () => syncExclusive('enable'), '自撞致死后按概率并入环境')),
       '关闭时自撞完全沿用「碰撞与自撞处理 → 自撞处理」的原有策略'),
-    field('自撞即判定死亡', chkBind(t, 'dieOnSelfCollision', () => syncSelfCollisionLock(), '自撞即判定死亡（不结束运行）'),
-      '开启后「结束规则 → 撞到自身」会被自动禁用且不可手动修改（互斥绑定），关闭本项即恢复编辑'),
+    field('自撞即判定死亡', chkBind(t, 'dieOnSelfCollision', () => syncExclusive('die'), '自撞即判定死亡（不结束运行）'),
+      '与「结束规则 → 撞到自身」互斥：开启本项会自动取消勾选后者；关闭本项后后者可重新勾选'),
     field('全局触发概率', rangeBind(t, 'globalProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
       '蛇死亡后是否启动转化流程的总概率'),
     field('分段转化概率', rangeBind(t, 'segmentProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
@@ -4282,23 +4342,23 @@ function endGroup(cfg) {
       paramFields.push(field(label, numBind(ec, key, () => onSimChange(), opts)));
     }
     const isOn = numericKeys.includes('maxSteps') ? typeof ec.maxSteps === 'number' : !!ec[code];
-    // 互斥绑定（派生值）：开启「蛇死亡转化 → 自撞即判定死亡」时，「撞到自身」被自动禁用且不可手动修改。
-    // 这里不改写 ec.selfCollision 的原始值，关闭前者后该规则会原样恢复。
-    const locked = code === 'selfCollision' && !!(cfg.transform.enabled && cfg.transform.dieOnSelfCollision);
-    const cbLabel = (END_LABELS[code] || code) + (locked ? '（已因「自撞即判定死亡」互斥禁用）' : '');
-    const cb = checkbox(locked ? false : isOn, (v) => {
+    const cb = checkbox(isOn, (v) => {
       if (numericKeys.includes('maxSteps')) ec.maxSteps = v ? endParamMemory.maxSteps : false;
       else ec[code] = v;
       syncDisabled.forEach((fn) => fn(v));
       notifyEndConditionSync(code, v);
+      // 互斥联动：勾选「撞到自身」时自动关闭「蛇死亡转化 → 自撞即判定死亡」（位于另一个分组），
+      // 因此需要重建面板，让两处的勾选状态即时同步，无需用户跳转过去手动修改。
+      if (code === 'selfCollision') {
+        const closed = syncSelfCollisionExclusive('selfCollision');
+        if (closed) {
+          toast('已自动关闭「自撞即判定死亡」：它与结束规则「撞到自身」互斥', 'info');
+          rebuildAll();
+          return;
+        }
+      }
       onSimChange();
-    }, cbLabel);
-    if (locked) {
-      const input = cb.querySelector('input');
-      if (input) input.disabled = true;
-      cb.title = '已开启「蛇死亡转化 → 自撞即判定死亡」：自撞只会让该移动体消失（或按生命机制扣命重生），不会触发本规则；关闭前者即可恢复编辑';
-    }
-    const rowOn = locked ? false : isOn;
+    }, END_LABELS[code] || code);
     const rowChildren = [
       h('span', { class: 'priority-no' }, `${i + 1}`),
       cb,
@@ -4309,14 +4369,28 @@ function endGroup(cfg) {
       ),
     ];
     rows.push(h('div', {
-      class: `end-row${rowOn ? ' on' : ''}${locked ? ' locked' : ''}`,
+      class: `end-row${isOn ? ' on' : ''}`,
       'data-end-code': code,
     }, rowChildren));
   });
+  // 互斥提示：开启「自撞即判定死亡」等价于关闭本规则，这里给出说明与反手一键切换
+  const dieActive = !!(cfg.transform.enabled && cfg.transform.dieOnSelfCollision);
+  const enabledCount = ec.priority
+    .filter((code) => (code === 'maxSteps' ? typeof ec.maxSteps === 'number' : !!ec[code])).length;
   return group('结束规则（按优先级）', [
     h('div', { class: 'hint' }, '自上而下依次判断，命中第一条满足条件的规则即结束运行；可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条继续运行）。'),
+    dieActive
+      ? h('div', { class: 'hint end-hint-line' },
+        '「撞到自身」已由「扩展机制 → 蛇死亡转化 → 自撞即判定死亡」自动关闭（二者互斥：自撞只让该移动体消失、不结束运行）。',
+        button('一键改为「撞到自身」结束', () => {
+          cfg.transform.dieOnSelfCollision = false;
+          ec.selfCollision = true;
+          rebuildAll();
+          toast('已改为由结束规则「撞到自身」终止运行', 'success');
+        }, 'ghost small'))
+      : null,
     ...rows,
-  ], { open: false });
+  ], { open: false, badge: `已启用 ${enabledCount} 项` });
 }
 
 /* ---------------- 展示样式 ---------------- */
