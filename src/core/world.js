@@ -148,8 +148,13 @@ export class Agent {
     this.speedMul = 1;
     this.state = opts.state || 'normal';
     this.tag = opts.tag || null;
+    /** 是否为主移动体：主移动体触发结束条件时会终止整场运行，其它移动体只会自行消失 */
+    this.isMain = opts.isMain !== undefined ? !!opts.isMain : true;
+    /** 生成时刻（步数），用于「最老/最新」排序与运行日志 */
+    this.spawnTick = Math.max(0, Math.round(Number(opts.spawnTick) || 0));
   }
 
+  /** 头部坐标 */
   get head() {
     return this.segments[0];
   }
@@ -168,6 +173,8 @@ export class Agent {
       label: this.label,
       state: this.state,
       tag: this.tag,
+      isMain: this.isMain,
+      spawnTick: this.spawnTick,
     });
     a.alive = this.alive;
     a.pendingForcedStraights = this.pendingForcedStraights;

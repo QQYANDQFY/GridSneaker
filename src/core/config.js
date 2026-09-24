@@ -5,7 +5,7 @@ import { normalizeStates } from './world.js';
 import { Grid, parseDir } from './grid.js';
 import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
-export const CONFIG_VERSION = '1.1';
+export const CONFIG_VERSION = '1.2';
 
 /** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
 export const MAX_STEPS_LIMIT = 1e15;
@@ -21,6 +21,8 @@ export const END_PRIORITY_DEFAULT = [
   'lengthReached',
   'coverage',
   'noMove',
+  'allAgentsGone',
+  'caStable',
   'maxTime',
   'ruleEnd',
 ];
@@ -39,7 +41,37 @@ export const END_LABELS = {
   maxTime: '达到时间上限',
   ruleEnd: '环境规则触发结束',
   frameLimit: '达到安全步数上限',
+  caStable: '元胞自动机稳定',
+  allAgentsGone: '所有移动体均已消失',
   manual: '手动结束',
+};
+
+/** 多蛇之间的交互结果模式 */
+export const INTERACTION_MODES = ['collide', 'merge', 'repel', 'pass'];
+export const INTERACTION_LABELS = {
+  collide: '碰撞（按碰撞规则处理）',
+  merge: '融合（吞并对方并合并长度）',
+  repel: '排斥（避开对方，不结束运行）',
+  pass: '穿行（互不影响）',
+};
+
+/** 新蛇生成的触发方式 */
+export const SPAWN_MODES = ['time', 'interval', 'event'];
+export const SPAWN_LABELS = {
+  time: '按预定时间点',
+  interval: '按随机时间间隔',
+  event: '按特殊事件',
+};
+
+/** 可用于「特殊事件」生成触发的运行事件 */
+export const SPAWN_EVENTS = ['eat', 'markerInteraction', 'selfCollision', 'wall', 'obstacle', 'merge'];
+export const SPAWN_EVENT_LABELS = {
+  eat: '吃到标记物',
+  markerInteraction: '触碰交互标记物',
+  selfCollision: '发生自撞',
+  wall: '撞墙/越界',
+  obstacle: '撞到障碍物',
+  merge: '发生融合',
 };
 
 export const DEFAULT_STATES = [
@@ -90,6 +122,8 @@ export function defaultClause(type = 'count') {
       return { ...base, key: 'steps', comparator: '>=', value: 10 };
     case 'selfLength':
       return { ...base, comparator: '>=', value: 10 };
+    case 'agentCount':
+      return { ...base, comparator: '>=', value: 2 };
     case 'cellState':
       return { ...base, position: 'front', state: 'obstacle' };
     case 'random':
@@ -129,6 +163,8 @@ export function defaultAction(type = 'createObstacle') {
       return { type, color: '#ff7ab6' };
     case 'spawnAgent':
       return { type, length: 3, direction: 'random' };
+    case 'removeAgent':
+      return { type, target: 'nearest' };
     case 'modifyRule':
       return { type, ruleId: '', op: 'disable', value: 0 };
     case 'endRun':
@@ -149,6 +185,8 @@ export function defaultConfig() {
     grid: defaultGrid(),
     start: { col: 12, row: 12, direction: 'up' },
     body: {
+      // 蛇形实体总开关：关闭后地图上不再生成任何蛇形实体（纯环境 / 纯 CA 演化）
+      enabled: true,
       initialLength: 3,
       segmentSize: 0.82,
       shape: 'round',
@@ -167,6 +205,34 @@ export function defaultConfig() {
       },
     },
     moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
+    /**
+     * 安全避撞预设：在方向选择阶段先剔除会撞到自身身体（可选：障碍物 / 其它移动体）的候选方向，
+     * 仅当所有可行方向均被阻塞时才回落到原始权重，从而触发原本的碰撞逻辑。
+     */
+    safety: {
+      avoidBody: false,
+      avoidObstacle: false,
+      avoidOtherAgents: true,
+    },
+    /** 多蛇生成与交互系统 */
+    multiSnake: {
+      enabled: false,
+      spawn: {
+        mode: 'time',
+        times: [20, 60, 120],
+        minInterval: 30,
+        maxInterval: 90,
+        maxAgents: 6,
+        length: 3,
+        direction: 'random',
+        events: ['eat'],
+        probability: 1,
+      },
+      interaction: {
+        mode: 'collide',
+        colorPalette: ['#ff5d5d', '#ffd166', '#51cf66', '#4dabf7', '#c084fc', '#f783ac', '#63e6be', '#ffa94d'],
+      },
+    },
     ruleExecution: 'async',
     advancedRules: [],
     collision: {
@@ -191,6 +257,31 @@ export function defaultConfig() {
       syncWithAgent: 'afterMove',
       every: 1,
       stopWhenAgentEnds: false,
+      /** 元胞稳定态检测：连续 stableSteps 次演化都没有任何单元变化时结束运行（纯 CA 场景的收尾体验） */
+      stopOnStable: false,
+      stableSteps: 3,
+      /**
+       * 标记物交互机制：把指定的元胞状态定义为「交互标记物」，
+       * 移动体触碰后按反馈规则表产生长度 / 颜色 / 消耗等状态变化。
+       */
+      markerInteraction: {
+        enabled: false,
+        states: ['marker'],
+        effects: [
+          {
+            id: 'fx_grow',
+            name: '触碰增长',
+            enabled: true,
+            state: 'marker',
+            mode: 'delta',
+            value: 1,
+            probability: 1,
+            consume: true,
+            consumeTo: 'empty',
+            color: '',
+          },
+        ],
+      },
     },
     endConditions: {
       wall: true,
@@ -210,6 +301,10 @@ export function defaultConfig() {
       maxTime: false,
       maxTimeMs: 5000,
       ruleEnd: true,
+      /** 元胞自动机进入稳定态时结束（也可由 caMode.stopOnStable 强制开启） */
+      caStable: false,
+      /** 曾经存在过的移动体全部消失时结束 */
+      allAgentsGone: false,
       priority: [...END_PRIORITY_DEFAULT],
     },
     seed: 12345,
@@ -228,6 +323,9 @@ export function defaultConfig() {
       highlightRules: true,
       showStartEnd: true,
       trailFade: true,
+      showEyes: true,
+      showEffects: true,
+      glow: false,
       background: null,
       gridLine: null,
       axisLabels: true,
@@ -302,6 +400,8 @@ function normClause(raw) {
       return { type: 'stat', key: str(raw.key, 'steps'), comparator: normComparator(raw.comparator), value: num(raw.value, 10), invert };
     case 'selfLength':
       return { type: 'selfLength', comparator: normComparator(raw.comparator), value: num(raw.value, 10), invert };
+    case 'agentCount':
+      return { type: 'agentCount', comparator: normComparator(raw.comparator), value: num(raw.value, 2), invert };
     case 'cellState':
       return { type: 'cellState', position: str(raw.position, 'front'), state: str(raw.state, 'obstacle'), invert };
     case 'random':
@@ -377,6 +477,9 @@ function normAction(raw) {
     case 'spawnAgent':
       a.length = clamp(Math.round(num(raw.length, 3)), 1, 200);
       a.direction = str(raw.direction, 'random');
+      return a;
+    case 'removeAgent':
+      a.target = ['nearest', 'random', 'largest', 'oldest'].includes(raw.target) ? raw.target : 'nearest';
       return a;
     case 'modifyRule':
       a.ruleId = str(raw.ruleId, '');
@@ -508,6 +611,76 @@ function normalizeStyle(raw = {}) {
     showStartEnd: bool(raw.showStartEnd, d.showStartEnd),
     trailFade: bool(raw.trailFade, d.trailFade),
     axisLabels: bool(raw.axisLabels, d.axisLabels),
+    showEyes: bool(raw.showEyes, d.showEyes),
+    showEffects: bool(raw.showEffects, d.showEffects),
+    glow: bool(raw.glow, d.glow),
+  };
+}
+
+/** 安全避撞预设 */
+function normSafety(raw = {}) {
+  const d = defaultConfig().safety;
+  return {
+    avoidBody: bool(raw.avoidBody, d.avoidBody),
+    avoidObstacle: bool(raw.avoidObstacle, d.avoidObstacle),
+    avoidOtherAgents: bool(raw.avoidOtherAgents, d.avoidOtherAgents),
+  };
+}
+
+/** 标记物交互反馈规则表 */
+function normMarkerEffects(raw) {
+  const d = defaultConfig().caMode.markerInteraction.effects;
+  const list = Array.isArray(raw) ? raw : d;
+  const out = list.map((e, i) => ({
+    id: str(e?.id, `fx_${i}`),
+    name: str(e?.name, `反馈 ${i + 1}`),
+    enabled: bool(e?.enabled, true),
+    state: str(e?.state, 'marker'),
+    mode: ['set', 'percent'].includes(e?.mode) ? e.mode : 'delta',
+    value: Math.round(num(e?.value, 1)),
+    probability: clamp(num(e?.probability, 1), 0, 1),
+    consume: bool(e?.consume, true),
+    consumeTo: str(e?.consumeTo, 'empty'),
+    color: HEX_COLOR.test(String(e?.color || '')) ? String(e.color) : '',
+  }));
+  return out;
+}
+
+function normCaMarkerInteraction(raw = {}) {
+  const d = defaultConfig().caMode.markerInteraction;
+  const states = Array.isArray(raw.states) && raw.states.length ? raw.states.map(String) : [...d.states];
+  return {
+    enabled: bool(raw.enabled, d.enabled),
+    states,
+    effects: normMarkerEffects(raw.effects),
+  };
+}
+
+function normMultiSnake(raw = {}) {
+  const d = defaultConfig().multiSnake;
+  const sp = raw.spawn || {};
+  const it = raw.interaction || {};
+  const palette = normColorList(it.colorPalette, d.interaction.colorPalette);
+  return {
+    enabled: bool(raw.enabled, d.enabled),
+    spawn: {
+      mode: SPAWN_MODES.includes(sp.mode) ? sp.mode : d.spawn.mode,
+      times: (Array.isArray(sp.times) ? sp.times : d.spawn.times)
+        .map((v) => Math.round(num(v, 0)))
+        .filter((v) => v > 0)
+        .sort((a, b) => a - b),
+      minInterval: clamp(Math.round(num(sp.minInterval, d.spawn.minInterval)), 1, 100000),
+      maxInterval: clamp(Math.round(num(sp.maxInterval, d.spawn.maxInterval)), 1, 100000),
+      maxAgents: clamp(Math.round(num(sp.maxAgents, d.spawn.maxAgents)), 1, 64),
+      length: clamp(Math.round(num(sp.length, d.spawn.length)), 1, 200),
+      direction: str(sp.direction, d.spawn.direction),
+      events: (Array.isArray(sp.events) ? sp.events : d.spawn.events).map(String).filter((e) => SPAWN_EVENTS.includes(e)),
+      probability: clamp(num(sp.probability, d.spawn.probability), 0, 1),
+    },
+    interaction: {
+      mode: INTERACTION_MODES.includes(it.mode) ? it.mode : d.interaction.mode,
+      colorPalette: palette,
+    },
   };
 }
 
@@ -537,7 +710,9 @@ export function normalizeConfig(rawInput = {}) {
 
   const bodyRaw = raw.body || {};
   const body = {
-    initialLength: clamp(Math.round(num(bodyRaw.initialLength, d.body.initialLength)), 1, 100000),
+    // 初始长度允许 0：与 enabled=false 等效，均表示「不生成蛇形实体」
+    enabled: bool(bodyRaw.enabled, d.body.enabled),
+    initialLength: clamp(Math.round(num(bodyRaw.initialLength, d.body.initialLength)), 0, 100000),
     segmentSize: clamp(num(bodyRaw.segmentSize, d.body.segmentSize), 0.1, 1.6),
     shape: ['round', 'square', 'hexagon'].includes(bodyRaw.shape) ? bodyRaw.shape : d.body.shape,
     colorMode: ['gradient', 'solid', 'custom'].includes(bodyRaw.colorMode) ? bodyRaw.colorMode : d.body.colorMode,
@@ -580,7 +755,7 @@ export function normalizeConfig(rawInput = {}) {
       END_PRIORITY_DEFAULT.filter((p) => !endRaw.priority.includes(p)),
     )
     : [...END_PRIORITY_DEFAULT];
-  for (const k of ['wall', 'outOfBounds', 'selfCollision', 'selfCollisionTotal', 'selfCollisionConsecutive', 'obstacle', 'lengthReached', 'coverage', 'noMove', 'maxTime', 'ruleEnd']) {
+  for (const k of ['wall', 'outOfBounds', 'selfCollision', 'selfCollisionTotal', 'selfCollisionConsecutive', 'obstacle', 'lengthReached', 'coverage', 'noMove', 'maxTime', 'ruleEnd', 'caStable', 'allAgentsGone']) {
     endConditions[k] = bool(endConditions[k], d.endConditions[k]);
   }
   // maxSteps 同时承载「是否启用」与「步数上限」：显式 false 表示未启用，必须原样保留，
@@ -612,7 +787,14 @@ export function normalizeConfig(rawInput = {}) {
     syncWithAgent: ['beforeMove', 'afterMove', 'interleaved', 'everyN'].includes(caRaw.syncWithAgent) ? caRaw.syncWithAgent : 'afterMove',
     every: clamp(Math.round(num(caRaw.every, 1)), 1, 1000),
     stopWhenAgentEnds: bool(caRaw.stopWhenAgentEnds, false),
+    stopOnStable: bool(caRaw.stopOnStable, false),
+    stableSteps: clamp(Math.round(num(caRaw.stableSteps, 3)), 1, 1000),
+    markerInteraction: normCaMarkerInteraction(caRaw.markerInteraction),
   };
+
+  // caMode.stopOnStable 是「CA 稳定即收尾」的快捷开关，开启时强制打开对应结束条件，
+  // 保证它参与优先级排序（优先级表里没有的项不会触发）。
+  if (caMode.stopOnStable) endConditions.caStable = true;
 
   const envRules = Array.isArray(raw.environmentRules) ? raw.environmentRules : [];
   const environmentRules = envRules.map(normalizeRule);
@@ -624,6 +806,8 @@ export function normalizeConfig(rawInput = {}) {
     start,
     body,
     moveRules,
+    safety: normSafety(raw.safety),
+    multiSnake: normMultiSnake(raw.multiSnake),
     ruleExecution: raw.ruleExecution === 'sync' ? 'sync' : 'async',
     advancedRules: normAdvancedRules(raw.advancedRules),
     collision,
@@ -690,9 +874,20 @@ export function migrate(raw) {
  * 每条诊断附带 suggestions：[{ label, patch }]，patch 为可直接深合并回配置的部分配置，
  * 供界面「一键修复」，也便于脚本化修正。
  */
+
 export const DIAG_LEVELS = ['error', 'warning', 'info'];
 
 const GRID_MAX = 400;
+
+/**
+ * 蛇形实体是否启用。
+ * 「完全禁用蛇形实体」支持两种等效写法：body.enabled = false，或 initialLength = 0。
+ */
+export function isBodyEnabled(cfg) {
+  const c = cfg || {};
+  const len = Math.round(Number(c.body?.initialLength) || 0);
+  return c.body?.enabled !== false && len > 0;
+}
 
 /** 地图中心坐标 */
 export function centerCoord(grid) {
@@ -790,9 +985,10 @@ export function diagnoseConfig(rawInput = {}) {
   const startRaw = raw.start || {};
   const rawCol = Number(startRaw.col ?? startRaw.x);
   const rawRow = Number(startRaw.row ?? startRaw.y);
+  const bodyOn = isBodyEnabled(cfg);
   const badCol = Number.isFinite(rawCol) && (rawCol < 0 || rawCol > w - 1);
   const badRow = Number.isFinite(rawRow) && (rawRow < 0 || rawRow > h - 1);
-  if (badCol || badRow) {
+  if (bodyOn && (badCol || badRow)) {
     const dispCol = Number.isFinite(rawCol) ? Math.round(rawCol) : '?';
     const dispRow = Number.isFinite(rawRow) ? Math.round(rawRow) : '?';
     const fit = {
@@ -811,10 +1007,21 @@ export function diagnoseConfig(rawInput = {}) {
     });
   }
 
-  /* 2. 蛇身长度与地图尺寸 */
+  /* 2. 蛇身长度与地图尺寸（蛇形实体被禁用时不再检查） */
   const length = Math.max(1, Math.round(Number(cfg.body.initialLength) || 1));
   const dirs = dirsOf(grid, cfg.start.direction);
-  if (length > cells) {
+  if (!bodyOn) {
+    // 已完全禁用蛇形实体：只提示本次运行不会出现移动体
+    out.push({
+      level: 'info',
+      code: 'bodyDisabled',
+      title: '蛇形实体已完全禁用',
+      message: '本次运行不会生成任何蛇形实体，画面只呈现环境状态（含元胞自动机）的演化。',
+      suggestions: [
+        { label: '恢复蛇形实体（初始长度 3）', patch: { body: { enabled: true, initialLength: 3 } } },
+      ],
+    });
+  } else if (length > cells) {
     // 直线上排下 length 节，网格至少要在身体延伸方向上够长；expandGridForBody 会同时给出合适的起点
     const fitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, cfg.start, d, length)));
     const expand = expandGridForBody(grid, cfg.start, dirs, length);
@@ -906,7 +1113,7 @@ export function diagnoseConfig(rawInput = {}) {
         });
       }
       const name = patternStateNameAt(grid, states, init.pattern, { col: cfg.start.col, row: cfg.start.row });
-      if (name && blocking.has(name)) {
+      if (bodyOn && name && blocking.has(name)) {
         const cleared = clearPatternCell(grid, init.pattern, { col: cfg.start.col, row: cfg.start.row });
         const suggestions = [];
         if (cleared !== null) suggestions.push({ label: '把起点格从初始图案中清空', patch: { caMode: { initial: { pattern: cleared } } } });
@@ -920,7 +1127,7 @@ export function diagnoseConfig(rawInput = {}) {
           suggestions,
         });
       }
-    } else if (init.mode === 'random' && init.density > 0 && blocking.has(init.state)) {
+    } else if (bodyOn && init.mode === 'random' && init.density > 0 && blocking.has(init.state)) {
       out.push({
         level: 'warning',
         code: 'startMayBeBlocked',
@@ -966,6 +1173,28 @@ export function diagnoseConfig(rawInput = {}) {
         { label: '改为随机初始填充（密度 30%）', patch: { caMode: { initial: { mode: 'random', density: 0.3 } } } },
         { label: '关闭元胞自动机', patch: { caMode: { enabled: false } } },
       ],
+    });
+  }
+  // 长度策略为「固定」时长度恒等于初始长度，标记物反馈中的长度变化会被丢弃
+  if (bodyOn && cfg.caMode.markerInteraction.enabled && cfg.body.lengthPolicy.mode === 'fixed') {
+    out.push({
+      level: 'warning',
+      code: 'markerEffectIgnored',
+      title: '标记物反馈的长度变化不会生效',
+      message: '「长度策略」为「固定」时长度恒等于初始长度，标记物反馈规则里的长度增减会被忽略（变色与消耗仍然生效）。',
+      suggestions: [
+        { label: '长度策略改为「可变」', patch: { body: { lengthPolicy: { mode: 'variable' } } } },
+      ],
+    });
+  }
+  // 「多蛇生成」开启但主移动体被禁用时没有任何基准蛇，生成出来的蛇会立刻成为唯一移动体
+  if (!bodyOn && cfg.multiSnake.enabled) {
+    out.push({
+      level: 'info',
+      code: 'multiSnakeWithoutMain',
+      title: '多蛇系统在无主移动体时启用',
+      message: '蛇形实体已禁用，不会生成初始的主移动体；按规则生成出来的蛇将成为场上唯一的移动体，主移动体相关的结束条件不会触发。',
+      suggestions: [],
     });
   }
 

@@ -4,6 +4,7 @@
 import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
+  isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS,
 } from '../core/config.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
@@ -41,6 +42,7 @@ const CLAUSE_TYPES = [
   { value: 'distance', label: '最近距离' },
   { value: 'stat', label: '运行统计' },
   { value: 'selfLength', label: '自身长度' },
+  { value: 'agentCount', label: '移动体数量' },
   { value: 'cellState', label: '格子状态' },
   { value: 'random', label: '概率' },
   { value: 'group', label: '组合子句' },
@@ -551,6 +553,8 @@ function bindCanvasEvents() {
 const STAT_KEYS = [
   ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
+  ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
+  ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
 ];
@@ -573,6 +577,13 @@ function renderStageStats() {
     maxLength: s.maxLength,
     coverage: `${formatNumber(s.coverage)}%`,
     ruleTriggers: s.ruleTriggers,
+    agents: s.agents,
+    peakAgents: s.peakAgents,
+    spawns: s.spawns,
+    agentDeaths: s.agentDeaths,
+    merges: s.merges,
+    repels: r.stats.repels || 0,
+    markerInteractions: r.stats.markerInteractions || 0,
     caSteps: s.caSteps,
     obstacleCount: s.obstacleCount,
     markerCount: s.markerCount,
@@ -606,6 +617,10 @@ function updateFrameStats() {
   set('coverage', `${formatNumber(f.stats.coverage)}%`);
   set('ruleTriggers', f.stats.ruleTriggers);
   set('caSteps', f.stats.caSteps);
+  set('agents', f.stats.agents);
+  set('spawns', f.stats.spawns);
+  set('agentDeaths', f.stats.agentDeaths);
+  set('merges', f.stats.merges);
   if (f.events && f.events.length) {
     set('endReason', f.events.map(eventLabel).join('、'));
   }
@@ -615,9 +630,12 @@ function eventLabel(e) {
   const map = {
     wall: '撞墙', obstacle: '撞障碍物', obstacleDestroyed: '撞毁障碍物', obstaclePass: '穿过障碍物',
     selfCollision: '撞到自身', grow: '增长', shrink: '缩短', eat: '吃到标记物', spawn: '生成移动体',
+    merge: '蛇融合', repel: '蛇排斥', agentCollision: '移动体相撞', agentDeath: '移动体消失',
+    agentRemoved: '移动体被移除', markerInteraction: '交互标记物',
   };
   const pos = e.coord ? `(${e.coord.col},${e.coord.row})` : '';
-  return `${map[e.type] || e.type}${pos}`;
+  const extra = e.type === 'markerInteraction' && e.delta ? ` ${e.delta > 0 ? '+' : ''}${e.delta}` : '';
+  return `${map[e.type] || e.type}${extra}${pos}`;
 }
 
 function buildSparkline(history) {
@@ -974,12 +992,15 @@ function renderConfigPanel() {
   root.appendChild(bodyGroup(cfg));
   root.appendChild(moveGroup(cfg));
   root.appendChild(advancedGroup(cfg));
+  root.appendChild(safetyGroup(cfg));
+  root.appendChild(multiSnakeGroup(cfg));
   root.appendChild(collisionGroup(cfg));
   root.appendChild(lengthGroup(cfg));
   root.appendChild(envRulesGroup(cfg));
   root.appendChild(caGroup(cfg));
   root.appendChild(endGroup(cfg));
   root.appendChild(styleGroup(cfg));
+  root.appendChild(guideGroup(cfg));
 }
 
 function sceneGroup(cfg) {
@@ -1032,6 +1053,11 @@ function bodyGroup(cfg) {
   const b = cfg.body;
   const defaultSegmentSize = defaultConfig().body.segmentSize;
   const sizeInput = numBind(b, 'segmentSize', () => onStyleChange(), { min: 0.1, max: 1.6, step: 0.02 });
+  const bodyStateLabel = h('span', { class: 'mini-label' });
+  const syncBodyState = () => {
+    bodyStateLabel.textContent = isBodyEnabled(cfg) ? '当前：蛇形实体已启用' : '当前：不生成蛇形实体';
+  };
+  syncBodyState();
   return group('起点与移动体', [
     row(
       field('起点 col/x', numBind(cfg.start, 'col', () => onSimChange(), { min: 0, max: cfg.grid.width - 1 })),
@@ -1041,8 +1067,13 @@ function bodyGroup(cfg) {
       ...dirNames(cfg.grid.type).map((n) => ({ value: n, label: DIR_LABELS[n] || n })),
       { value: 'random', label: '任意（每次运行随机）' },
     ]), '选择「任意」时，起始方向由随机种子决定，同一种子结果可复现'),
+    field('蛇形实体开关', row(
+      chkBind(b, 'enabled', () => { syncBodyState(); onSimChange(0); }, '生成蛇形实体'),
+      bodyStateLabel,
+    ), '关闭后地图上不会生成任何蛇形实体，可配合元胞自动机做「纯环境演化」场景；也可把初始长度设为 0 达成同样效果'),
     row(
-      field('初始长度', numBind(b, 'initialLength', () => onSimChange(), { min: 1, max: 100000 })),
+      field('初始长度', numBind(b, 'initialLength', () => { syncBodyState(); onSimChange(); }, { min: 0, max: 100000 }),
+        '设为 0 与关闭开关等效，均表示不生成蛇形实体'),
       field('体节尺寸', row(
         sizeInput,
         button('重置', () => {
@@ -1147,6 +1178,98 @@ function advancedGroup(cfg) {
       rebuildAll();
     }, 'ghost'),
   ], { open: false });
+}
+
+/* ---------------- 安全避撞预设（方向选择的条件概率增强） ---------------- */
+
+function safetyGroup(cfg) {
+  const s = cfg.safety;
+  const note = h('div', { class: 'hint' });
+  const syncNote = () => {
+    const on = s.avoidBody || s.avoidObstacle || s.avoidOtherAgents;
+    note.textContent = on
+      ? '已启用：方向选择前会先剔除被阻塞的候选方向，只在「所有可行方向都被阻塞」时才回落到原始权重并触发原本的碰撞逻辑。'
+      : '未启用任何规避项：方向选择完全按基础 / 条件概率权重进行（与旧版本结果完全一致）。';
+  };
+  syncNote();
+  const bind = (key, label) => chkBind(s, key, () => { syncNote(); onSimChange(); }, label);
+  return group('安全避撞预设（方向选择）', [
+    h('div', { class: 'hint' }, '作为「高级移动规则（条件概率）」的前置过滤：命中过滤后仍按条件概率权重挑选方向，因此权重占比含义不变。'),
+    field('规避对象', h('div', { class: 'chips-line' },
+      bind('avoidBody', '自身身体'),
+      bind('avoidObstacle', '障碍物'),
+      bind('avoidOtherAgents', '其它移动体')),
+      '优先规避自身身体：只有当所有可行方向都被自身身体阻塞时，才会触发自碰撞逻辑'),
+    note,
+    h('div', { class: 'hint' }, '说明：规避是「择优」而非「禁止」。若某方向被阻塞后仍存在其它可行方向，蛇会从可行方向中按权重选择，从而大幅降低自撞概率。'),
+  ], { open: false, badge: (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents) ? '已启用' : '' });
+}
+
+/* ---------------- 多蛇生成与交互 ---------------- */
+
+function multiSnakeGroup(cfg) {
+  const m = cfg.multiSnake;
+  const sp = m.spawn;
+  const it = m.interaction;
+  const paletteInput = () => textInput((it.colorPalette || []).join(', '), (v) => {
+    const list = parseColorList(v);
+    if (list.length) {
+      it.colorPalette = list;
+      onSimChange();
+    } else {
+      toast('请至少填写一个合法的十六进制颜色，如 #ff5d5d', 'warn');
+    }
+  }, { placeholder: '#ff5d5d, #ffd166, #51cf66' });
+
+  const bodies = [
+    field('启用多蛇系统', chkBind(m, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用'),
+      '开启后可同时存在多条独立蛇；主移动体（初始那条）终止时整场运行结束，其它蛇终止只会计入「移动体消失」'),
+    row(
+      field('生成方式', selBind(sp, 'mode', () => { onSimChange(); rebuildAll(); }, Object.entries(SPAWN_LABELS).map(([value, label]) => ({ value, label })))),
+      field('最大同时存在', numBind(sp, 'maxAgents', () => onSimChange(), { min: 1, max: 64 })),
+    ),
+  ];
+
+  if (sp.mode === 'time') {
+    bodies.push(field('预定时间点（步）', textInput(sp.times.join(', '), (v) => {
+      const list = String(v).split(/[\s,，;；]+/).map((x) => Math.round(Number(x))).filter((x) => Number.isFinite(x) && x > 0);
+      sp.times = list;
+      onSimChange();
+    }, { placeholder: '20, 60, 120' }), '逗号分隔的步数；到达该步时生成一条新蛇'));
+  } else if (sp.mode === 'interval') {
+    bodies.push(row(
+      field('最小间隔（步）', numBind(sp, 'minInterval', () => onSimChange(), { min: 1 })),
+      field('最大间隔（步）', numBind(sp, 'maxInterval', () => onSimChange(), { min: 1 })),
+    ), h('div', { class: 'hint' }, '每次生成后，在 [最小, 最大] 区间内随机抽取下一次生成间隔（由随机种子决定，可复现）'));
+  } else {
+    bodies.push(field('触发事件', h('div', { class: 'chips-line' },
+      ...SPAWN_EVENTS.map((ev) => checkbox(sp.events.includes(ev), (on) => {
+        const i = sp.events.indexOf(ev);
+        if (on && i < 0) sp.events.push(ev);
+        else if (!on && i >= 0) sp.events.splice(i, 1);
+        onSimChange();
+      }, SPAWN_EVENT_LABELS[ev] || ev))), '事件发生的当步生成一条新蛇'));
+  }
+
+  bodies.push(
+    row(
+      field('新蛇长度', numBind(sp, 'length', () => onSimChange(), { min: 1, max: 200 })),
+      field('新蛇方向', select(sp.direction, [{ value: 'random', label: '随机' }, ...dirNames(cfg.grid.type).map((n) => ({ value: n, label: DIR_LABELS[n] || n }))], (v) => { sp.direction = v; onSimChange(); })),
+      field('生成概率', rangeBind(sp, 'probability', () => onSimChange(), { min: 0, max: 1, step: 0.01 })),
+    ),
+    field('交互结果', selBind(it, 'mode', () => { onSimChange(); rebuildAll(); }, Object.entries(INTERACTION_LABELS).map(([value, label]) => ({ value, label })))),
+    field('逐个体配色', paletteInput(), '逗号分隔的颜色序列，按生成顺序循环取色，便于在画面上区分不同的蛇'),
+  );
+
+  if (it.mode === 'repel') {
+    bodies.push(h('div', { class: 'hint' }, '排斥模式下会自动启用「安全避撞 → 其它移动体」，两条蛇相遇时回退到上一步位置并计为一次排斥（画面上有黄色脉冲反馈）。'));
+  } else if (it.mode === 'merge') {
+    bodies.push(h('div', { class: 'hint' }, '融合模式：蛇头撞上另一条蛇时，较短的一条被并入较长的一条（主移动体优先保留），长度叠加（受地图格子总数限制），画面上有紫色脉冲反馈。'));
+  } else if (it.mode === 'collide') {
+    bodies.push(h('div', { class: 'hint' }, '碰撞模式：两条蛇头对头相遇时双方消失。若涉及主移动体则整场运行结束；否则只损失其它蛇，运行继续。'));
+  }
+
+  return group('多蛇生成与交互系统', bodies, { open: false, badge: m.enabled ? '已启用' : '' });
 }
 
 /* ---------------- 碰撞与边界 ---------------- */
@@ -1357,6 +1480,14 @@ function actionEditor(rule, action, index) {
         field('方向', select(action.direction, [{ value: 'random', label: '随机' }, ...dirNames(state.cfg.grid.type).map((n) => ({ value: n, label: DIR_LABELS[n] || n }))], (v) => { action.direction = v; onSimChange(); })),
       ));
       break;
+    case 'removeAgent':
+      controls.push(field('移除哪一条', selBind(action, 'target', () => onSimChange(), [
+        { value: 'nearest', label: '距离最近的其它移动体' },
+        { value: 'random', label: '随机一条' },
+        { value: 'largest', label: '最长的一条' },
+        { value: 'oldest', label: '最早生成的一条' },
+      ]), '主移动体不会被移除'));
+      break;
     case 'modifyRule':
       controls.push(row(
         field('目标规则', select(action.ruleId, state.cfg.environmentRules.map((r) => ({ value: r.id, label: r.name })), (v) => { action.ruleId = v; onSimChange(); })),
@@ -1482,6 +1613,12 @@ function clauseEditor(parent, clause, index, onChange, rebuild) {
         field('长度', numBind(clause, 'value', () => onChange(), { min: 1, max: 100000 })),
       ));
       break;
+    case 'agentCount':
+      box.appendChild(row(
+        field('比较', selBind(clause, 'comparator', () => onChange(), COMPARATORS)),
+        field('存活移动体数', numBind(clause, 'value', () => onChange(), { min: 0, max: 1000 })),
+      ), h('div', { class: 'hint' }, '统计当前所有存活的移动体（含主移动体与生成出来的新蛇）'));
+      break;
     case 'cellState':
       box.appendChild(row(
         field('位置', selBind(clause, 'position', () => onChange(), POSITIONS.filter((p) => p.value !== 'random' && p.value !== 'randomEmpty' && p.value !== 'randomNeighbor'))),
@@ -1575,6 +1712,12 @@ function caGroup(cfg) {
       ])),
       ca.syncWithAgent === 'everyN' ? field('N', numBind(ca, 'every', () => onSimChange(), { min: 1 })) : null,
     ),
+    field('稳定即收尾', row(
+      chkBind(ca, 'stopOnStable', () => { onSimChange(); rebuildAll(); }, 'CA 进入稳定态时结束运行'),
+      field('连续稳定步数', numBind(ca, 'stableSteps', () => onSimChange(), { min: 1, max: 1000 })),
+    ), '连续若干次演化中所有单元都没有变化时结束运行（纯 CA 场景常用）；勾选后会同步打开「结束规则 → 元胞自动机稳定」'),
+    field('标记物交互机制', markerInteractionEditor(ca),
+      '把指定的元胞状态定义为「交互标记物」：蛇头进入该格时按反馈规则表产生长度 / 颜色变化，可设置消耗该标记物'),
     field('状态转移规则表', caRulesEditor(ca)),
     field('快捷模板', row(
       button('生命游戏', () => applyCaTemplate(cfg, 'life'), 'ghost small'),
@@ -1613,6 +1756,87 @@ function stateListEditor(states) {
     rebuildAll();
   }, 'ghost small'));
   return list;
+}
+
+/**
+ * 标记物交互编辑器：将指定元胞状态定义为交互标记物，并配置「触碰反馈规则表」。
+ * 每条反馈可独立设置作用状态、变化方式（增减 / 百分比 / 直接设定）、概率、是否消耗标记物与变色。
+ */
+function markerInteractionEditor(ca) {
+  const mi = ca.markerInteraction;
+  const wrap = h('div', { class: 'rule-list' });
+  wrap.appendChild(field('启用标记物交互', chkBind(mi, 'enabled', () => { onSimChange(); rebuildAll(); }, '启用')));
+  if (mi.enabled && state.cfg.body.lengthPolicy.mode === 'fixed') {
+    wrap.appendChild(h('div', { class: 'hint' }, '注意：当前「长度策略」为「固定」，长度恒等于初始长度，反馈规则里的长度增减不会生效；请把「长度策略」改为「可变」（变色与消耗仍然生效）。'));
+  }
+  wrap.appendChild(field('交互标记物状态', h('div', { class: 'chips' },
+    ...ca.states.map((s) => {
+      const on = mi.states.includes(s.name);
+      return h('button', {
+        type: 'button',
+        class: `chip${on ? ' on' : ''}`,
+        onclick: () => {
+          const i = mi.states.indexOf(s.name);
+          if (i >= 0) mi.states.splice(i, 1);
+          else mi.states.push(s.name);
+          onSimChange();
+          rebuildAll();
+        },
+      }, s.name);
+    })), '可多选；被选中的状态一旦与蛇头重合即触发下面的反馈规则'));
+
+  const list = h('div', { class: 'rule-list' });
+  mi.effects.forEach((fx, i) => {
+    const body = [
+      row(
+        textBind(fx, 'name', () => {}),
+        chkBind(fx, 'enabled', () => onSimChange(), '启用'),
+        button('↑', () => { swap(mi.effects, i, i - 1); rebuildAll(); }, 'icon small'),
+        button('↓', () => { swap(mi.effects, i, i + 1); rebuildAll(); }, 'icon small'),
+        button('✕', () => { mi.effects.splice(i, 1); rebuildAll(); }, 'icon small danger'),
+      ),
+      row(
+        field('作用状态', select(fx.state, stateOptions(), (v) => { fx.state = v; onSimChange(); })),
+        field('变化方式', selBind(fx, 'mode', () => { onSimChange(); rebuildAll(); }, [
+          { value: 'delta', label: '增减固定长度' },
+          { value: 'percent', label: '按当前长度百分比' },
+          { value: 'set', label: '直接设定长度' },
+        ])),
+        field(fx.mode === 'percent' ? '百分比（% ，负数为缩短）' : fx.mode === 'set' ? '目标长度' : '变化量（负数为缩短）',
+          numBind(fx, 'value', () => onSimChange(), fx.mode === 'set' ? { min: 1, max: 100000 } : { min: -1000, max: 1000 })),
+      ),
+      row(
+        field('触发概率', rangeBind(fx, 'probability', () => onSimChange(), { min: 0, max: 1, step: 0.01 })),
+        field('消耗标记物', row(
+          chkBind(fx, 'consume', () => onSimChange(), '消耗'),
+          select(fx.consumeTo, stateOptions(), (v) => { fx.consumeTo = v; onSimChange(); }),
+        ), '消耗后该格变为右侧状态'),
+        field('反馈变色', row(
+          colorInput(fx.color || '#51cf66', (v) => { fx.color = v; onSimChange(); }),
+          button('清除', () => { fx.color = ''; rebuildAll(); }, 'ghost small'),
+        ), '留空表示不变色'),
+      ),
+    ];
+    list.appendChild(group(fx.name || `反馈 ${i + 1}`, body, { open: false, badge: fx.enabled ? '' : '停用', key: `fx:${fx.id}` }));
+  });
+
+  wrap.appendChild(list);
+  wrap.appendChild(button('+ 添加反馈规则', () => {
+    mi.effects.push({
+      id: `fx_${Math.random().toString(36).slice(2, 8)}`,
+      name: `反馈 ${mi.effects.length + 1}`,
+      enabled: true,
+      state: mi.states[0] || 'marker',
+      mode: 'delta',
+      value: 1,
+      probability: 1,
+      consume: true,
+      consumeTo: 'empty',
+      color: '',
+    });
+    rebuildAll();
+  }, 'ghost small'));
+  return wrap;
 }
 
 function caRulesEditor(ca) {
@@ -1867,6 +2091,76 @@ function styleGroup(cfg) {
       checkbox(s.highlightRules, (v) => { s.highlightRules = v; onStyleChange(); }, '规则高亮'),
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
     )),
+    field('视觉升级', row(
+      checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛（朝向感）'),
+      checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效波纹'),
+      checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
+    ), '眼睛让蛇头朝向一目了然；交互特效为融合 / 排斥 / 生成 / 标记物反馈提供画面反馈；发光可突出蛇所在位置'),
+  ], { open: false });
+}
+
+/* ---------------- 新增功能使用说明 ---------------- */
+
+function guideGroup() {
+  const item = (title, lines) => h('div', { class: 'field' },
+    h('span', { class: 'field-label' }, title),
+    h('div', { class: 'field-control' }, h('div', { class: 'hint' }, ...lines.map((t) => h('div', {}, t)))));
+
+  return group('新增功能使用说明', [
+    h('div', { class: 'hint' }, '本版本新增 / 强化了以下能力。以下按功能逐条说明开启方式与可观察到的效果。'),
+
+    item('1. 禁用蛇形实体（纯环境 / 纯 CA 模式）', [
+      '位置：「起点与移动体 → 蛇形实体开关」。',
+      '两种等效做法：① 取消勾选「生成蛇形实体」；② 把「初始长度」设为 0。',
+      '效果：地图上不再生成任何蛇形实体，只剩元胞自动机与环境规则演化；统计中的「当前长度」保持 0。',
+      '典型用法：配合「元胞自动机模式 → 稳定即收尾」做纯 CA 实验（生命游戏、森林火灾等），或只观察环境规则对地形的影响。',
+    ]),
+
+    item('2. 元胞自动机标记物交互机制', [
+      '位置：「元胞自动机模式 → 标记物交互机制」。',
+      '第一步：在上方「环境状态集合」里定义状态（例如 marker），或直接使用内置的 marker 状态。',
+      '第二步：勾选「启用标记物交互」，并在「交互标记物状态」中点击选中参与交互的状态（可多选）。',
+      '第三步：在「反馈规则表」中逐条配置：作用状态、变化方式（增减固定长度 / 按当前长度百分比 / 直接设定长度）、变化量、触发概率、是否消耗标记物、消耗后的状态、反馈变色。',
+      '注意：长度变化需要「长度策略」为「可变」（长度策略为「固定」时长度恒等于初始长度，增减会被忽略）。',
+      '效果：蛇头进入被选中的格子时按规则产生长度增减或变色；「消耗」会把该格改写成指定状态（例如 empty），实现「吃掉标记物」。画面上会有该格的高亮反馈波纹。',
+      '参数化示例：变化量 +1（伸长）、-1（缩短）、百分比 -20（缩短两成）、直接设定 5（定长）。',
+    ]),
+
+    item('3. 安全避撞预设（方向选择条件概率）', [
+      '位置：「安全避撞预设（方向选择）」。',
+      '勾选「自身身体」：方向选择前先剔除会撞到自身身体（不含蛇头当前格）的候选方向；',
+      '只有当所有可行方向都被自身身体阻塞时，才回落到原始权重并按既有碰撞规则触发自撞逻辑。',
+      '另可选「障碍物」「其它移动体」一并规避。',
+      '注意：全部三项都不勾选时，方向选择与旧版本完全一致（结果可复现）；只要开启任意一项，就会优先择优，显著降低自撞概率。',
+    ]),
+
+    item('4. 多蛇生成与交互系统', [
+      '位置：「多蛇生成与交互系统」。',
+      '开启后先选「生成方式」：',
+      '　· 按预定时间点：填写逗号分隔的步数（如 20, 60, 120），到点生成一条新蛇；',
+      '　· 按随机时间间隔：在 [最小, 最大] 步之间随机抽取下一次生成时刻（受种子控制，可复现）；',
+      '　· 按特殊事件：勾选「吃到标记物 / 触碰交互标记物 / 发生自撞 / 撞墙越界 / 撞到障碍物 / 发生融合」，事件当步生成新蛇。',
+      '再设「最大同时存在」「新蛇长度」「新蛇方向」「生成概率」「逐个体配色」。',
+      '「交互结果」决定蛇相遇时的行为：碰撞（头对头双方消失，涉及主移动体则整场结束）、融合（短蛇并入长蛇、长度叠加）、排斥（回退并彼此避让，不结束运行）、穿行（互不影响）。',
+      '视觉反馈：生成 = 紫色脉冲 + 新蛇配色；融合 = 紫色波纹与日志；排斥 = 黄色脉冲；所有事件都会记入「规则触发日志」与帧事件。',
+      '规则联动：可用「移动体数量」条件子句配合「生成新移动体 / 移除移动体」后果动作编写种群控制规则。',
+    ]),
+
+    item('5. 结束规则扩展', [
+      '新增「元胞自动机稳定」（连续 N 次演化无任何单元变化）与「所有移动体均已消失」。',
+      '两者都可在「结束规则（按优先级）」中勾选、排序；「CA 稳定即收尾」开关会同步打开前者。',
+    ]),
+
+    item('6. 视觉与体验升级', [
+      '「展示样式 → 视觉升级」：蛇头眼睛（按方向绘制，朝向一目了然）、交互特效波纹、蛇身发光。',
+      '多蛇场景下每条蛇使用「逐个体配色」中的颜色，画面上一眼可区分；主移动体与其它蛇的差异在悬停提示与日志中给出。',
+      '帧缓存自适应抽样：步数上限可设到 10^15，超长运行时画面帧按步长抽样缓存，而步数与各项统计仍逐步精确累计，界面不会被拖慢。',
+    ]),
+
+    item('7. 新预设模板', [
+      '侧边栏「预设模板」中新增：纯元胞自动机（蛇形实体禁用）、标记物交互（吃标记物增长 / 消耗）、多蛇生态（多蛇生成 + 融合 / 排斥）、安全避撞（高密度自撞规避）。',
+      '载入后可在配置面板看到各新增配置项的取值，便于对照修改。',
+    ]),
   ], { open: false });
 }
 

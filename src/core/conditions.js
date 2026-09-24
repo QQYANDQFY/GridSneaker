@@ -196,6 +196,11 @@ export function evaluateClause(clause, subject, ctx) {
       result = compareValues(len, clause.comparator, clause.value);
       break;
     }
+    case 'agentCount': {
+      const n = ctx.agents ? ctx.agents.filter((a) => a.alive).length : 0;
+      result = compareValues(n, clause.comparator, clause.value);
+      break;
+    }
     case 'cellState': {
       const target = clause.position === 'current'
         ? coord
@@ -256,6 +261,8 @@ export function describeClause(clause) {
       return `${not}统计 ${STAT_LABELS[clause.key] || clause.key} ${CMP_TEXT[clause.comparator] || clause.comparator} ${clause.value}`;
     case 'selfLength':
       return `${not}自身长度 ${CMP_TEXT[clause.comparator] || clause.comparator} ${clause.value}`;
+    case 'agentCount':
+      return `${not}移动体数量 ${CMP_TEXT[clause.comparator] || clause.comparator} ${clause.value}`;
     case 'cellState':
       return `${not}${relLabel(clause.position)}为 ${clause.state}`;
     case 'random':
@@ -281,6 +288,10 @@ export const STAT_LABELS = {
   ruleTriggers: '规则触发次数',
   coverage: '覆盖率(%)',
   agents: '移动体数量',
+  agentDeaths: '移动体消失数',
+  merges: '融合次数',
+  spawns: '生成移动体次数',
+  caStableCount: 'CA 稳定计数',
 };
 
 function relLabel(rel) {

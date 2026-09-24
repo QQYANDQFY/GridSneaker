@@ -5,7 +5,14 @@
 import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
-import { normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig } from '../src/core/config.js';
+import {
+  normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
+  isBodyEnabled, END_PRIORITY_DEFAULT, END_LABELS,
+} from '../src/core/config.js';
+import { World, Agent } from '../src/core/world.js';
+import { evaluateClause, describeClause } from '../src/core/conditions.js';
+import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
+import { PRESETS, buildPresetConfig } from '../src/core/presets.js';
 
 let pass = 0;
 let fail = 0;
@@ -21,6 +28,19 @@ function near(a, b, eps, name) {
   ok(Math.abs(a - b) <= eps, name, `期望 ≈${b}，实际 ${a}`);
 }
 function section(t) { console.log(`\n── ${t}`); }
+
+/** 深合并补丁到目标对象（原地修改，与界面「一键修复」使用同样的语义） */
+function applyPatch(target, patch) {
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if (!target[k] || typeof target[k] !== 'object') target[k] = {};
+      applyPatch(target[k], v);
+    } else {
+      target[k] = v;
+    }
+  }
+  return target;
+}
 
 /* ---------- RNG ---------- */
 section('随机数与权重');
@@ -601,6 +621,609 @@ section('配置诊断：异常检测与修复建议');
   ok(v.ok, '诊断不阻断结构校验通过');
   ok(v.diagnostics.some((d) => d.code === 'bodyTruncatedByBoundary'), 'validateConfig 返回结构化诊断');
   ok(v.warnings.some((w) => w.includes('截断')), '诊断同时汇总进 warnings 文本');
+}
+
+/* ---------- 新增：完全禁用蛇形实体 ---------- */
+section('核心开关：完全禁用蛇形实体');
+{
+  ok(!isBodyEnabled(normalizeConfig({ body: { enabled: false, initialLength: 5 } })), 'enabled=false 判定为不生成蛇形实体');
+  ok(!isBodyEnabled(normalizeConfig({ body: { enabled: true, initialLength: 0 } })), 'initialLength=0 判定为不生成蛇形实体');
+  ok(isBodyEnabled(normalizeConfig({ body: { initialLength: 1 } })), 'initialLength≥1 时正常生成');
+  eq(normalizeConfig({ body: { initialLength: 0 } }).body.initialLength, 0, '初始长度允许为 0（不再被夹到 1）');
+
+  const run = (setup) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 12, height: 12, boundary: 'wrap' };
+    cfg.start = { col: 6, row: 6, direction: 'up' };
+    cfg.body.initialLength = 3;
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      maxSteps: 12, wall: false, outOfBounds: false, selfCollision: false, noMove: false,
+    };
+    setup(cfg);
+    return new Simulation(cfg).run();
+  };
+
+  const rOff = run((c) => { c.body.enabled = false; });
+  eq(rOff.frames[0].agents.length, 0, '关闭开关后首帧没有移动体');
+  eq(rOff.frames[rOff.frames.length - 1].agents.length, 0, '整场运行都不出现移动体');
+  eq(rOff.stats.steps, 12, '无移动体时仍按步数推进', `实际 ${rOff.stats.steps}`);
+  eq(rOff.endReason.code, 'maxSteps', '无移动体时以步数上限收尾');
+  eq(rOff.stats.agents, 0, '存活移动体统计为 0');
+
+  const rZero = run((c) => { c.body.initialLength = 0; });
+  eq(rZero.frames[rZero.frames.length - 1].agents.length, 0, 'initialLength=0 与关闭开关等效');
+  eq(rZero.stats.steps, 12, '初始长度为 0 时同样正常推进', `实际 ${rZero.stats.steps}`);
+
+  // 与元胞自动机同时启用：没有蛇，但环境照常演化
+  const rCa = run((c) => {
+    c.body.enabled = false;
+    c.caMode.enabled = true;
+    c.caMode.states = [
+      { name: 'empty', color: null, symbol: '.', blocking: false },
+      { name: 'alive', color: '#ffd43b', symbol: 'O', blocking: false },
+    ];
+    c.caMode.initial = { mode: 'pattern', pattern: '.O.\n..O\nOOO' };
+    c.caMode.rules = [
+      { from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive' },
+      { from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty' },
+    ];
+  });
+  eq(rCa.frames[0].agents.length, 0, '纯 CA 场景没有移动体');
+  ok(rCa.stats.caSteps >= 12, '禁用蛇形实体后元胞自动机照常演化', `caSteps ${rCa.stats.caSteps}`);
+  const sigOf = (f) => Array.from(f.cells).join(',');
+  ok(rCa.frames.some((f, i) => i > 0 && sigOf(f) !== sigOf(rCa.frames[i - 1])), '环境状态确实在变化');
+
+  // 诊断
+  const dOff = diagnoseConfig({ body: { enabled: false, initialLength: 3 } }).find((d) => d.code === 'bodyDisabled');
+  ok(!!dOff, '禁用蛇形实体时给出提示诊断');
+  eq(dOff?.level, 'info', '禁用提示为「提示」级别');
+  ok(dOff?.suggestions.some((s) => s.patch.body?.enabled === true), '给出「恢复蛇形实体」一键修复方案');
+  ok(!diagnoseConfig({ body: { initialLength: 3 } }).some((d) => d.code === 'bodyDisabled'), '正常配置不报禁用提示');
+  const dDisabledBad = diagnoseConfig({ grid: { width: 6, height: 6 }, start: { col: 99, row: 99 }, body: { enabled: false } });
+  ok(!dDisabledBad.some((d) => d.code === 'startOutOfBounds'), '禁用蛇形实体后不再报起点越界');
+  ok(!dDisabledBad.some((d) => d.level === 'error'), '禁用蛇形实体后没有严重诊断');
+  // 无主移动体却启用多蛇系统时给出提示
+  ok(diagnoseConfig({ body: { enabled: false }, multiSnake: { enabled: true } }).some((d) => d.code === 'multiSnakeWithoutMain'), '无主移动体时启用多蛇系统被提示');
+}
+
+/* ---------- 新增：交互标记物机制 ---------- */
+section('交互标记物机制');
+{
+  const mkMarkerRun = (patch = {}) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+    cfg.start = { col: 2, row: 4, direction: 'right' };
+    cfg.body.initialLength = 3;
+    cfg.body.lengthPolicy.mode = 'variable';
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      maxSteps: 5, wall: false, outOfBounds: false, selfCollision: false, noMove: false,
+    };
+    cfg.caMode.enabled = true;
+    cfg.caMode.states = [
+      { name: 'empty', color: null, symbol: '.', blocking: false },
+      { name: 'marker', color: '#ffd166', symbol: 'M', blocking: false },
+      { name: 'spike', color: '#ff6b6b', symbol: 'X', blocking: false },
+    ];
+    cfg.caMode.initial = { mode: 'pattern', pattern: 'MMMMM' };
+    cfg.caMode.rules = [];
+    cfg.caMode.markerInteraction = {
+      enabled: true,
+      states: ['marker'],
+      effects: [{
+        id: 'fx', name: '增长', enabled: true, state: 'marker', mode: 'delta',
+        value: 2, probability: 1, consume: true, consumeTo: 'empty', color: '#51cf66',
+      }],
+    };
+    applyPatch(cfg, patch);
+    return new Simulation(cfg).run();
+  };
+
+  // 增量模式 + 消耗标记物
+  const r = mkMarkerRun();
+  eq(r.stats.markerInteractions, 4, '4 次标记物反馈被逐步统计');
+  eq(r.stats.markerCount, 1, '被消耗的标记物从环境中移除');
+  eq(r.frames[r.frames.length - 1].agents[0].length, 3 + 2 * 4, '每次反馈使长度 +2');
+  const miEvents = r.frames.flatMap((f) => f.events).filter((e) => e.type === 'markerInteraction');
+  eq(miEvents.length, 4, '每步都产生标记物交互事件');
+  eq(miEvents[0].delta, 2, '事件携带长度变化量');
+  eq(miEvents[0].highlight, true, '交互事件带高亮标记');
+  eq(miEvents[0].color, '#51cf66', '交互事件携带反馈配色');
+  ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'markerEffect')), '画面高亮包含标记物反馈特效');
+
+  // 百分比模式
+  const rPct = mkMarkerRun({
+    caMode: {
+      enabled: true,
+      markerInteraction: {
+        enabled: true, states: ['marker'],
+        effects: [{ id: 'fx', name: '翻倍', enabled: true, state: 'marker', mode: 'percent', value: 100, probability: 1, consume: true, consumeTo: 'empty' }],
+      },
+    },
+  });
+  eq(rPct.frames[rPct.frames.length - 1].agents[0].length, 3 * 2 ** 4, '百分比模式按当前长度比例增长');
+
+  // 指定值模式
+  const rSet = mkMarkerRun({
+    caMode: {
+      enabled: true,
+      markerInteraction: {
+        enabled: true, states: ['marker'],
+        effects: [{ id: 'fx', name: '变短', enabled: true, state: 'marker', mode: 'set', value: 1, probability: 1, consume: true, consumeTo: 'empty' }],
+      },
+    },
+  });
+  eq(rSet.frames[rSet.frames.length - 1].agents[0].length, 1, '指定值模式把长度直接设为 1');
+  eq(rSet.stats.markerInteractions, 4, '指定值模式同样统计反馈次数');
+
+  // 概率为 0 时完全不触发
+  const rZeroP = mkMarkerRun({
+    caMode: {
+      enabled: true,
+      markerInteraction: {
+        enabled: true, states: ['marker'],
+        effects: [{ id: 'fx', name: '不触发', enabled: true, state: 'marker', mode: 'delta', value: 5, probability: 0, consume: true, consumeTo: 'empty' }],
+      },
+    },
+  });
+  eq(rZeroP.stats.markerInteractions, 0, '触发概率为 0 时不产生反馈');
+  eq(rZeroP.frames[rZeroP.frames.length - 1].agents[0].length, 3, '未触发时长度不变');
+
+  // 未列入「交互状态」的元胞不触发
+  const rOther = mkMarkerRun({
+    caMode: {
+      enabled: true,
+      markerInteraction: {
+        enabled: true, states: ['spike'],
+        effects: [{ id: 'fx', name: '增长', enabled: true, state: 'spike', mode: 'delta', value: 2, probability: 1, consume: true, consumeTo: 'empty' }],
+      },
+    },
+  });
+  eq(rOther.stats.markerInteractions, 0, '只有被声明为交互标记物的状态才触发反馈');
+
+  // 关闭机制时完全退化回「吃到标记物」的原有行为
+  const rDisabled = mkMarkerRun({
+    caMode: { enabled: true, markerInteraction: { enabled: false } },
+  });
+  eq(rDisabled.stats.markerInteractions, 0, '机制关闭时不产生反馈');
+  eq(rDisabled.frames[rDisabled.frames.length - 1].agents[0].length, 3, '机制关闭时不改变长度');
+
+  // 诊断：固定长度策略下反馈的长度变化不会生效
+  const fixedDiag = diagnoseConfig({
+    body: { initialLength: 3, lengthPolicy: { mode: 'fixed' } },
+    caMode: { enabled: true, markerInteraction: { enabled: true } },
+  }).find((d) => d.code === 'markerEffectIgnored');
+  ok(!!fixedDiag, '固定长度策略下提示标记物反馈长度变化无效');
+  eq(fixedDiag?.level, 'warning', '该提示为警告级别');
+  ok(fixedDiag?.suggestions.some((s) => s.patch.body?.lengthPolicy?.mode === 'variable'), '给出「长度策略改为可变」的一键修复');
+  ok(!diagnoseConfig({
+    body: { initialLength: 3, lengthPolicy: { mode: 'variable' } },
+    caMode: { enabled: true, markerInteraction: { enabled: true } },
+  }).some((d) => d.code === 'markerEffectIgnored'), '可变长度策略下不再提示');
+}
+
+/* ---------- 新增：安全避撞预设 ---------- */
+section('安全避撞预设');
+{
+  const mkSim = (safety) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 5, height: 5, boundary: 'wrap' };
+    cfg.safety = safety;
+    return new Simulation(cfg);
+  };
+  const sim = mkSim({ avoidBody: true, avoidObstacle: false, avoidOtherAgents: false });
+  const grid = sim.grid;
+  const agent = new Agent('main', [{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 3, row: 3 }], 1, { isMain: true });
+  const ctx = { grid, world: new World(grid, sim.states), agents: [agent], config: sim.config, rng: new RNG(11), tick: 1 };
+
+  eq(sim.selfBlocks(ctx, agent, { col: 3, row: 2 }), true, '识别出直行方向压在自身身体上');
+  eq(sim.selfBlocks(ctx, agent, { col: 2, row: 1 }), false, '空格不被判定为自身身体');
+
+  const options = [
+    { key: 'left', weight: 1 },
+    { key: 'straight', weight: 1 },
+    { key: 'right', weight: 1 },
+  ];
+  const safe = sim.filterSafeOptions(ctx, agent, options);
+  eq(safe.length, 2, '安全避撞剔除压在自身身体上的方向');
+  ok(!safe.some((o) => o.dir === 1), '被剔除的正是压在身体上的直行方向');
+
+  const simOff = mkSim({ avoidBody: false, avoidObstacle: false, avoidOtherAgents: false });
+  eq(simOff.filterSafeOptions({ ...ctx, config: simOff.config }, agent, options), null, '规避项全部关闭时不做筛选（保持原随机序列）');
+
+  // 所有方向都被自身阻塞时返回空数组，调用方回落到原始权重
+  const boxed = new Agent('m2', [
+    { col: 2, row: 2 }, { col: 1, row: 2 }, { col: 3, row: 2 }, { col: 2, row: 1 }, { col: 2, row: 3 },
+  ], 1, { isMain: true });
+  const ctxBoxed = { ...ctx, agents: [boxed] };
+  eq(sim.filterSafeOptions(ctxBoxed, boxed, options).length, 0, '三个可行方向均被自身阻塞时返回空数组');
+
+  // 运行级对比：开启「自身身体」规避后自撞显著减少
+  // 8 列宽的环绕地图上放 8 节身体，蛇头正好填满最后一列，身体铺满整行：
+  // 蛇头「直行」越过边界后会绕回自己的身体（尾巴），因此不规避时高频自撞；
+  // 开启规避后该方向被剔除，只在三个方向都走不通时才会回落触发自撞。
+  const runWalk = (avoidBody, seed) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 8, height: 8, boundary: 'wrap' };
+    cfg.start = { col: 7, row: 4, direction: 'right' };
+    cfg.body.initialLength = 8;
+    cfg.body.lengthPolicy.mode = 'fixed';
+    // 头撞尾也算撞：否则尾巴同时腾空，绕回来的那格恰好是尾巴而被放行
+    cfg.collision = { ...cfg.collision, headIntoTail: true };
+    cfg.safety = { avoidBody, avoidObstacle: false, avoidOtherAgents: false };
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      maxSteps: 300, wall: false, outOfBounds: false, selfCollision: false, noMove: false,
+    };
+    cfg.seed = seed;
+    return new Simulation(cfg).run();
+  };
+  const walkOff = runWalk(false, 2024);
+  const walkOn = runWalk(true, 2024);
+  ok(walkOff.stats.selfCollisions > 0, '关闭规避时随机游走会发生自撞', `实际 ${walkOff.stats.selfCollisions}`);
+  ok(walkOn.stats.selfCollisions < walkOff.stats.selfCollisions, '开启自身身体规避后自撞显著减少', `开启 ${walkOn.stats.selfCollisions} / 关闭 ${walkOff.stats.selfCollisions}`);
+  eq(walkOn.stats.steps, 300, '开启规避后仍能跑满步数上限');
+}
+
+/* ---------- 新增：多蛇生成系统 ---------- */
+section('多蛇生成系统');
+{
+  const baseCfg = () => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 20, height: 20, boundary: 'wrap' };
+    cfg.start = { col: 10, row: 10, direction: 'right' };
+    cfg.body.initialLength = 3;
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      maxSteps: 30, wall: false, outOfBounds: false, selfCollision: false, noMove: false,
+    };
+    cfg.multiSnake.enabled = true;
+    cfg.multiSnake.interaction.mode = 'pass';
+    return cfg;
+  };
+
+  // 按预定时间点生成
+  {
+    const cfg = baseCfg();
+    cfg.multiSnake.spawn = {
+      mode: 'time', times: [5, 15], minInterval: 10, maxInterval: 20,
+      maxAgents: 6, length: 3, direction: 'right', events: ['eat'], probability: 1,
+    };
+    const r = new Simulation(cfg).run();
+    eq(r.stats.spawns, 2, '按预定时间点生成 2 条新蛇');
+    eq(r.summary.agents, 3, '场上共 3 条移动体');
+    eq(r.summary.peakAgents, 3, '峰值移动体数正确');
+    eq(r.frames[0].agents.length, 1, '首帧只有主移动体');
+    const last = r.frames[r.frames.length - 1].agents;
+    eq(last.filter((a) => a.isMain).length, 1, '只有一条主移动体');
+    eq(last.filter((a) => !a.isMain).length, 2, '生成出来的都是非主移动体');
+    ok(last.filter((a) => !a.isMain).every((a) => !!a.color), '生成出来的蛇带独立配色');
+    const spawnTicks = r.frames.filter((f) => f.events.some((e) => e.type === 'spawn')).map((f) => f.tick);
+    eq(JSON.stringify(spawnTicks), JSON.stringify([5, 15]), '生成刚好发生在预定时间点 5 与 15');
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'spawn')), '生成动作带视觉反馈高亮');
+    ok(r.logs.some((l) => l.ruleId === 'multi_snake'), '生成写入运行日志');
+  }
+
+  // 按随机时间间隔生成
+  {
+    const cfg = baseCfg();
+    cfg.multiSnake.spawn = {
+      mode: 'interval', times: [], minInterval: 5, maxInterval: 5,
+      maxAgents: 6, length: 2, direction: 'right', events: ['eat'], probability: 1,
+    };
+    const r = new Simulation(cfg).run();
+    eq(r.stats.spawns, 5, '固定间隔每 5 步生成一条');
+    eq(r.summary.agents, 6, '达到生成数量上限后停止生成');
+  }
+
+  // 按特殊事件生成（吃到标记物）
+  {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+    cfg.start = { col: 2, row: 4, direction: 'right' };
+    cfg.body.initialLength = 3;
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      maxSteps: 6, wall: false, outOfBounds: false, selfCollision: false, noMove: false,
+    };
+    cfg.caMode.enabled = true;
+    cfg.caMode.states = [
+      { name: 'empty', color: null, symbol: '.', blocking: false },
+      { name: 'marker', color: '#ffd166', symbol: 'M', blocking: false },
+    ];
+    cfg.caMode.initial = { mode: 'pattern', pattern: 'MMMMM' };
+    cfg.caMode.rules = [];
+    cfg.multiSnake.enabled = true;
+    cfg.multiSnake.interaction.mode = 'pass';
+    cfg.multiSnake.spawn = {
+      mode: 'event', times: [], minInterval: 5, maxInterval: 5,
+      maxAgents: 3, length: 1, direction: 'right', events: ['eat'], probability: 1,
+    };
+    const r = new Simulation(cfg).run();
+    eq(r.stats.spawns, 2, '吃到标记物时触发生成，达到上限后停止');
+    eq(r.summary.agents, 3, '事件触发下场上共 3 条移动体');
+    const spawnTicks = r.frames.filter((f) => f.events.some((e) => e.type === 'spawn')).map((f) => f.tick);
+    eq(JSON.stringify(spawnTicks), JSON.stringify([1, 2]), '生成发生在进食事件的当步');
+  }
+
+  // 生成出来的蛇独立选向（不会被主移动体的转向带着走）
+  {
+    const sim = new Simulation(defaultConfig());
+    const a = new Agent('main', [{ col: 1, row: 1 }], 1, { label: '主移动体', isMain: true });
+    const b = new Agent('a1', [{ col: 5, row: 5 }], 3, { label: '蛇1', isMain: false });
+    const dctx = {
+      grid: sim.grid, world: new World(sim.grid, sim.states), agents: [a, b],
+      config: sim.config, rng: new RNG(3), tick: 1, agent: a,
+    };
+    a.forcedNextTurn = 'left';
+    b.forcedNextTurn = 'reverse';
+    eq(sim.decideDirection(dctx, null, b).turnKey, 'reverse', '转向由被推进的移动体自身决定，而不是 ctx.agent');
+    eq(sim.decideDirection(dctx, null, a).turnKey, 'left', '主移动体自身的强制转向照常生效');
+  }
+}
+
+/* ---------- 新增：多蛇交互 ---------- */
+section('多蛇交互：碰撞 / 融合 / 排斥');
+{
+  const mkSim = (mode) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 8, height: 8, boundary: 'wrap' };
+    cfg.multiSnake.enabled = true;
+    cfg.multiSnake.interaction.mode = mode;
+    return new Simulation(cfg);
+  };
+  const mkCtx = (sim, agents) => ({
+    grid: sim.grid,
+    world: new World(sim.grid, sim.states),
+    agents,
+    config: sim.config,
+    rng: new RNG(7),
+    tick: 3,
+    stats: { agentDeaths: 0, merges: 0, repels: 0, spawns: 0 },
+    logs: [],
+    log: (entry) => { /* 收集日志 */ },
+    highlights: [],
+    pending: { forcedTurns: [], lengthDelta: 0, setLength: null, end: null },
+  });
+
+  // 融合：头对头
+  {
+    const sim = mkSim('merge');
+    const main = new Agent('main', [{ col: 3, row: 3 }], 1, { label: '主移动体', isMain: true });
+    const other = new Agent('a1', [{ col: 3, row: 3 }], 3, { label: '蛇1', color: '#ff5d5d', isMain: false, spawnTick: 1 });
+    const ctx = mkCtx(sim, [main, other]);
+    const logs = [];
+    ctx.log = (e) => logs.push(e);
+    const evts = [];
+    sim.resolveAgentInteractions(ctx, evts);
+    eq(main.alive, true, '融合后主移动体保留');
+    eq(other.alive, false, '融合后对方消失');
+    eq(main.length, 2, '融合后长度叠加');
+    eq(ctx.stats.merges, 1, '融合次数被统计');
+    eq(ctx.stats.agentDeaths, 1, '被融合的一方计入消失数');
+    ok(evts.some((e) => e.type === 'merge' && e.highlight), '融合产生带高亮的视觉反馈事件');
+    ok(ctx.highlights.some((h) => h.type === 'merge'), '融合写入画面高亮');
+    eq(logs.length, 1, '融合写入运行日志');
+  }
+
+  // 融合：头进入其它移动体的身体
+  {
+    const sim = mkSim('merge');
+    const main = new Agent('main', [{ col: 3, row: 3 }], 1, { label: '主移动体', isMain: true });
+    const other = new Agent('a1', [{ col: 4, row: 3 }, { col: 3, row: 3 }], 1, { label: '蛇1', isMain: false });
+    const ctx = mkCtx(sim, [main, other]);
+    sim.resolveAgentInteractions(ctx, []);
+    eq(other.alive, false, '头进入其它移动体身体时同样视为融合');
+    eq(ctx.stats.merges, 1, '该情形也被计入融合次数');
+    eq(main.length, 3, '被融合方整条身体并入保留方');
+  }
+
+  // 碰撞：主移动体参与时结束运行
+  {
+    const sim = mkSim('collide');
+    const main = new Agent('main', [{ col: 2, row: 2 }], 1, { label: '主移动体', isMain: true });
+    const other = new Agent('a1', [{ col: 2, row: 2 }], 3, { label: '蛇1', isMain: false });
+    const ctx = mkCtx(sim, [main, other]);
+    const evts = [];
+    const res = sim.resolveAgentInteractions(ctx, evts);
+    ok(res && res.fatal, '主移动体参与的头对头碰撞判定为结束运行');
+    eq(res?.reason.code, 'selfCollision', '相撞结束原因为碰撞');
+    eq(ctx.stats.agentDeaths, 2, '相撞双方同时消失');
+    ok(evts.some((e) => e.type === 'agentCollision' && e.highlight), '相撞产生视觉反馈事件');
+  }
+
+  // 碰撞：无主移动体参与时不结束运行
+  {
+    const sim = mkSim('collide');
+    const a = new Agent('a1', [{ col: 2, row: 2 }], 1, { label: '蛇1', isMain: false });
+    const b = new Agent('a2', [{ col: 2, row: 2 }], 3, { label: '蛇2', isMain: false });
+    const ctx = mkCtx(sim, [a, b]);
+    eq(sim.resolveAgentInteractions(ctx, []), null, '无主移动体参与时碰撞不结束运行');
+    eq(ctx.stats.agentDeaths, 2, '两条新蛇相撞后都消失');
+  }
+
+  // 排斥：回退这一步移动，双方均生存
+  {
+    const sim = mkSim('repel');
+    const main = new Agent('main', [{ col: 2, row: 2 }], 1, { label: '主移动体', isMain: true });
+    main.prevState = { segments: [{ col: 2, row: 3 }], dir: 1 };
+    const other = new Agent('a1', [{ col: 5, row: 5 }], 3, { label: '蛇1', isMain: false });
+    other.prevState = { segments: [{ col: 5, row: 5 }], dir: 3 };
+    const ctx = mkCtx(sim, [main, other]);
+    // 让主移动体的头压在对方身体上
+    other.segments = [{ col: 5, row: 5 }, { col: 2, row: 2 }];
+    const evts = [];
+    sim.resolveAgentInteractions(ctx, evts);
+    eq(ctx.stats.repels, 1, '排斥被统计');
+    eq(main.alive && other.alive, true, '排斥后双方都存活');
+    eq(JSON.stringify(main.segments), JSON.stringify([{ col: 2, row: 3 }]), '被排斥的一方回退到上一步位置');
+    ok(evts.some((e) => e.type === 'repel' && e.highlight), '排斥产生视觉反馈事件');
+  }
+
+  // 穿行 / 未启用多蛇时不介入
+  {
+    const simPass = mkSim('pass');
+    const a = new Agent('a1', [{ col: 2, row: 2 }], 1, { isMain: false });
+    const b = new Agent('a2', [{ col: 2, row: 2 }], 3, { isMain: false });
+    eq(simPass.resolveAgentInteractions(mkCtx(simPass, [a, b]), []), null, '「穿行」模式下互不影响');
+    const simOff = new Simulation(defaultConfig());
+    eq(simOff.resolveAgentInteractions(mkCtx(simOff, [a, b]), []), null, '未启用多蛇系统时不进行交互结算');
+  }
+}
+
+/* ---------- 新增：规则与结束条件扩展 ---------- */
+section('规则与结束条件扩展');
+{
+  // 条件子句：移动体数量
+  const agents = [
+    { alive: true, segments: [{ col: 0, row: 0 }] },
+    { alive: true, segments: [{ col: 1, row: 1 }] },
+    { alive: false, segments: [{ col: 2, row: 2 }] },
+  ];
+  const cctx = { agents };
+  const subject = { coord: { col: 0, row: 0 } };
+  eq(evaluateClause({ type: 'agentCount', comparator: '>=', value: 2, invert: false }, subject, cctx), true, '存活 2 条时满足「≥2」');
+  eq(evaluateClause({ type: 'agentCount', comparator: '>=', value: 3, invert: false }, subject, cctx), false, '存活 2 条时不满足「≥3」');
+  eq(evaluateClause({ type: 'agentCount', comparator: '==', value: 1, invert: true }, subject, cctx), true, '取反后结果相反');
+  ok(describeClause({ type: 'agentCount', comparator: '>=', value: 2 }).includes('移动体数量'), '条件可读描述包含「移动体数量」');
+
+  // 后果动作：移除移动体
+  eq(ACTION_LABELS.removeAgent, '移除移动体', '移除移动体动作有中文标签');
+  const sim = new Simulation(defaultConfig());
+  const grid = sim.grid;
+  const world = new World(grid, sim.states);
+  const main = new Agent('main', [{ col: 4, row: 4 }], 1, { label: '主移动体', isMain: true });
+  const s1 = new Agent('a1', [{ col: 1, row: 1 }], 1, { label: '蛇1', isMain: false, spawnTick: 2 });
+  const s2 = new Agent('a2', [{ col: 2, row: 2 }, { col: 2, row: 3 }, { col: 2, row: 4 }], 1, { label: '蛇2', isMain: false, spawnTick: 1 });
+  const actx = {
+    grid, world, rng: new RNG(5), agents: [main, s1, s2], stats: {}, tick: 3,
+    pending: { forcedTurns: [], lengthDelta: 0, setLength: null, end: null },
+  };
+  const res = applyAction({ type: 'removeAgent', target: 'largest' }, { agent: main, coord: main.head }, actx);
+  eq(s2.alive, false, '「移除最长」移除了最长的移动体');
+  eq(s1.alive && main.alive, true, '其它移动体与主移动体不受影响');
+  eq(actx.stats.agentDeaths, 1, '移除被计入消失统计');
+  eq(res.events[0].type, 'agentRemoved', '移除动作产生视觉反馈事件');
+  eq(res.events[0].highlight, true, '移除事件带高亮');
+  const resNone = applyAction({ type: 'removeAgent', target: 'nearest' }, { agent: main, coord: main.head }, { ...actx, agents: [main] });
+  ok(resNone.text.includes('没有可移除'), '场上没有其它移动体时不报错，只给出提示');
+
+  // 结束条件：稳定即收尾
+  eq(normalizeConfig({ caMode: { enabled: true, stopOnStable: true } }).endConditions.caStable, true, '「稳定即收尾」自动打开「元胞自动机稳定」结束条件');
+  eq(normalizeConfig({ caMode: { enabled: true } }).endConditions.caStable, false, '默认不开启稳定结束');
+  ok(END_PRIORITY_DEFAULT.includes('caStable') && END_PRIORITY_DEFAULT.includes('allAgentsGone'), '结束优先级表包含新增项');
+  ok(!!END_LABELS.caStable && !!END_LABELS.allAgentsGone, '新增结束条件有中文标签');
+
+  // 稳定态收尾实跑（方块静物：第 3 步即判定稳定）
+  const life = {
+    grid: { type: 'square', width: 20, height: 20, boundary: 'wrap' },
+    body: { enabled: false, initialLength: 0 },
+    caMode: {
+      enabled: true,
+      states: [
+        { name: 'empty', color: null, symbol: '.', blocking: false },
+        { name: 'alive', color: '#ffd43b', symbol: 'O', blocking: false },
+      ],
+      neighborhood: 'moore', update: 'synchronous', boundary: 'fixed',
+      initial: { mode: 'pattern', pattern: '....\n.OO.\n.OO.\n....' },
+      rules: [
+        { from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive' },
+        { from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty' },
+      ],
+      stopOnStable: true,
+      stableSteps: 3,
+    },
+    endConditions: { maxSteps: 100, wall: false, outOfBounds: false, selfCollision: false, noMove: false, caStable: true },
+    seed: 3,
+  };
+  const rStable = new Simulation(life).run();
+  eq(rStable.endReason.code, 'caStable', 'CA 进入稳定态后自动结束运行');
+  eq(rStable.stats.steps, 3, '连续 3 次无变化后立即收尾', `实际 ${rStable.stats.steps} 步`);
+  eq(rStable.stats.caStableCount, 3, '稳定计数正确');
+  ok(rStable.endReason.label.includes('元胞自动机稳定'), '结束原因说明为元胞自动机稳定', `实际 ${rStable.endReason.label}`);
+
+  // 结束条件：所有移动体均已消失
+  {
+    const cfg = defaultConfig();
+    cfg.endConditions = {
+      ...cfg.endConditions,
+      wall: false, outOfBounds: false, selfCollision: false, selfCollisionTotal: false,
+      selfCollisionConsecutive: false, obstacle: false, maxSteps: false, lengthReached: false,
+      coverage: false, noMove: false, maxTime: false, ruleEnd: false, caStable: false, allAgentsGone: true,
+    };
+    const rs = new Simulation(cfg);
+    const ectx = {
+      config: rs.config, grid: rs.grid, world: new World(rs.grid, rs.states), agents: [{ alive: false }],
+      stats: { agentDeaths: 2 }, tick: 5, agent: null, pending: { end: null },
+    };
+    const reason = rs.checkEndConditions(ectx, []);
+    ok(!!reason, '所有移动体消失时触发结束条件');
+    eq(reason?.code, 'allAgentsGone', '结束原因为「所有移动体均已消失」');
+    eq(rs.checkEndConditions({ ...ectx, stats: { agentDeaths: 0 } }, []), null, '没有消失记录时该条件不触发（避免开局即结束）');
+  }
+}
+
+/* ---------- 新增：视觉与配色配置 ---------- */
+section('视觉升级与配色配置');
+{
+  const st = normalizeConfig({ style: { showEyes: false, showEffects: false, glow: true } }).style;
+  eq(st.showEyes, false, '蛇头眼睛可关闭');
+  eq(st.showEffects, false, '交互特效波纹可关闭');
+  eq(st.glow, true, '蛇身发光可开启');
+  const d = normalizeConfig({}).style;
+  eq(d.showEyes, true, '默认开启蛇头眼睛');
+  eq(d.showEffects, true, '默认开启交互特效');
+  eq(d.glow, false, '默认不发光');
+
+  const pal = normalizeConfig({ multiSnake: { interaction: { colorPalette: ['#112233', 'bad', '#445566'] } } }).multiSnake.interaction.colorPalette;
+  eq(pal.length, 2, '非法配色被过滤');
+  ok(pal.includes('#112233') && pal.includes('#445566'), '合法配色被保留');
+
+  const multi = normalizeConfig({
+    multiSnake: { enabled: true, spawn: { mode: 'nope', times: [0, -3, 7, 2], maxAgents: 999 }, interaction: { mode: 'nope' } },
+  }).multiSnake;
+  eq(multi.spawn.mode, 'time', '非法生成方式回退为默认值');
+  eq(multi.interaction.mode, 'collide', '非法交互方式回退为默认值');
+  eq(JSON.stringify(multi.spawn.times), JSON.stringify([2, 7]), '生成时间点过滤非正数并升序');
+  eq(multi.spawn.maxAgents, 64, '生成数量上限被夹取到 64');
+}
+
+/* ---------- 新增：预设模板 ---------- */
+section('新增预设模板');
+{
+  const ids = ['ca-only', 'marker-farm', 'multi-snake', 'avoid-lab'];
+  for (const id of ids) {
+    const p = PRESETS.find((x) => x.id === id);
+    ok(!!p, `预设 ${id} 存在`);
+    ok(!!p?.name && !!p?.description, `预设 ${id} 带名称与说明`);
+    const cfg = buildPresetConfig(id);
+    const v = validateConfig(cfg);
+    ok(v.ok, `预设 ${id} 通过结构校验`, v.errors.join('；'));
+    const diags = diagnoseConfig(cfg);
+    ok(!diags.some((x) => x.level === 'error'), `预设 ${id} 无严重诊断`, diags.filter((x) => x.level === 'error').map((x) => x.code).join(','));
+    const r = new Simulation(cfg).run();
+    ok(r.frames.length > 1, `预设 ${id} 可正常运行`, `帧数 ${r.frames.length}`);
+    ok(r.stats.steps > 0, `预设 ${id} 步数大于 0`);
+  }
+
+  const caOnly = new Simulation(buildPresetConfig('ca-only')).run();
+  eq(caOnly.frames[0].agents.length, 0, '纯 CA 预设不生成蛇形实体');
+  ok(caOnly.stats.caSteps > 0, '纯 CA 预设的元胞自动机在演化');
+  eq(caOnly.endReason.code, 'caStable', '纯 CA 预设以「元胞自动机稳定」收尾', `实际 ${caOnly.endReason.code}`);
+
+  const farm = new Simulation(buildPresetConfig('marker-farm')).run();
+  ok(farm.stats.markerInteractions > 0, '标记物预设产生交互反馈', `实际 ${farm.stats.markerInteractions}`);
+
+  const multi = new Simulation(buildPresetConfig('multi-snake')).run();
+  ok(multi.stats.spawns > 0, '多蛇预设持续生成新蛇', `实际 ${multi.stats.spawns}`);
+  ok(multi.summary.peakAgents >= 2, '多蛇预设场上出现多条移动体', `峰值 ${multi.summary.peakAgents}`);
+
+  const avoid = new Simulation(buildPresetConfig('avoid-lab')).run();
+  eq(avoid.frames[0].agents[0].segments.length, 22, '安全避撞预设的初始身体完整为 22 节');
+  ok(avoid.stats.steps > 0, '安全避撞预设可运行');
 }
 
 /* ---------- 结果 ---------- */

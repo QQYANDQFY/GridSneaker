@@ -19,7 +19,19 @@ export const STYLE_DEFAULTS = {
   highlightRules: true,
   showStartEnd: true,
   trailFade: true,
+  /** 蛇头按朝向绘制双眼，让方向一目了然 */
+  showEyes: true,
+  /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
+  showEffects: true,
+  /** 蛇身发光，突出移动体位置 */
+  glow: false,
 };
+
+/** 交互特效在画面上保留的步数（越近越亮，形成脉冲感） */
+const EFFECT_LOOKBACK = 6;
+
+/** 交互特效类型（由模拟层写入 frame.highlights） */
+const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath']);
 
 const THEME = {
   dark: { bg: '#0e1116', gridLine: '#232b36', fg: '#e6edf3', axis: '#7d8b9c', trailA: '#1d4e89', trailB: '#63b3ed' },
@@ -132,6 +144,7 @@ export class Renderer {
     if (s.showGrid) this.drawGrid(th);
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th);
+    if (s.showEffects) this.drawEffects(frameIndex);
     if (s.highlightRules) this.drawHighlights(frame);
     if (s.showBody) this.drawAgents(frame);
     if (s.showStartEnd) this.drawStartEnd(frame);
@@ -240,7 +253,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { wall: '#ff922b', collision: '#ff5d5d', turn: '#51cf66', cell: '#e5e9f0', spawn: '#c084fc' };
+    const colors = { wall: '#ff922b', collision: '#ff5d5d', turn: '#51cf66', cell: '#e5e9f0', spawn: '#c084fc', merge: '#c084fc', repel: '#ffd166', markerEffect: '#ffd166', agentDeath: '#ff5d5d' };
     for (const h of frame.highlights) {
       if (h.col === undefined || h.row === undefined) continue;
       const p = this.center({ col: h.col, row: h.row });
@@ -262,31 +275,41 @@ export class Renderer {
     const { cellSize } = this.style;
     const half = cellSize / 2;
     const scale = Math.max(0.1, Math.min(1.6, cfgBody?.segmentSize ?? 0.82));
-    const colors = {
-      head: frame.agents[0]?.color || cfgBody?.colors?.head || '#ff5d5d',
-      tail: frame.agents[0]?.color || cfgBody?.colors?.tail || '#7a4dff',
-      solid: frame.agents[0]?.color || cfgBody?.colors?.solid || '#ff5d5d',
-    };
     const mode = cfgBody?.colorMode || 'gradient';
     const palette = (mode === 'custom' && Array.isArray(cfgBody?.colors?.custom)) ? cfgBody.colors.custom : null;
     const shape = cfgBody?.shape || 'round';
 
     for (let ai = frame.agents.length - 1; ai >= 0; ai--) {
       const a = frame.agents[ai];
+      // 逐个体配色：生成出来的蛇自带 color；未指定时沿用配置的头/尾/单色
+      const own = a.color || null;
+      const headColor = own || cfgBody?.colors?.head || '#ff5d5d';
+      const tailColor = own || cfgBody?.colors?.tail || '#7a4dff';
+      const solidColor = own || cfgBody?.colors?.solid || '#ff5d5d';
       for (let i = a.segments.length - 1; i >= 0; i--) {
         const [col, row] = a.segments[i];
         const p = this.center({ col, row });
         const t = a.segments.length > 1 ? i / (a.segments.length - 1) : 0;
-        const color = mode === 'solid'
-          ? colors.solid
-          : (palette && palette.length ? paletteColor(palette, t) : lerpColor(colors.head, colors.tail, t));
+        let color;
+        if (own) {
+          // 独立配色：单色 → 深色尾端渐变，便于区分不同个体
+          color = mode === 'solid' ? solidColor : lerpColor(headColor, shadeColor(headColor, 0.45), t);
+        } else if (mode === 'solid') {
+          color = solidColor;
+        } else {
+          color = (palette && palette.length) ? paletteColor(palette, t) : lerpColor(headColor, tailColor, t);
+        }
         const r = half * scale * (i === 0 ? 1 : 0.94);
         ctx.save();
-        ctx.fillStyle = i === 0 ? colors.head : color;
-        if (a.segments.length > 1) ctx.fillStyle = color;
+        ctx.fillStyle = color;
+        if (this.style.glow) {
+          ctx.shadowColor = i === 0 ? headColor : color;
+          ctx.shadowBlur = cellSize * (i === 0 ? 0.9 : 0.5);
+        }
         ctx.globalAlpha = a.alive ? 1 : 0.45;
         drawShape(ctx, p.x, p.y, r, this.grid.type, shape);
         ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 0.55;
         ctx.strokeStyle = 'rgba(0,0,0,0.35)';
         ctx.lineWidth = 1;
@@ -300,12 +323,83 @@ export class Renderer {
       if (a.segments.length) {
         const [hc, hr] = a.segments[0];
         const p = this.center({ col: hc, row: hr });
+        if (this.style.showEyes) {
+          this.drawEyes(p, a, half * scale);
+        } else {
+          ctx.save();
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.globalAlpha = 0.5;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, Math.max(1.2, half * 0.16), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+  }
+
+  /** 蛇头双眼：沿当前朝向前移，双眼垂直于前进方向左右分布 */
+  drawEyes(p, a, r) {
+    const ctx = this.ctx;
+    const nxt = this.grid.step({ col: a.segments[0][0], row: a.segments[0][1] }, a.dir);
+    const raw = this.grid.toPixel(nxt, this.style.cellSize, this.style.gap);
+    const q = { x: raw.x + this.size.margin, y: raw.y + this.size.margin };
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    const fx = Math.cos(ang);
+    const fy = Math.sin(ang);
+    const px = -fy;
+    const py = fx;
+    const forward = r * 0.34;
+    const side = r * 0.38;
+    const eyeR = Math.max(1, r * 0.24);
+    const cx = p.x + fx * forward;
+    const cy = p.y + fy * forward;
+    ctx.save();
+    // 眼白 + 深色瞳孔，形成明确的朝向提示
+    for (const s of [-1, 1]) {
+      const ex = cx + px * side * s;
+      const ey = cy + py * side * s;
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath();
+      ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(20,24,30,0.9)';
+      ctx.beginPath();
+      ctx.arc(ex + fx * eyeR * 0.35, ey + fy * eyeR * 0.35, eyeR * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 交互特效：把最近若干步内的融合 / 排斥 / 生成 / 标记物反馈绘制为渐隐波纹，
+   * 让多蛇交互与标记物反馈在画面上有明确的视觉反馈。
+   */
+  drawEffects(frameIndex) {
+    const frames = this.result.frames;
+    const start = Math.max(0, frameIndex - EFFECT_LOOKBACK);
+    const ctx = this.ctx;
+    const { cellSize } = this.style;
+    const half = cellSize / 2;
+    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d' };
+    for (let fi = start; fi <= frameIndex; fi++) {
+      const f = frames[fi];
+      if (!f || !f.highlights) continue;
+      const age = frameIndex - fi;
+      const t = 1 - age / (EFFECT_LOOKBACK + 1);
+      for (const h of f.highlights) {
+        if (!EFFECT_TYPES.has(h.type)) continue;
+        if (h.col === undefined || h.row === undefined) continue;
+        const p = this.center({ col: h.col, row: h.row });
+        const color = h.color || (h.state ? (this.stateColor(h.state) || colors[h.type]) : colors[h.type]) || '#e5e9f0';
         ctx.save();
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, Math.max(1.2, half * 0.16), 0, Math.PI * 2);
-        ctx.fill();
+        ctx.globalAlpha = 0.15 + 0.6 * t;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1.5, cellSize * 0.08);
+        const grow = half * (0.55 + 0.6 * (1 - t));
+        if (this.grid.type === 'hex') pathHex(ctx, p.x, p.y, grow);
+        else roundRect(ctx, p.x - grow, p.y - grow, grow * 2, grow * 2, cellSize * 0.22);
+        ctx.stroke();
         ctx.restore();
       }
     }
@@ -526,6 +620,12 @@ export function lerpColor(a, b, t) {
   const pb = hexToRgb(b);
   const k = Math.max(0, Math.min(1, t));
   const p = pa.map((v, i) => Math.round(v + (pb[i] - v) * k));
+  return `rgb(${p[0]}, ${p[1]}, ${p[2]})`;
+}
+
+/** 按比例压暗颜色（t=0 原色，t=1 全黑） */
+export function shadeColor(hex, t) {
+  const p = hexToRgb(hex).map((v) => Math.round(v * (1 - Math.max(0, Math.min(1, t)))));
   return `rgb(${p[0]}, ${p[1]}, ${p[2]})`;
 }
 

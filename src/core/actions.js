@@ -19,6 +19,7 @@ export const ACTION_LABELS = {
   changeSpeed: '改变速度',
   setColor: '改变颜色',
   spawnAgent: '生成新移动体',
+  removeAgent: '移除移动体',
   modifyRule: '修改后续规则',
   endRun: '触发结束',
   log: '记录日志',
@@ -100,6 +101,37 @@ function resolvePosition(posKey, subject, ctx, exclude = []) {
 
 function positionLabel(key) {
   return POSITION_LABELS[key] || key;
+}
+
+/** 某个坐标是否被存活的移动体占据（可排除指定移动体） */
+export function occupiedByAgent(ctx, coord, exclude = null) {
+  const { grid } = ctx;
+  if (!grid.inBounds(coord)) return false;
+  const index = grid.idx(coord.col, coord.row);
+  for (const a of ctx.agents) {
+    if (a === exclude || !a.alive) continue;
+    for (let i = 0; i < a.segments.length; i++) {
+      if (grid.idx(a.segments[i].col, a.segments[i].row) === index) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 为新移动体挑选出生格：优先「空格且未被任何存活移动体占据」，
+ * 其次退回任意空格。保证新蛇不会一出生就与别的蛇重叠。
+ */
+export function findSpawnCoord(ctx, exclude = null) {
+  const { grid, world, rng } = ctx;
+  const candidates = [];
+  for (let i = 0; i < grid.size; i++) {
+    if (world.cells[i] !== 0) continue; // 仅空格
+    const c = grid.coord(i);
+    if (occupiedByAgent(ctx, c, exclude)) continue;
+    candidates.push(c);
+  }
+  if (candidates.length) return rng.pick(candidates);
+  return world.randomEmpty(rng);
 }
 
 /**
@@ -224,7 +256,11 @@ export function applyAction(action, subject, ctx) {
         texts.push('移动体数量已达上限，未生成新移动体');
         break;
       }
-      const pos = world.randomEmpty(rng) || { col: rng.int(grid.width), row: rng.int(grid.height) };
+      const pos = findSpawnCoord(ctx, agent);
+      if (!pos) {
+        texts.push('没有可用空格，未生成新移动体');
+        break;
+      }
       const dir = action.direction === 'random' || action.direction === undefined
         ? rng.int(grid.dirCount)
         : parseDir(action.direction, grid.type);
@@ -235,10 +271,36 @@ export function applyAction(action, subject, ctx) {
         if (!grid.inBounds(cur)) break;
         segments.push({ ...cur });
       }
-      const na = new Agent(`agent_${ctx.agents.length}`, segments, dir, { label: `代理${ctx.agents.length}` });
+      if (ctx.stats) ctx.stats.spawns = (ctx.stats.spawns || 0) + 1;
+      const n = ctx.stats ? ctx.stats.spawns : ctx.agents.length;
+      const na = new Agent(`a${n}`, segments, dir, { label: `蛇${n}`, isMain: false, spawnTick: ctx.tick });
       ctx.agents.push(na);
       events.push({ type: 'spawn', coord: pos, highlight: true });
       texts.push(`生成新移动体（长度 ${segments.length}，位置 ${pos.col},${pos.row}）`);
+      break;
+    }
+    case 'removeAgent': {
+      const pool = ctx.agents.filter((a) => a.alive && a !== agent);
+      if (!pool.length) {
+        texts.push('没有可移除的其他移动体');
+        break;
+      }
+      const origin = (agent && agent.head) || subject.coord;
+      let victim = pool[0];
+      if (action.target === 'random') {
+        victim = rng.pick(pool);
+      } else if (action.target === 'largest') {
+        victim = pool.reduce((m, a) => (a.length > m.length ? a : m), pool[0]);
+      } else if (action.target === 'oldest') {
+        victim = pool.reduce((m, a) => (a.spawnTick < m.spawnTick ? a : m), pool[0]);
+      } else if (origin) {
+        victim = pool.reduce((m, a) => (grid.distance(origin, a.head) < grid.distance(origin, m.head) ? a : m), pool[0]);
+      }
+      victim.alive = false;
+      victim.endReason = { code: 'removed', label: '被环境规则移除', tick: ctx.tick };
+      if (ctx.stats) ctx.stats.agentDeaths = (ctx.stats.agentDeaths || 0) + 1;
+      events.push({ type: 'agentRemoved', coord: { ...victim.head }, highlight: true });
+      texts.push(`移除移动体「${victim.label}」（${action.target}）`);
       break;
     }
     case 'modifyRule': {
@@ -300,6 +362,8 @@ export function describeAction(action) {
       return `颜色 → ${action.color}`;
     case 'spawnAgent':
       return `生成移动体（长度 ${action.length}）`;
+    case 'removeAgent':
+      return `移除移动体（${{ nearest: '最近', random: '随机', largest: '最长', oldest: '最早' }[action.target] || action.target}）`;
     case 'modifyRule':
       return `规则操作 ${action.op}`;
     case 'endRun':

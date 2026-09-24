@@ -405,6 +405,116 @@ export const PRESETS = [
       style: { cellSize: 20 },
     }),
   },
+  {
+    id: 'ca-only',
+    name: '纯元胞自动机（禁用蛇形实体）',
+    description: '关闭蛇形实体，只保留元胞自动机演化；配合「稳定即收尾」自动结束，适合做纯 CA 实验。',
+    build: () => base({
+      meta: { name: '纯元胞自动机', description: '不生成蛇形实体，仅环境演化' },
+      grid: { type: 'square', width: 44, height: 30, boundary: 'wrap' },
+      // 蛇形实体总开关：enabled=false 与 initialLength=0 等效
+      body: { enabled: false, initialLength: 0 },
+      caMode: {
+        enabled: true,
+        states: [
+          { name: 'empty', color: null, symbol: '.', blocking: false },
+          { name: 'alive', color: '#ffd43b', symbol: 'O', blocking: false },
+        ],
+        neighborhood: 'moore',
+        radius: 1,
+        boundary: 'wrap',
+        update: 'synchronous',
+        initial: { mode: 'random', density: 0.35, state: 'alive', pattern: '' },
+        rules: [
+          { id: 'birth', name: '出生', from: ['empty'], counts: [{ state: 'alive', values: [3] }], to: 'alive', probability: 1 },
+          { id: 'death', name: '死亡', from: ['alive'], counts: [{ state: 'alive', values: [0, 1, 4, 5, 6, 7, 8] }], to: 'empty', probability: 1 },
+        ],
+        syncWithAgent: 'afterMove',
+        stopOnStable: true,
+        stableSteps: 4,
+      },
+      endConditions: { maxSteps: 500, wall: false, outOfBounds: false, selfCollision: false, noMove: false, caStable: true },
+      style: { cellSize: 16, showTrail: false },
+    }),
+  },
+  {
+    id: 'marker-farm',
+    name: '标记物交互（吃标记物增长）',
+    description: '把元胞状态定义为交互标记物：金色标记物吃到后增长并消耗，红色尖刺碰到会缩短，展示参数化反馈规则。',
+    build: () => base({
+      meta: { name: '标记物交互', description: '蛇触碰元胞标记物触发长度反馈' },
+      grid: { type: 'square', width: 40, height: 26, boundary: 'wrap' },
+      start: { col: 20, row: 13, direction: 'up' },
+      body: { initialLength: 5, colorMode: 'gradient', lengthPolicy: { mode: 'variable' } },
+      moveRules: { left: 0.34, straight: 0.32, right: 0.34 },
+      safety: { avoidBody: true, avoidObstacle: true },
+      caMode: {
+        enabled: true,
+        states: [
+          { name: 'empty', color: null, symbol: '.', blocking: false },
+          { name: 'marker', color: '#ffd166', symbol: 'M', blocking: false, render: 'dot' },
+          { name: 'spike', color: '#ff6b6b', symbol: 'X', blocking: false, render: 'cross' },
+        ],
+        neighborhood: 'vonNeumann',
+        radius: 1,
+        boundary: 'wrap',
+        update: 'asynchronous',
+        initial: { mode: 'random', density: 0.12, state: 'marker', pattern: '' },
+        rules: [
+          { id: 'grow-marker', name: '标记物生长', from: ['empty'], counts: [], to: 'marker', probability: 0.03 },
+          { id: 'grow-spike', name: '尖刺生长', from: ['empty'], counts: [], to: 'spike', probability: 0.006 },
+        ],
+        syncWithAgent: 'afterMove',
+        markerInteraction: {
+          enabled: true,
+          states: ['marker', 'spike'],
+          effects: [
+            { id: 'fx_grow', name: '吃到标记物增长', enabled: true, state: 'marker', mode: 'delta', value: 2, probability: 1, consume: true, consumeTo: 'empty', color: '#51cf66' },
+            { id: 'fx_hurt', name: '碰到尖刺缩短', enabled: true, state: 'spike', mode: 'delta', value: -1, probability: 1, consume: true, consumeTo: 'empty', color: '#ff5d5d' },
+          ],
+        },
+      },
+      endConditions: { maxSteps: 400, wall: false, coverage: false, lengthReached: true, lengthTarget: 40 },
+      style: { cellSize: 20, showMarkers: true, showEffects: true },
+    }),
+  },
+  {
+    id: 'multi-snake',
+    name: '多蛇生态（生成 + 融合）',
+    description: '按随机时间间隔持续生成新蛇，蛇相遇时相互融合并叠加长度；配合安全避撞与逐个体配色。',
+    build: () => base({
+      meta: { name: '多蛇生态', description: '多蛇生成与融合交互' },
+      grid: { type: 'square', width: 42, height: 28, boundary: 'wrap' },
+      start: { col: 21, row: 14, direction: 'up' },
+      body: { initialLength: 4 },
+      moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
+      safety: { avoidBody: true, avoidObstacle: true, avoidOtherAgents: true },
+      multiSnake: {
+        enabled: true,
+        spawn: { mode: 'interval', minInterval: 25, maxInterval: 55, maxAgents: 6, length: 3, direction: 'random', probability: 0.9 },
+        interaction: { mode: 'merge' },
+      },
+      endConditions: { maxSteps: 400, wall: false, selfCollision: true, lengthReached: false },
+      style: { cellSize: 18, showEffects: true, showEyes: true },
+    }),
+  },
+  {
+    id: 'avoid-lab',
+    name: '安全避撞实验（自身身体规避）',
+    description: '长身体 + 高转向权重，开启「安全避撞 → 自身身体」；只有当所有方向都被自身阻塞时才会自撞。',
+    build: () => base({
+      meta: { name: '安全避撞实验', description: '优先规避自身身体的方向选择' },
+      grid: { type: 'square', width: 26, height: 20, boundary: 'wrap' },
+      // 身体沿「行驶方向的反方向」向后延伸：向右行驶时起点须靠右侧，
+      // 才能让 22 节身体完整排进 26 列内而不被边界截断。
+      start: { col: 21, row: 10, direction: 'right' },
+      body: { initialLength: 22, colorMode: 'custom' },
+      moveRules: { left: 0.42, straight: 0.16, right: 0.42 },
+      safety: { avoidBody: true, avoidObstacle: true, avoidOtherAgents: true },
+      endConditions: { maxSteps: 600, wall: false, selfCollision: true },
+      style: { cellSize: 22, showBody: true, showEyes: true, glow: true },
+    }),
+  },
 ];
 
 export function getPreset(id) {
