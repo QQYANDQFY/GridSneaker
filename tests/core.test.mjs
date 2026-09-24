@@ -17,6 +17,7 @@ import { World, Agent } from '../src/core/world.js';
 import { evaluateClause, describeClause } from '../src/core/conditions.js';
 import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
 import { PRESETS, buildPresetConfig } from '../src/core/presets.js';
+import { Renderer, STYLE_DEFAULTS } from '../src/ui/canvas.js';
 
 let pass = 0;
 let fail = 0;
@@ -1338,6 +1339,160 @@ section('轨迹 / 蛇身连接方式');
   });
   eq(legacy.style.trailJoin, 'line', '旧配置 smoothTrail=false 兼容为直线连接');
   eq(legacy.style.bodyJoin, 'curve', '旧配置 smoothBody=true 兼容为曲线连接');
+}
+
+section('边界穿越的环绕最短位移（动画不闪现）');
+{
+  const g = new Grid({ type: 'square', width: 10, height: 8, boundary: 'wrap' });
+  const d1 = g.wrapDelta({ col: 0, row: 0 }, { col: 9, row: 0 });
+  eq(`${d1.dc},${d1.dr}`, '-1,0', '向左穿越边界解算为 -1 步，而不是横穿 9 格');
+  const d2 = g.wrapDelta({ col: 9, row: 0 }, { col: 0, row: 0 });
+  eq(`${d2.dc},${d2.dr}`, '1,0', '向右穿越边界解算为 +1 步');
+  const d3 = g.wrapDelta({ col: 0, row: 0 }, { col: 0, row: 7 });
+  eq(`${d3.dc},${d3.dr}`, '0,-1', '向上穿越边界解算为 -1 步');
+  const d4 = g.wrapDelta({ col: 0, row: 7 }, { col: 0, row: 0 });
+  eq(`${d4.dc},${d4.dr}`, '0,1', '向下穿越边界解算为 +1 步');
+
+  const d5 = g.wrapDelta({ col: 3, row: 3 }, { col: 4, row: 4 });
+  eq(`${d5.dc},${d5.dr}`, '1,1', '普通一步位移保持不变');
+  const d6 = g.wrapDelta({ col: 3, row: 3 }, { col: 3, row: 3 });
+  eq(`${d6.dc},${d6.dr}`, '0,0', '静止时位移为 0');
+  const d7 = g.wrapDelta({ col: 0, row: 0 }, { col: 5, row: 0 });
+  eq(d7.dc, 5, '恰好半圈的位移不做环绕换算，避免误判');
+
+  // 环绕落点必须仍然落在界外（供插值滑出边界），且与 wrap() 结果一致
+  const unwrapped = { col: 0 + d1.dc, row: 0 + d1.dr };
+  eq(unwrapped.col, -1, '未环绕落点在界外，插值时体节滑出边界而不是横穿画面');
+  const back = g.wrap({ col: 9 + d2.dc, row: 0 + d2.dr });
+  eq(back.col, 0, '未环绕落点经 wrap() 后回到真实落点');
+
+  const hex = new Grid({ type: 'hex', width: 6, height: 4, boundary: 'wrap' });
+  eq(hex.wrapDelta({ col: 0, row: 0 }, { col: 5, row: 0 }).dc, -1, '六边形向左穿越解算为 -1 步');
+  eq(hex.wrapDelta({ col: 5, row: 0 }, { col: 0, row: 0 }).dc, 1, '六边形向右穿越解算为 +1 步');
+  eq(hex.wrapDelta({ col: 0, row: 0 }, { col: 0, row: 3 }).dr, -1, '六边形向上穿越解算为 -1 步');
+  eq(hex.wrapDelta({ col: 2, row: 1 }, { col: 2, row: 2 }).dr, 1, '六边形普通一步位移保持不变');
+}
+
+section('边界穿越的体节插值（不横扫画面）');
+{
+  // 借用 Renderer 原型构造无 DOM 的渲染上下文，只验证插值几何
+  const r = Object.create(Renderer.prototype);
+  r.style = { ...STYLE_DEFAULTS, cellSize: 20, gap: 2 };
+  const pitch = r.style.cellSize + r.style.gap;
+  const setup = (grid) => {
+    r.grid = grid;
+    r.size = grid.canvasSize(r.style.cellSize, r.style.gap, 18);
+  };
+  const cx = (col, row) => r.center({ col, row });
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  setup(new Grid({ type: 'square', width: 10, height: 8, boundary: 'wrap' }));
+  // 蛇头在第 3 行向左穿越边界，身体跟在后面（正常情况下只有蛇头跨缝）
+  const a = { segments: [[0, 3], [0, 4], [0, 5]] };
+  const b = { segments: [[9, 3], [0, 3], [0, 4]] };
+  const m = r.agentPoints(a, b, 0.5);
+  const headMoved = Math.abs(m.pts[0].x - cx(0, 3).x);
+  ok(headMoved <= pitch * 0.6, '穿越边界时蛇头只做一格内的位移，不会横穿整张画面',
+    `实际位移 ${headMoved.toFixed(1)}px，一格 ${pitch}px`);
+  ok(m.pts[0].gx !== undefined, '穿越边界的体节附带对侧镜像坐标');
+  near(m.pts[0].gx, cx(9, 3).x + pitch * 0.5, 0.01, '镜像体节在对侧同步滑入');
+  ok(dist(m.pts[0], m.pts[1]) <= pitch * 1.6, '穿越边界时蛇头与相邻体节仍然相邻（体节链不断开）',
+    `实际间距 ${dist(m.pts[0], m.pts[1]).toFixed(1)}px`);
+
+  const nw = r.agentPoints({ segments: [[3, 3]] }, { segments: [[4, 3]] }, 0.5);
+  eq(nw.pts[0].gx, undefined, '未穿越边界时不产生镜像体节');
+  near(nw.pts[0].x, cx(3.5, 3).x, 0.01, '未穿越边界时按半格平滑插值');
+
+  setup(new Grid({ type: 'hex', width: 6, height: 4, boundary: 'wrap' }));
+  const hm = r.agentPoints({ segments: [[0, 3]] }, { segments: [[5, 3]] }, 0.5);
+  const hexMoved = Math.abs(hm.pts[0].x - cx(0, 3).x);
+  ok(hexMoved <= pitch * 0.85, '六边形穿越边界时同样只做一格内的位移',
+    `实际位移 ${hexMoved.toFixed(1)}px，一格 ${pitch}px`);
+  ok(hm.pts[0].gx !== undefined, '六边形穿越边界时同样附带对侧镜像');
+
+  // 跨缝全过程：本体（滑出的一侧）与镜像（滑入的一侧）各自都要与网格区域相交，
+  // 于是任意进度下画面上都至少留着半个体节，不会出现整段消失的闪现
+  setup(new Grid({ type: 'square', width: 10, height: 8, boundary: 'wrap' }));
+  const rect = r.gridRect();
+  const radius = (r.style.cellSize / 2) * 0.82;
+  const onStage = (p) => p.x + radius > rect.left && p.x - radius < rect.right
+    && p.y + radius > rect.top && p.y - radius < rect.bottom;
+  const across = { segments: [[9, 3]] };
+  const landed = { segments: [[0, 3]] };
+  let blank = -1;
+  for (let k = 0; k <= 100; k++) {
+    const al = k / 100;
+    const mm = r.agentPoints(across, landed, al);
+    const gh = (mm.ghosts[0] || [])[0];
+    if (!onStage(mm.pts[0]) && !(gh && onStage(gh))) { blank = al; break; }
+  }
+  eq(blank, -1, '穿越边界全过程始终有半个体节留在画面内（不出现整段消失的闪现）');
+  const mid = r.agentPoints(across, landed, 0.5);
+  const midGhost = (mid.ghosts[0] || [])[0];
+  ok(onStage(mid.pts[0]) && !!midGhost && onStage(midGhost),
+    '跨缝正中间：滑出的一侧与滑入的一侧同时各有半个体节，过渡连续无跳变');
+}
+
+section('跨缝渲染调用（裁剪到网格区域，两侧分段绘制）');
+{
+  // 用记录型假 ctx 跑真实的 drawAgents，核对裁剪矩形、两侧分段与状态配对
+  const calls = [];
+  const fakeCtx = new Proxy({}, {
+    get(target, key) {
+      if (key in target) return target[key];
+      return function (...args) { calls.push({ name: String(key), args }); };
+    },
+    set(target, key, value) { target[key] = value; return true; },
+  });
+  const r = Object.create(Renderer.prototype);
+  r.ctx = fakeCtx;
+  r.canvas = { width: 268, height: 212, style: {} };
+  r.style = { ...STYLE_DEFAULTS, cellSize: 26, gap: 2 };
+  r.body = { segmentSize: 0.82, shape: 'round', colorMode: 'gradient', colors: { head: '#ff5d5d', tail: '#7a4dff' } };
+  r.grid = new Grid({ type: 'square', width: 8, height: 6, boundary: 'wrap' });
+  r.size = r.grid.canvasSize(r.style.cellSize, r.style.gap, 23);
+  const pitch = r.style.cellSize + r.style.gap;
+  const before = { id: 1, alive: true, dir: 1, color: '', segments: [[7, 3], [6, 3], [5, 3], [4, 3], [3, 3], [2, 3]] };
+  const after = { id: 1, alive: true, dir: 1, color: '', segments: [[0, 3], [7, 3], [6, 3], [5, 3], [4, 3], [3, 3]] };
+  r.drawAgents({ agents: [before] }, { agents: [after] }, 0.5);
+
+  const rect = r.gridRect();
+  const clipCall = calls.find((c) => c.name === 'rect');
+  ok(!!clipCall, '绘制体节前先按网格区域裁剪，越界部分不会画到留白区');
+  if (clipCall) {
+    near(clipCall.args[0], rect.left, 0.01, '裁剪矩形左边界等于网格区域左边界');
+    near(clipCall.args[1], rect.top, 0.01, '裁剪矩形上边界等于网格区域上边界');
+    near(clipCall.args[2], rect.right - rect.left, 0.01, '裁剪矩形宽度等于网格区域宽度');
+    near(clipCall.args[3], rect.bottom - rect.top, 0.01, '裁剪矩形高度等于网格区域高度');
+  }
+
+  // 按 beginPath → stroke/fill 归并成一条条路径，检查几何分布（裁剪用的矩形路径不计入）
+  const paths = [];
+  const geometry = new Set(['moveTo', 'lineTo', 'bezierCurveTo', 'quadraticCurveTo', 'arc', 'ellipse', 'rect', 'roundRect']);
+  let cur = null;
+  for (const c of calls) {
+    if (c.name === 'beginPath') { cur = { xs: [], clip: false }; paths.push(cur); continue; }
+    if (c.name === 'clip') { if (cur) cur.clip = true; continue; }
+    if (c.name === 'stroke' || c.name === 'fill') { cur = null; continue; }
+    if (!cur || !geometry.has(c.name)) continue;
+    if (c.name === 'arc' || c.name === 'ellipse') cur.xs.push(c.args[0]);
+    else if (c.name === 'rect' || c.name === 'roundRect') cur.xs.push(c.args[0], c.args[0] + c.args[2]);
+    else if (c.name === 'bezierCurveTo') cur.xs.push(c.args[0], c.args[4]);
+    else if (c.name === 'quadraticCurveTo') cur.xs.push(c.args[0], c.args[2]);
+    else cur.xs.push(c.args[0]);
+  }
+  const drawn = paths.filter((p) => !p.clip);
+  const leftBand = rect.left + pitch;
+  const rightBand = rect.right - pitch;
+  ok(drawn.some((p) => p.xs.some((x) => x <= leftBand)), '跨缝时滑入的一侧（左边界附近）确实被绘制');
+  ok(drawn.some((p) => p.xs.some((x) => x >= rightBand)), '跨缝时滑出的一侧（右边界附近）确实被绘制');
+  const streak = drawn.find((p) => p.xs.some((x) => x <= leftBand) && p.xs.some((x) => x >= rightBand));
+  eq(streak, undefined, '没有任何一条路径同时跨到两侧，不会连出穿图长条');
+
+  const saves = calls.filter((c) => c.name === 'save').length;
+  const restores = calls.filter((c) => c.name === 'restore').length;
+  ok(saves > 0 && saves === restores, 'save / restore 配对，裁剪状态不会泄漏到后续绘制',
+    `save ${saves} 次，restore ${restores} 次`);
 }
 
 /* ---------- 结果 ---------- */

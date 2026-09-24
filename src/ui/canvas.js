@@ -194,6 +194,16 @@ export class Renderer {
     return { x: p.x + this.size.margin, y: p.y + this.size.margin };
   }
 
+  /**
+   * 网格绘制区域（画布去掉四周留白）。
+   * 穿越边界时体节会滑出该矩形，越界部分不画，改由对侧的镜像体节同步滑入，
+   * 避免在留白区留下周期像或让体节横穿整张画面。
+   */
+  gridRect() {
+    const m = this.size.margin;
+    return { left: m, top: m, right: this.size.width - m, bottom: this.size.height - m };
+  }
+
   /* ------------------------------------------------------------------ */
 
   /**
@@ -546,7 +556,8 @@ export class Renderer {
   /**
    * 蛇身绘制：
    *  1) 用相邻帧对体节位置做插值，得到亚步坐标，实现体节节点的流畅位移（帧连续）；
-   *  2) 按 style.bodyJoin 把相邻体节连成连续蛇身：
+   *  2) 穿越边界时体节平滑滑出网格区域，同时在对侧由镜像体节同步滑入；
+   *  3) 按 style.bodyJoin 把相邻体节连成连续蛇身：
    *     curve 贝塞尔曲线 · line 直线段 · angle 按预设角度切角连接的直线型折线。
    * 这样无论哪种连接方式，蛇身都是平滑、规整、帧连续的形态，不再有生硬的逐格拼接。
    */
@@ -557,70 +568,125 @@ export class Renderer {
     const half = cellSize / 2;
     const scale = Math.max(0.1, Math.min(1.6, cfgBody?.segmentSize ?? 0.82));
     const shape = cfgBody?.shape || 'round';
+    const rect = this.gridRect();
+
+    ctx.save();
+    // 绘制范围裁剪到网格区域：跨越边界时体节滑出的一侧按真实像素被裁掉，
+    // 对侧镜像体节同步滑入，两侧始终各有半个体节在场，
+    // 既不会在四周留白里留下周期像，也不会出现体节整段消失的闪现。
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    ctx.clip();
 
     for (let ai = frame.agents.length - 1; ai >= 0; ai--) {
       const a = frame.agents[ai];
       if (!a.segments.length) continue;
       const n = a.segments.length;
       const b = nextFrame ? nextFrame.agents.find((x) => x.id === a.id) : null;
-      const pts = this.agentPoints(a, b, alpha);
+      const model = this.agentPoints(a, b, alpha);
+      const pts = model.pts;
+      const ghostRuns = model.ghosts;
       const colorAt = (i) => segmentColor(a, i, n, cfgBody);
       const radius = half * scale;
 
       if (pts.length > 1) {
         this.strokeRibbon(a, pts, colorAt, radius, cfgBody);
-      } else {
+      } else if (pts.length === 1) {
         ctx.save();
-        ctx.fillStyle = colorAt(0);
+        ctx.fillStyle = colorAt(pts[0].gi);
         ctx.globalAlpha = a.alive ? 1 : 0.45;
         drawShape(ctx, pts[0].x, pts[0].y, radius, this.grid.type, shape);
         ctx.fill();
         ctx.restore();
       }
+      // 对侧镜像：与本体使用同一套配色与连接方式，保证两侧同步滑入 / 滑出
+      for (const run of ghostRuns) this.strokeRibbon(a, run, colorAt, radius, cfgBody);
       if (this.style.showArrows) this.drawArrow(a, cellSize);
-      const head = pts[0];
-      if (this.style.showEyes) {
-        this.drawEyes(head, this.headAngle(a, b, alpha), radius);
-      } else {
-        ctx.save();
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, Math.max(1.2, radius * 0.22), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+      // 蛇头：跨缝时本体与镜像同时各露出半个，两侧都按同一朝向绘制眼睛 / 白点，
+      // 避免滑出的一侧失去「头部」标识、另一侧冒出一个无标识的体节
+      const heads = [];
+      if (pts.length && pts[0].gi === 0) heads.push(pts[0]);
+      const headGhost = ghostRuns.find((run) => run[0] && run[0].gi === 0);
+      if (headGhost) heads.push(headGhost[0]);
+      if (heads.length) {
+        const ang = this.headAngle(a, model.headTarget);
+        for (const hd of heads) {
+          if (this.style.showEyes) {
+            this.drawEyes(hd, ang, radius);
+          } else {
+            ctx.save();
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.globalAlpha = 0.5;
+            ctx.beginPath();
+            ctx.arc(hd.x, hd.y, Math.max(1.2, radius * 0.22), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
       }
     }
+    ctx.restore();
   }
 
-  /** 体节中心坐标：b 为下一帧的同一移动体，alpha ∈ [0,1) 为帧间进度 */
+  /**
+   * 体节中心坐标：b 为下一帧的同一移动体，alpha ∈ [0,1) 为帧间进度。
+   *
+   * 边界穿越（wrap）时相邻两帧的格坐标会「瞬移」到对侧，若直接线性插值，
+   * 体节会贴着整张画面横扫过去（错误闪现）。这里按「环绕最短位移」解算落点：
+   *  - 未环绕的落点用于插值，体节只做一格内的位移，平滑滑出边界；
+   *  - 环绕平移量记为镜像偏移（gx/gy），供绘制时在对侧补画同步滑入的体节。
+   *
+   * @returns {{pts: Array, ghosts: Array<Array>, headTarget: object|null}}
+   */
   agentPoints(a, b, alpha) {
     const pts = [];
+    const ghosts = [];
     const segsA = a.segments;
     const segsB = b && b.segments.length ? b.segments : null;
+    let headTarget = null;
+    let run = [];
     for (let i = 0; i < segsA.length; i++) {
-      const pa = this.center({ col: segsA[i][0], row: segsA[i][1] });
-      let x = pa.x;
-      let y = pa.y;
+      const from = { col: segsA[i][0], row: segsA[i][1] };
+      const pa = this.center(from);
+      const p = { x: pa.x, y: pa.y, gi: i };
       if (segsB && alpha > 0) {
         const s = segsB[Math.min(i, segsB.length - 1)];
-        const pb = this.center({ col: s[0], row: s[1] });
-        x += (pb.x - x) * alpha;
-        y += (pb.y - y) * alpha;
+        const to = { col: s[0], row: s[1] };
+        const d = this.grid.wrapDelta(from, to);
+        const target = this.center({ col: from.col + d.dc, row: from.row + d.dr });
+        p.x += (target.x - pa.x) * alpha;
+        p.y += (target.y - pa.y) * alpha;
+        if (i === 0) headTarget = target;
+        // 真实落点与未环绕落点不一致，说明本步穿越了边界：
+        // 两者之差即环绕平移量，记录镜像坐标供绘制时在对侧补画
+        if (d.dc !== to.col - from.col || d.dr !== to.row - from.row) {
+          const real = this.center(to);
+          p.gx = p.x + real.x - target.x;
+          p.gy = p.y + real.y - target.y;
+        }
       }
-      pts.push({ x, y, gi: i });
+      if (p.gx === undefined) {
+        if (run.length) {
+          ghosts.push(run);
+          run = [];
+        }
+      } else {
+        run.push({ x: p.gx, y: p.gy, gi: i });
+      }
+      pts.push(p);
     }
-    return pts;
+    if (run.length) ghosts.push(run);
+    return { pts, ghosts, headTarget };
   }
 
-  /** 蛇头朝向角：播放时取真实位移方向，静止时取当前朝向的前方格方向 */
-  headAngle(a, b, alpha) {
+  /**
+   * 蛇头朝向角：播放时取真实位移方向（按环绕最短位移解算，穿越边界时朝向不会翻转），
+   * 静止时取当前朝向的前方格方向。
+   */
+  headAngle(a, headTarget) {
     const from = this.center({ col: a.segments[0][0], row: a.segments[0][1] });
     let to = null;
-    if (b && b.segments.length && alpha > 0) {
-      const h = this.center({ col: b.segments[0][0], row: b.segments[0][1] });
-      if (Math.abs(h.x - from.x) > 0.01 || Math.abs(h.y - from.y) > 0.01) to = h;
-    }
+    if (headTarget && (Math.abs(headTarget.x - from.x) > 0.01 || Math.abs(headTarget.y - from.y) > 0.01)) to = headTarget;
     if (!to) {
       const nxt = this.grid.step({ col: a.segments[0][0], row: a.segments[0][1] }, a.dir);
       const raw = this.grid.toPixel(nxt, this.style.cellSize, this.style.gap);

@@ -99,6 +99,19 @@ export class Grid {
     return { col, row };
   }
 
+  /**
+   * 两格之间的「环绕最短位移」（格坐标差值）。
+   * 相邻两帧的真实位移不超过 1 步，若差值接近整圈，说明发生了边界穿越，
+   * 需要换算成穿越方向上的那一步；否则动画插值会让移动体贴着整张画面横穿（错误闪现）。
+   */
+  wrapDelta(a, b) {
+    let dc = b.col - a.col;
+    let dr = b.row - a.row;
+    if (Math.abs(dc) > this.width / 2) dc += dc > 0 ? -this.width : this.width;
+    if (Math.abs(dr) > this.height / 2) dr += dr > 0 ? -this.height : this.height;
+    return { dc, dr };
+  }
+
   /** 沿方向移动一步，可能越界（返回仍为偏移坐标） */
   step(c, dir) {
     const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
