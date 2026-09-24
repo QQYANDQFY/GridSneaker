@@ -373,7 +373,7 @@ function loadLocalConfig() {
   }
 }
 
-/* ---------------- 游戏状态存档与读取（本地多存档） ---------------- */
+/* ---------------- 状态存档与读取（本地多存档） ---------------- */
 
 const SAVE_KEY = 'gridsneaker:saves';
 /** 本地存档条数上限，超出后按保存顺序淘汰最早的 */
@@ -418,8 +418,8 @@ function formatSaveTime(ts) {
   return sameDay ? time : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
 }
 
-/** 保存当前游戏状态：配置 + 播放位置 + 统计口径，便于随时回到同一局面 */
-function saveGameState(name) {
+/** 保存当前状态：配置 + 播放位置 + 统计口径，便于随时回到同一局面 */
+function saveState(name) {
   const label = String(name || '').trim() || `存档 ${formatSaveTime(Date.now())}`;
   const entry = {
     name: label,
@@ -436,7 +436,7 @@ function saveGameState(name) {
 }
 
 /** 读取存档：整体替换配置（自动重算整轮运行）后跳回保存时的播放位置 */
-function loadGameState(name) {
+function loadState(name) {
   const entry = readSaves().find((s) => s.name === name);
   if (!entry) {
     toast('存档不存在或已被删除', 'warn');
@@ -466,7 +466,7 @@ function savesGroup() {
       host.appendChild(h('div', { class: 'save-row' },
         h('span', { class: 'save-name', title: s.name }, s.name),
         h('span', { class: 'mini-label' }, formatSaveTime(s.savedAt)),
-        button('读取', () => loadGameState(s.name), 'primary small'),
+        button('读取', () => loadState(s.name), 'primary small'),
         button('删除', () => {
           writeSaves(readSaves().filter((x) => x.name !== s.name));
           toast(`已删除存档「${s.name}」`, 'info');
@@ -475,10 +475,10 @@ function savesGroup() {
     }
   };
   renderSaveList();
-  return group('游戏状态存档', [
+  return group('状态存档', [
     field('存档名称', nameInput),
     row(
-      button('保存当前状态', () => saveGameState(nameInput.value), 'primary'),
+      button('保存当前状态', () => saveState(nameInput.value), 'primary'),
       button('清空全部存档', () => {
         const list = readSaves();
         if (!list.length) { toast('暂无存档', 'info'); return; }
@@ -500,7 +500,7 @@ function savesGroup() {
   ], { open: false });
 }
 
-/* ---------------- 游戏进度自动存档 ---------------- */
+/* ---------------- 配置自动存档 ---------------- */
 
 const AUTO_SAVE_KEY = 'gridsneaker:autosave';
 /** 自动存档落盘防抖：播放 / 跳帧时不必每一帧都写盘 */
@@ -510,7 +510,7 @@ let renderAutosaveList = () => {};
 let renderScoreboardList = () => {};
 
 /**
- * 自动记录最近一次游戏进度：配置 + 播放位置 + 统计口径。
+ * 自动记录最近一次运行进度：配置 + 播放位置 + 统计口径。
  * 与手动存档同构，但不占用存档条数；写入失败（配额不足）时退一步去掉自定义皮肤图片重存。
  */
 function writeAutoSave() {
@@ -602,8 +602,8 @@ function autosaveGroup() {
   };
   sync();
   renderAutosaveList = sync;
-  return group('游戏进度自动存档', [
-    h('div', { class: 'hint' }, '自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「游戏状态存档」。'),
+  return group('配置自动存档', [
+    h('div', { class: 'hint' }, '自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用上方「状态存档」。'),
     host,
   ], { open: false });
 }
@@ -1871,8 +1871,6 @@ function renderSidePanel() {
 
   side.appendChild(savesGroup());
 
-  side.appendChild(scoreboardGroup());
-
   side.appendChild(group('配置导入导出', [
     row(
       button('复制 JSON', () => copyText(configToJSON(state.cfg), '配置 JSON 已复制')),
@@ -1971,6 +1969,8 @@ function statsModeGroup() {
       if (!text) { toast('尚未运行模拟', 'warn'); return; }
       copyText(text, '统计摘要已复制');
     }, 'ghost small')),
+    // 本地得分排行榜并入统计模块：成绩本身就是统计结论的留档，与统计口径同属一处更易查找。
+    scoreboardGroup(),
     // 坐标筛选查询并入统计模块：与统计口径共用同一轨迹数据源，
     // 切换口径或改变播放位置时查询结果会实时同步到统计面板与画面高亮。
     trailQueryGroup(),
@@ -2702,18 +2702,20 @@ function syncControlBar() {
 /**
  * 配置面板四大类选项卡。
  * 原先十余个分组平铺在同一列里，界面很长、视觉负担重；
- * 这里按「游戏核心规则 / 视觉显示 / 场景与运行 / 扩展机制」收敛为 4 个入口，
+ * 这里按「核心规则 / 视觉显示 / 场景与运行 / 扩展机制」收敛为 4 个入口，
  * 分组本身与其中所有控件原样保留，只是换了归属，功能可访问性不变。
  *
  * 命名说明：
+ *  - core（核心规则）：网格与移动体等基础规则；
  *  - scene（场景与运行）：场景元信息与运行语义——名称 / 描述、随机种子（复现）、规则执行方式；
  *  - extend（扩展机制）：核心规则之外的可选机制——多蛇与交互、蛇死亡转化、生命机制、元胞自动机。
- *    这两类此前分别叫「操作控制」「难度参数」，但配置面板中并不存在「操作控制」类选项，
+ *    后两类此前分别叫「操作控制」「难度参数」，但配置面板中并不存在「操作控制」类选项，
  *    真正的「难度」是运行期的拥挤度难度评估（见 difficulty.js，读数在控制条与统计面板），
  *    与选项卡内容无关，旧命名会误导用户，故按实际内容重新命名。
+ *    另：本产品定位为「网格移动动画模拟平台」，各选项卡名称一律不再使用「游戏」这类自称。
  */
 const CONFIG_TABS = [
-  { key: 'core', label: '游戏核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
+  { key: 'core', label: '核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
   { key: 'visual', label: '视觉显示', hint: '格子绘制、轨迹与蛇身样式、特效开关' },
   { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式' },
   { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机' },

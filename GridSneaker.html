@@ -2460,7 +2460,7 @@ const PRESETS=[
 {
 id:'random-walk',
 name:'随机游走',
-description:'方形网格上的等概率左/直/右随机游走，边界穿越到另一侧（默认游戏模式）。',
+description:'方形网格上的等概率左/直/右随机游走，边界穿越到另一侧（默认配置）。',
 build:()=>base({
 meta:{name:'随机游走',description:'等概率转向的经典随机游走'},
 grid:{type:'square',width:28,height:20,boundary:'wrap'},
@@ -8041,7 +8041,7 @@ const today=new Date();
 const sameDay=d.getFullYear()===today.getFullYear()&&d.getMonth()===today.getMonth()&&d.getDate()===today.getDate();
 return sameDay?time:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${time}`;
 }
-function saveGameState(name){
+function saveState(name){
 const label=String(name||'').trim()||`存档 ${formatSaveTime(Date.now())}`;
 const entry={
 name:label,
@@ -8056,7 +8056,7 @@ if(!writeSaves(list))return;
 toast(`已保存存档「${label}」`,'success');
 renderSidePanel();
 }
-function loadGameState(name){
+function loadState(name){
 const entry=readSaves().find((s)=>s.name===name);
 if(!entry){
 toast('存档不存在或已被删除','warn');
@@ -8083,7 +8083,7 @@ for(const s of list){
 host.appendChild(h('div',{class:'save-row'},
 h('span',{class:'save-name',title:s.name},s.name),
 h('span',{class:'mini-label'},formatSaveTime(s.savedAt)),
-button('读取',()=>loadGameState(s.name),'primary small'),
+button('读取',()=>loadState(s.name),'primary small'),
 button('删除',()=>{
 writeSaves(readSaves().filter((x)=>x.name!==s.name));
 toast(`已删除存档「${s.name}」`,'info');
@@ -8092,10 +8092,10 @@ renderSaveList();
 }
 };
 renderSaveList();
-return group('游戏状态存档',[
+return group('状态存档',[
 field('存档名称',nameInput),
 row(
-button('保存当前状态',()=>saveGameState(nameInput.value),'primary'),
+button('保存当前状态',()=>saveState(nameInput.value),'primary'),
 button('清空全部存档',()=>{
 const list=readSaves();
 if(!list.length){toast('暂无存档','info');return;}
@@ -8199,8 +8199,8 @@ sync();
 };
 sync();
 renderAutosaveList=sync;
-return group('游戏进度自动存档',[
-h('div',{class:'hint'},'自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「游戏状态存档」。'),
+return group('配置自动存档',[
+h('div',{class:'hint'},'自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用上方「状态存档」。'),
 host,
 ],{open:false});
 }
@@ -9231,7 +9231,6 @@ h('div',{class:'hint'},'载入模板前自动比对当前配置与模板基准�
 ],{open:false}));
 side.appendChild(autosaveGroup());
 side.appendChild(savesGroup());
-side.appendChild(scoreboardGroup());
 side.appendChild(group('配置导入导出',[
 row(
 button('复制 JSON',()=>copyText(configToJSON(state.cfg),'配置 JSON 已复制')),
@@ -9313,6 +9312,7 @@ const text=statsSummaryText();
 if(!text){toast('尚未运行模拟','warn');return;}
 copyText(text,'统计摘要已复制');
 },'ghost small')),
+scoreboardGroup(),
 trailQueryGroup(),
 ],{key:'stat-mode',open:false});
 }
@@ -9890,7 +9890,7 @@ if(els.followInput)els.followInput.checked= !!state.cfg.style.followAgent;
 updateSpeedLabel();
 }
 const CONFIG_TABS=[
-{key:'core',label:'游戏核心规则',hint:'网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则'},
+{key:'core',label:'核心规则',hint:'网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则'},
 {key:'visual',label:'视觉显示',hint:'格子绘制、轨迹与蛇身样式、特效开关'},
 {key:'scene',label:'场景与运行',hint:'场景名称与描述、随机种子、规则执行方式'},
 {key:'extend',label:'扩展机制',hint:'多蛇与交互、蛇死亡转化、生命机制、元胞自动机'},

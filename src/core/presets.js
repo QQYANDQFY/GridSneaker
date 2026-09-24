@@ -41,7 +41,7 @@ export const PRESETS = [
   {
     id: 'random-walk',
     name: '随机游走',
-    description: '方形网格上的等概率左/直/右随机游走，边界穿越到另一侧（默认游戏模式）。',
+    description: '方形网格上的等概率左/直/右随机游走，边界穿越到另一侧（默认配置）。',
     build: () => base({
       meta: { name: '随机游走', description: '等概率转向的经典随机游走' },
       grid: { type: 'square', width: 28, height: 20, boundary: 'wrap' },

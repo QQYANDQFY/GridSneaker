@@ -12,9 +12,9 @@
   - **低生命预警**：`life.warnThreshold` 设定预警阈值，剩余生命降至阈值时写入一次 `lifeWarning` 高亮与事件；界面在播放到该帧时弹出提示（`notifyLifeEvents`）。
 - **死亡即停（默认关闭「死亡后仍可移动」）**：`life.keepMovingAfterDeath` 默认 `false`——蛇触发死亡判定后立即停止所有移动逻辑，死亡帧起 `captureFrame` 不再输出蛇头与蛇身（`segments: []` / `length: 0`）。仍保留开启后的旧表现（僵尸态 `agent.zombie`，保留蛇头蛇身继续推进）。
 - **自撞判定与自撞结束规则互斥绑定**：新增派生锁定字段 `endConditions.selfCollisionLocked`——「自撞即判定死亡」（`transform.dieOnSelfCollision`）开启时，「撞到自身」结束规则自动禁用且面板置灰不可手动修改；关闭后恢复可编辑。该字段为派生值，不写入默认配置、也不改写「撞到自身」的原始值，因此关闭后原样恢复。对应诊断项 `transformOverridesSelfCollisionEnd`。
-- **设置面板四大类选项卡**：按「游戏核心规则 / 视觉显示 / 操作控制 / 难度参数」（`CONFIG_TABS`）归类合并，删除冗余的独立选项卡；原分组整体迁移、不做拆分，保证所有功能可访问性不变，并支持从「查看结束规则」等入口直接跳到目标分类。
-- **游戏进度自动存档**：`AUTO_SAVE_KEY = 'gridsneaker:autosave'`，播放 / 跳帧时按 1.2 秒防抖写入「配置 + 播放位置 + 统计口径」；刷新后配置由本地自动恢复，若存档配置与当前配置一致则自动跳回上次进度。
-- **本地得分排行榜**：每轮运行结束自动把成绩写入本地（按总分降序、限额保留、去重指纹避免重算重复入榜），侧栏支持查看与一键清空。
+- **设置面板四大类选项卡**：按「核心规则 / 视觉显示 / 场景与运行 / 扩展机制」（`CONFIG_TABS`）归类合并，删除冗余的独立选项卡；原分组整体迁移、不做拆分，保证所有功能可访问性不变，并支持从「查看结束规则」等入口直接跳到目标分类。
+- **配置自动存档**：`AUTO_SAVE_KEY = 'gridsneaker:autosave'`，播放 / 跳帧时按 1.2 秒防抖写入「配置 + 播放位置 + 统计口径」；刷新后配置由本地自动恢复，若存档配置与当前配置一致则自动跳回上次进度。
+- **得分排行榜**：每轮运行结束自动把成绩写入本地（按总分降序、限额保留、去重指纹避免重算重复入榜），归入「统计模块」内，支持查看与一键清空。
 - **移动端触控优化**：画布不拦截 `touchstart` / `touchmove` 默认行为，保留滚动与双指缩放（由 CSS `touch-action` 约束），并放大触控目标。
 - **统计与事件**：新增 `lifeLosses` / `lifeGains` / `respawns` / `lifeWarnings` / `finalDeaths` / `maxLives` 运行期统计与摘要字段；帧事件新增 `lifeGain` / `lifeLoss` / `trapHit` / `lifeRespawn` / `lifeWarning` / `lifeDepleted` 标签与对应特效（`lifeGain` / `lifeLoss` / `lifeWarning` / `lifeDepleted` / `respawn`）。
 
@@ -37,6 +37,21 @@
 
   涉及文件：`src/ui/app.js`（`CONFIG_TABS` 的 label / key、选项卡面板归属、注释）、`styles.css`（选项卡注释）、
   `CHANGELOG.md`（本记录）、`GridSneaker.html`（构建产物重新生成）。分组与控件未做任何迁移或删改，功能可访问性不变。
+- **去掉「游戏」自称（产品定位为「网格移动动画模拟平台」）**：程序还称不上游戏，凡把本产品称为「游戏」的表述一律删改；
+  经典 CA 规则「生命游戏（Conway's Game of Life）」为专有名词，予以保留。
+
+  | 原命名 | 新命名 | 位置 |
+  | --- | --- | --- |
+  | 游戏核心规则（选项卡） | 核心规则 | `CONFIG_TABS` |
+  | 游戏进度自动存档（分组） | 配置自动存档 | 侧边面板 |
+  | 游戏状态存档（分组） | 状态存档 | 侧边面板 |
+  | 保存当前游戏状态 / `saveGameState` / `loadGameState` | 保存当前状态 / `saveState` / `loadState` | `src/ui/app.js` |
+  | 「默认游戏模式」 | 「默认配置」 | `src/core/presets.js` 预设描述 |
+  | 「默认游戏模式：边界行为…」 | 「默认配置：边界行为…」 | `tests/core.test.mjs` 测试分组名 |
+
+  涉及文件：`src/ui/app.js`、`src/core/presets.js`、`styles.css`（注释）、`tests/core.test.mjs`、`GridSneaker.html`（构建产物重新生成）。
+- **得分排行榜归入统计模块**：「本地得分排行榜」原为侧边面板的独立分组，现并入「统计模块」内部
+  （与「坐标筛选查询」同级），成绩属于统计结论的留档，与统计口径同处一处更易查找；`renderScoreboardList` 的局部刷新机制不变。
 
 ### 测试
 

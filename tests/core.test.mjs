@@ -258,7 +258,7 @@ section('边界行为');
 }
 
 /* ---------- 默认边界行为：穿越到另一侧 ---------- */
-section('默认游戏模式：边界行为为「穿越到另一侧」');
+section('默认配置：边界行为为「穿越到另一侧」');
 {
   eq(defaultConfig().grid.boundary, 'wrap', 'defaultConfig 的边界行为默认为穿越到另一侧');
 
