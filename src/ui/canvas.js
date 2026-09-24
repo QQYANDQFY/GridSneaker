@@ -47,7 +47,7 @@ export const STYLE_DEFAULTS = {
 const EFFECT_LOOKBACK = 6;
 
 /** 交互特效类型（由模拟层写入 frame.highlights） */
-const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath']);
+const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap']);
 
 /** 轨迹渐隐的色阶数：把连续渐变量化成有限档，合并同档线段一次描边（长轨迹下显著减少绘制调用） */
 const FADE_BUCKETS = 16;
@@ -836,51 +836,104 @@ export class Renderer {
    * 体节中心坐标：b 为下一帧的同一移动体，alpha ∈ [0,1) 为帧间进度。
    *
    * 边界穿越（wrap）时相邻两帧的格坐标会「瞬移」到对侧，若直接线性插值，
-   * 体节会贴着整张画面横扫过去（错误闪现）。这里按「环绕最短位移」解算落点：
-   *  - 未环绕的落点用于插值，体节只做一格内的位移，平滑滑出边界；
-   *  - 环绕平移量记为镜像偏移（gx/gy），供绘制时在对侧补画同步滑入的体节。
+   * 体节会贴着整张画面横扫过去（错误闪现）。这里分三步解算：
+   *  1) 先把本帧体节链解算成「连续展开坐标」：以蛇头所在格为锚点，沿链逐节累加环绕最短位移。
+   *     展开坐标下相邻两节永远只差一格，因此整条蛇身在任何进度下都是一条连续的链，
+   *     不会出现某几节被单独插值到对侧、与其余体节相隔整张画面（体节视觉分离 / 孤立体节）。
+   *  2) 每节按「展开坐标 → 加上本步环绕最短位移」插值，单步位移始终不超过一格，
+   *     体节平滑滑出边界，而不会横穿画面。
+   *  3) 整条链再按网格周期平移出镜像副本（见 periodicRuns），与本体同步滑入 / 滑出。
+   *     相邻两帧的位移不足一圈时，展开坐标下的落点与真实落点之差即环绕平移量，
+   *     记为镜像偏移（gx / gy）供外部查询。
    *
    * @returns {{pts: Array, ghosts: Array<Array>, headTarget: object|null}}
    */
   agentPoints(a, b, alpha) {
-    const pts = [];
-    const ghosts = [];
     const segsA = a.segments;
     const segsB = b && b.segments.length ? b.segments : null;
+    const pts = [];
     let headTarget = null;
-    let run = [];
+    // 1) 连续展开坐标：锚点为蛇头格，逐节累加与前一节之间的环绕最短位移
+    const un = new Array(segsA.length);
     for (let i = 0; i < segsA.length; i++) {
-      const from = { col: segsA[i][0], row: segsA[i][1] };
+      if (!i) {
+        un[i] = { col: segsA[i][0], row: segsA[i][1] };
+        continue;
+      }
+      const d = this.grid.wrapDelta(
+        { col: segsA[i - 1][0], row: segsA[i - 1][1] },
+        { col: segsA[i][0], row: segsA[i][1] },
+      );
+      un[i] = { col: un[i - 1].col + d.dc, row: un[i - 1].row + d.dr };
+    }
+    for (let i = 0; i < segsA.length; i++) {
+      const from = un[i];
       const pa = this.center(from);
       const p = { x: pa.x, y: pa.y, gi: i };
       if (segsB && alpha > 0) {
         const s = segsB[Math.min(i, segsB.length - 1)];
         const to = { col: s[0], row: s[1] };
-        const d = this.grid.wrapDelta(from, to);
+        const d = this.grid.wrapDelta({ col: segsA[i][0], row: segsA[i][1] }, to);
         const target = this.center({ col: from.col + d.dc, row: from.row + d.dr });
         p.x += (target.x - pa.x) * alpha;
         p.y += (target.y - pa.y) * alpha;
         if (i === 0) headTarget = target;
         // 真实落点与未环绕落点不一致，说明本步穿越了边界：
-        // 两者之差即环绕平移量，记录镜像坐标供绘制时在对侧补画
-        if (d.dc !== to.col - from.col || d.dr !== to.row - from.row) {
+        // 两者之差即环绕平移量，记录对侧镜像坐标供外部查询
+        if (d.dc !== to.col - segsA[i][0] || d.dr !== to.row - segsA[i][1]) {
           const real = this.center(to);
           p.gx = p.x + real.x - target.x;
           p.gy = p.y + real.y - target.y;
         }
       }
-      if (p.gx === undefined) {
-        if (run.length) {
-          ghosts.push(run);
-          run = [];
-        }
-      } else {
-        run.push({ x: p.gx, y: p.gy, gi: i });
-      }
       pts.push(p);
     }
-    if (run.length) ghosts.push(run);
-    return { pts, ghosts, headTarget };
+    return { pts, ghosts: this.periodicRuns(pts), headTarget };
+  }
+
+  /**
+   * 体节链的周期镜像副本：把整条链按网格周期（横向 / 纵向）平移，只保留可能与网格区域相交的副本。
+   *
+   * 穿越边界时画面上必须同时看到「滑出的一侧」与「滑入的一侧」。副本取自同一条连续展开的链，
+   * 因此副本自身也是连续的一条蛇身，不会出现脱离蛇身的孤立体节（低速播放时尤其明显）。
+   */
+  periodicRuns(pts) {
+    const out = [];
+    const g = this.grid;
+    if (!pts.length || !g || g.boundary !== 'wrap') return out;
+    const wrapX = g.width > 1;
+    const wrapY = g.height > 1;
+    if (!wrapX && !wrapY) return out;
+    const rect = this.gridRect();
+    // 体节半径 + 描边余量：副本只要有可能露出一角就保留
+    const pad = (this.style.cellSize / 2) * ((this.body && this.body.segmentSize) || 0.82) + 4;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const origin = this.center({ col: 0, row: 0 });
+    const px = this.center({ col: g.width, row: 0 }).x - origin.x;
+    const py = this.center({ col: 0, row: g.height }).y - origin.y;
+    // 周期数由几何关系推出：小网格下窗口可能跨越多个周期，故按需多取几份（上限 ±3 份）
+    const kMin = wrapX ? Math.max(-3, Math.ceil((rect.left - pad - maxX) / px)) : 0;
+    const kMax = wrapX ? Math.min(3, Math.floor((rect.right + pad - minX) / px)) : 0;
+    const lMin = wrapY ? Math.max(-3, Math.ceil((rect.top - pad - maxY) / py)) : 0;
+    const lMax = wrapY ? Math.min(3, Math.floor((rect.bottom + pad - minY) / py)) : 0;
+    for (let k = kMin; k <= kMax; k++) {
+      for (let l = lMin; l <= lMax; l++) {
+        if (!k && !l) continue; // (0, 0) 即本体，由调用方直接绘制
+        const dx = k * px;
+        const dy = l * py;
+        out.push(pts.map((p) => ({ x: p.x + dx, y: p.y + dy, gi: p.gi })));
+      }
+    }
+    return out;
   }
 
   /**
@@ -1004,7 +1057,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d' };
+    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0' };
     for (let fi = start; fi <= frameIndex; fi++) {
       const f = frames[fi];
       if (!f || !f.highlights) continue;
@@ -1015,6 +1068,9 @@ export class Renderer {
         if (h.col === undefined || h.row === undefined) continue;
         const p = this.center({ col: h.col, row: h.row });
         const color = h.color || (h.state ? (this.stateColor(h.state) || colors[h.type]) : colors[h.type]) || '#e5e9f0';
+        // 边界穿越：沿进出方向在网格内补一段渐隐的「穿梭」光带，
+        // 让「从对侧滑入」在画面上有明确的方向感
+        if (h.type === 'wrap') this.drawWrapStreak(p, h, t, cellSize, color);
         ctx.save();
         ctx.globalAlpha = 0.15 + 0.6 * t;
         ctx.strokeStyle = color;
@@ -1026,6 +1082,44 @@ export class Renderer {
         ctx.restore();
       }
     }
+  }
+
+  /**
+   * 边界穿越的「穿梭」光带：从落点格朝进入方向画一段由粗到细、由亮到暗的拖尾。
+   *
+   * 落点格位于网格边缘，进入方向指向网格内部，因此光带不会溢出网格区域；
+   * 仍按网格矩形裁剪一次，避免极端样式下越界。
+   */
+  drawWrapStreak(p, h, t, cellSize, color) {
+    if (h.fromCol === undefined || h.fromRow === undefined) return;
+    const from = this.center({ col: h.fromCol, row: h.fromRow });
+    const dx = p.x - from.x;
+    const dy = p.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (!len) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const reach = cellSize * (0.85 + 0.95 * (1 - t));
+    const steps = 6;
+    const ctx = this.ctx;
+    const rect = this.gridRect();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < steps; i++) {
+      const a0 = (i / steps) * reach;
+      const a1 = ((i + 0.75) / steps) * reach;
+      ctx.globalAlpha = Math.max(0, (0.5 - i * 0.075) * (0.35 + 0.65 * t));
+      ctx.lineWidth = Math.max(1, cellSize * 0.26 * (1 - i / steps) * (0.5 + 0.5 * t));
+      ctx.beginPath();
+      ctx.moveTo(p.x + ux * a0, p.y + uy * a0);
+      ctx.lineTo(p.x + ux * a1, p.y + uy * a1);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   drawArrow(a, cellSize) {

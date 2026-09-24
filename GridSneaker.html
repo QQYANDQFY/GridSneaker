@@ -528,6 +528,15 @@ html, body {
 }
 .end-label.ended { color: var(--warn); }
 
+/* ---------------- 得分与难度 ---------------- */
+
+.score-label {
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.score-label.record { color: #ffd166; }
+
 /* ---------------- Toast ---------------- */
 
 .toast-box {
@@ -646,7 +655,7 @@ html, body {
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.1.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.2.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -5110,6 +5119,150 @@ class RuleEngine {
 return { RuleEngine, SUBJECT_LABELS, TRIGGER_LABELS };
 })();
 
+/* ===== src/core/score.js ===== */
+__MODULES["src/core/score.js"] = (function () {
+/**
+ * 得分系统
+ * 把一轮运行的统计量折算成「总分 + 分项 + 等级」，供界面展示与最高分比较。
+ *
+ * 设计原则：
+ *  - 纯函数：只读取统计量 / 网格 / 结束原因，不产生副作用，便于离线回归测试；
+ *  - 分项透明：成长 / 探索 / 存活 / 交互 / 收尾奖励 / 碰撞罚分，每项都能单独解释；
+ *  - 尺寸无关：等级按「总分 ÷ 网格格数」的相对分折算，不同地图尺寸之间可横向比较。
+ */
+
+/**
+ * 结束原因的收尾奖励分。
+ * 只有「正向收尾」（达成目标而结束）给奖励；失败收尾不再额外扣分——罚分已由碰撞项体现。
+ */
+const END_BONUS = {
+  lengthReached: 250,
+  coverage: 350,
+  maxSteps: 60,
+  caStable: 80,
+  ruleEnd: 40,
+  frameLimit: 0,
+  allAgentsGone: 0,
+  noMove: 0,
+  obstacle: 0,
+  selfCollision: 0,
+  selfCollisionTotal: 0,
+  selfCollisionConsecutive: 0,
+  wall: 0,
+  outOfBounds: 0,
+  maxTime: 0,
+};
+
+/** 等级阈值（相对分 = 总分 / 网格格数），从高到低匹配第一个满足项 */
+const GRADE_THRESHOLDS = [
+  { grade: 'S', ratio: 1.9, label: 'S · 完美' },
+  { grade: 'A', ratio: 1.25, label: 'A · 优秀' },
+  { grade: 'B', ratio: 0.75, label: 'B · 良好' },
+  { grade: 'C', ratio: 0.4, label: 'C · 及格' },
+  { grade: 'D', ratio: -Infinity, label: 'D · 待改进' },
+];
+
+/** 各分项的权重（集中定义，便于调整与解释） */
+const SCORE_WEIGHTS = {
+  growth: 12,
+  explore: 6,
+  endurance: 0.8,
+  marker: 15,
+  merge: 25,
+  repel: 5,
+  spawn: 10,
+  collision: 3,
+  selfCollision: 8,
+};
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round(v) {
+  return Math.round(num(v));
+}
+
+/** 数字千分位格式化（不依赖 Intl，保证任何环境下输出一致） */
+function formatScore(n) {
+  const v = Math.round(num(n));
+  return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * 按总分与网格格数判定等级。
+ * @returns {{grade: string, label: string, ratio: number}}
+ */
+function gradeFor(total, grid) {
+  const size = Math.max(1, num(grid && grid.size) || 1);
+  const ratio = num(total) / size;
+  const hit = GRADE_THRESHOLDS.find((g) => ratio >= g.ratio) || GRADE_THRESHOLDS[GRADE_THRESHOLDS.length - 1];
+  return { grade: hit.grade, label: hit.label, ratio };
+}
+
+/**
+ * 计算得分分项。
+ * @param {object} stats 运行统计量（simulation.js 的 stats 对象）
+ * @param {object} grid  网格（取 size 作为等级基准）
+ * @param {object|null} endReason 结束原因（含 code）
+ * @returns {Array<{key: string, label: string, value: number, detail: string}>}
+ */
+function scoreParts(stats, grid, endReason) {
+  const s = stats || {};
+  const w = SCORE_WEIGHTS;
+  const maxLength = round(s.maxLength);
+  const coverage = num(s.coverage);
+  const steps = round(s.steps);
+  const markers = round(s.markerInteractions);
+  const merges = round(s.merges);
+  const repels = round(s.repels);
+  const spawns = round(s.spawns);
+  const collisions = round(s.collisionsTotal ?? s.collisions);
+  const selfCollisions = round(s.selfCollisions);
+  const code = endReason && endReason.code ? endReason.code : null;
+  const bonus = code && END_BONUS[code] !== undefined ? END_BONUS[code] : 0;
+  return [
+    { key: 'growth', label: '成长', value: maxLength * w.growth, detail: `最大长度 ${maxLength} × ${w.growth}` },
+    { key: 'explore', label: '探索', value: Math.round(coverage * w.explore), detail: `覆盖率 ${coverage.toFixed(1)}% × ${w.explore}` },
+    { key: 'endurance', label: '存活', value: Math.round(steps * w.endurance), detail: `${steps} 步 × ${w.endurance}` },
+    {
+      key: 'interaction',
+      label: '交互',
+      value: markers * w.marker + merges * w.merge + repels * w.repel + spawns * w.spawn,
+      detail: `标记物 ${markers} · 融合 ${merges} · 排斥 ${repels} · 生成 ${spawns}`,
+    },
+    { key: 'bonus', label: '收尾奖励', value: bonus, detail: code ? `结束于「${code}」` : '未结束（达到帧上限）' },
+    {
+      key: 'penalty',
+      label: '碰撞罚分',
+      value: -(collisions * w.collision + selfCollisions * w.selfCollision),
+      detail: `碰撞 ${collisions} × ${w.collision} + 自撞 ${selfCollisions} × ${w.selfCollision}`,
+    },
+  ];
+}
+
+/**
+ * 计算完整得分结果。
+ * @returns {{total: number, grade: string, gradeLabel: string, ratio: number, parts: Array, endCode: string|null}}
+ */
+function computeScore(stats, grid, endReason) {
+  const parts = scoreParts(stats, grid, endReason);
+  const raw = parts.reduce((sum, p) => sum + p.value, 0);
+  const total = Math.max(0, Math.round(raw));
+  const g = gradeFor(total, grid);
+  return {
+    total,
+    grade: g.grade,
+    gradeLabel: g.label,
+    ratio: g.ratio,
+    parts,
+    endCode: endReason && endReason.code ? endReason.code : null,
+  };
+}
+return { computeScore, formatScore };
+})();
+
 /* ===== src/core/simulation.js ===== */
 __MODULES["src/core/simulation.js"] = (function () {
 /**
@@ -5127,6 +5280,7 @@ const { RuleEngine } = __MODULES["src/core/rules.js"];
 const { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled } = __MODULES["src/core/config.js"];
 const { resolveTurn, occupiedByAgent, findSpawnCoord } = __MODULES["src/core/actions.js"];
 const { evaluateCondition } = __MODULES["src/core/conditions.js"];
+const { computeScore } = __MODULES["src/core/score.js"];
 
 /** 单次运行默认的安全帧上限（未启用「达到步数上限」时的保护值，可由界面「继续运行」递增） */
 const DEFAULT_FRAME_CAP = 20000;
@@ -5460,6 +5614,8 @@ class Simulation {
         merges: stats.merges,
         endReason: endReason ? endReason.label : '未结束（达到帧上限）',
         finalLength: frameStats.length ?? stats.length,
+        /** 得分系统：总分 / 等级 / 分项，由 core/score.js 纯函数折算 */
+        score: computeScore(stats, grid, endReason),
       },
     };
   }
@@ -5560,7 +5716,19 @@ class Simulation {
       outOfBounds = true;
       const mode = cfg.grid.boundary;
       if (mode === 'wrap') {
+        // 记录穿越：起始格在网格外（滑出的一侧），落点格在对侧（滑入的一侧）。
+        // 渲染层据此绘制「穿梭」特效，让边界穿越在画面上可见。
+        const exit = { ...target };
         target = grid.wrap(target);
+        ctx.highlights.push({
+          col: target.col,
+          row: target.row,
+          type: 'wrap',
+          fromCol: exit.col,
+          fromRow: exit.row,
+          dir,
+          agentId: agent.id,
+        });
       } else if (mode === 'bounce') {
         dir = grid.opposite(dir);
         const t2 = grid.step(agent.head, dir);
@@ -5569,8 +5737,8 @@ class Simulation {
       } else if (mode === 'randomTurn') {
         const options = [];
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (grid.inBounds(t) && !this.isBlocked(ctx, t)) options.push({ d, t });
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (c.ok && !this.isBlocked(ctx, c.coord)) options.push({ d, t: c.coord });
         }
         if (options.length) {
           const pick = rng.pick(options);
@@ -5584,8 +5752,8 @@ class Simulation {
         engine.run('onBoundary', ctx, { sync: false });
         if (ctx.pending.forcedTurns.length) {
           dir = resolveTurn(ctx.pending.forcedTurns[0].turn, agent, grid, rng);
-          const t2 = grid.step(agent.head, dir);
-          if (grid.inBounds(t2)) target = t2;
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+          if (c.ok) target = c.coord;
           else wallHit = true;
         } else {
           wallHit = true;
@@ -5629,8 +5797,8 @@ class Simulation {
       } else if (policy === 'turn') {
         const options = [];
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (grid.inBounds(t) && !this.isBlocked(ctx, t)) options.push({ d, t });
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (c.ok && !this.isBlocked(ctx, c.coord)) options.push({ d, t: c.coord });
         }
         if (options.length) {
           const pick = rng.pick(options);
@@ -5686,9 +5854,9 @@ class Simulation {
       const stopReason = { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } };
       if (ctx.pending.forcedTurns.length) {
         dir = resolveTurn(ctx.pending.forcedTurns[0].turn, agent, grid, rng);
-        const t2 = grid.step(agent.head, dir);
-        if (grid.inBounds(t2) && !this.detectCollision(ctx, agent, t2, false) && !ctx.world.isBlocking(t2)) {
-          target = t2;
+        const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+        if (c.ok && !this.detectCollision(ctx, agent, c.coord, false) && !ctx.world.isBlocking(c.coord)) {
+          target = c.coord;
         }
       } else {
         switch (policy.action) {
@@ -5704,8 +5872,8 @@ class Simulation {
             const options = [];
             for (let d = 0; d < grid.dirCount; d++) {
               if (d === grid.opposite(dir)) continue;
-              const t = grid.step(agent.head, d);
-              if (grid.inBounds(t) && !this.detectCollision(ctx, agent, t, false) && !ctx.world.isBlocking(t)) options.push({ d, t });
+              const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+              if (c.ok && !this.detectCollision(ctx, agent, c.coord, false) && !ctx.world.isBlocking(c.coord)) options.push({ d, t: c.coord });
             }
             if (options.length) {
               const pick = rng.pick(options);
@@ -5794,11 +5962,31 @@ class Simulation {
     return ctx.world.isBlocking(coord);
   }
 
-  /** 目标格是否落在自身身体上（不含头部） */
+  /**
+   * 把「可能越界的候选落点」解析为可判定的有效格。
+   *
+   * 边界穿越（wrap）开启时，越界邻居应当环绕回网格另一侧再参与判定；
+   * 否则蛇头位于画布四角等位置时，越界方向会被误判为「不可走」，
+   * 进而错误触发「无路可走」（noMove）。
+   *
+   * @returns {{coord: object|null, ok: boolean, wrapped: boolean}}
+   *          ok=false 表示该落点在当前边界策略下不可达（如撞墙 / 反弹无路）。
+   */
+  resolveCandidate(ctx, coord) {
+    const grid = ctx.grid;
+    if (grid.inBounds(coord)) return { coord, ok: true, wrapped: false };
+    if (ctx.config.grid.boundary === 'wrap') {
+      return { coord: grid.wrap(coord), ok: true, wrapped: true };
+    }
+    return { coord: null, ok: false, wrapped: false };
+  }
+
+  /** 目标格是否落在自身身体上（不含头部），兼容边界穿越 */
   selfBlocks(ctx, agent, target) {
     const grid = ctx.grid;
-    if (!grid.inBounds(target)) return false;
-    const index = grid.idx(target.col, target.row);
+    const c = this.resolveCandidate(ctx, target);
+    if (!c.ok) return false;
+    const index = grid.idx(c.coord.col, c.coord.row);
     for (let i = 1; i < agent.segments.length; i++) {
       if (grid.idx(agent.segments[i].col, agent.segments[i].row) === index) return true;
     }
@@ -5821,8 +6009,12 @@ class Simulation {
     for (const o of options) {
       if (o.weight <= 0) continue;
       const dir = o.dir !== undefined ? o.dir : resolveTurn(o.key, agent, grid, ctx.rng);
-      const target = grid.step(agent.head, dir);
-      if (s.avoidObstacle && grid.inBounds(target) && ctx.world.isBlocking(target)) continue;
+      // 边界穿越开启时，越界候选先环绕回网格内再判定，避免四角位置被误剔；
+      // 非穿越边界下越界候选仍照旧保留，交由后续撞墙 / 反弹逻辑处理。
+      const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+      if (!c.ok) { out.push({ ...o, dir }); continue; }
+      const target = c.coord;
+      if (s.avoidObstacle && ctx.world.isBlocking(target)) continue;
       if (s.avoidBody && this.selfBlocks(ctx, agent, target)) continue;
       if (avoidOthers && occupiedByAgent(ctx, target, agent)) continue;
       out.push({ ...o, dir });
@@ -6218,9 +6410,12 @@ class Simulation {
       allAgentsGone: () => ctx.agents.filter((a) => a.alive).length === 0 && (stats.agentDeaths || 0) > 0,
       noMove: () => {
         if (!agent) return false;
+        // 必须兼容边界穿越：越界邻居在 wrap 下应环绕回网格另一侧再判定，
+        // 否则蛇头位于画布四角时所有方向都被跳过，会误判「无路可走」。
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (!grid.inBounds(t)) continue;
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (!c.ok) continue;
+          const t = c.coord;
           if (this.isBlocked(ctx, t)) continue;
           if (this.detectCollision(ctx, agent, t, false)) continue;
           return false;
@@ -6269,6 +6464,10 @@ class Simulation {
         state: h.state,
         ruleId: h.ruleId,
         color: h.color,
+        // 边界穿越特效需要「滑出侧坐标」，渲染层才能解出穿梭方向
+        fromCol: h.fromCol,
+        fromRow: h.fromRow,
+        dir: h.dir,
       })),
       collisions: events.filter((e) => ['selfCollision', 'wall', 'obstacle'].includes(e.type)).map((e) => [e.coord.col, e.coord.row]),
       turn,
@@ -6304,6 +6503,70 @@ class Simulation {
   }
 }
 return { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES };
+})();
+
+/* ===== src/core/difficulty.js ===== */
+__MODULES["src/core/difficulty.js"] = (function () {
+/**
+ * 动态难度评估
+ * 根据「当前画面的拥挤程度」给出难度等级与建议的播放速度倍率。
+ *
+ * 纯函数、无副作用：核心只负责评估，是否据此调节播放速度由界面决定
+ * （界面「自适应难度」开关打开时，拥挤度升高会自动放慢播放，给观察留出余量）。
+ */
+
+/** 难度等级表：min 为拥挤度下限，speedScale 为建议播放速度倍率 */
+const DIFFICULTY_LEVELS = [
+  { level: 1, label: '轻松', min: 0, speedScale: 1 },
+  { level: 2, label: '正常', min: 0.3, speedScale: 0.85 },
+  { level: 3, label: '紧张', min: 0.55, speedScale: 0.65 },
+  { level: 4, label: '困难', min: 0.75, speedScale: 0.45 },
+  { level: 5, label: '绝境', min: 0.9, speedScale: 0.3 },
+];
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+/**
+ * 拥挤度：0（空旷）~ 1（几乎占满）。
+ * 由「已探索覆盖率」「蛇身长度占地图比例」「同时存活的移动体数量」加权得到。
+ */
+function crowdingOf(stats, grid) {
+  const s = stats || {};
+  const size = Math.max(1, num(grid && grid.size) || 1);
+  const cover = clamp01(num(s.coverage) / 100);
+  const body = clamp01(num(s.length) / size);
+  const agents = clamp01((Math.max(1, num(s.agents)) - 1) / 6);
+  // 四舍五入到 1e-6：消除浮点累加噪声，保证 0.9 / 1 这类边界值可被等级阈值精确命中
+  return Math.round(clamp01(cover * 0.6 + body * 0.3 + agents * 0.1) * 1e6) / 1e6;
+}
+
+/**
+ * 当前难度：{ level, label, min, speedScale, crowding }
+ */
+function difficultyOf(stats, grid) {
+  const crowding = crowdingOf(stats, grid);
+  let cur = DIFFICULTY_LEVELS[0];
+  for (const l of DIFFICULTY_LEVELS) {
+    if (crowding >= l.min) cur = l;
+  }
+  return { ...cur, crowding };
+}
+
+/**
+ * 自适应播放速度倍率：拥挤时返回更小的倍率（放慢播放）。
+ * 界面用它乘以步长间隔，得到「动态难度」下的实际播放速度。
+ */
+function adaptiveSpeedScale(stats, grid) {
+  return difficultyOf(stats, grid).speedScale;
+}
+return { difficultyOf };
 })();
 
 /* ===== src/ui/canvas.js ===== */
@@ -6357,7 +6620,7 @@ const STYLE_DEFAULTS = {
 const EFFECT_LOOKBACK = 6;
 
 /** 交互特效类型（由模拟层写入 frame.highlights） */
-const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath']);
+const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap']);
 
 /** 轨迹渐隐的色阶数：把连续渐变量化成有限档，合并同档线段一次描边（长轨迹下显著减少绘制调用） */
 const FADE_BUCKETS = 16;
@@ -7146,51 +7409,104 @@ class Renderer {
    * 体节中心坐标：b 为下一帧的同一移动体，alpha ∈ [0,1) 为帧间进度。
    *
    * 边界穿越（wrap）时相邻两帧的格坐标会「瞬移」到对侧，若直接线性插值，
-   * 体节会贴着整张画面横扫过去（错误闪现）。这里按「环绕最短位移」解算落点：
-   *  - 未环绕的落点用于插值，体节只做一格内的位移，平滑滑出边界；
-   *  - 环绕平移量记为镜像偏移（gx/gy），供绘制时在对侧补画同步滑入的体节。
+   * 体节会贴着整张画面横扫过去（错误闪现）。这里分三步解算：
+   *  1) 先把本帧体节链解算成「连续展开坐标」：以蛇头所在格为锚点，沿链逐节累加环绕最短位移。
+   *     展开坐标下相邻两节永远只差一格，因此整条蛇身在任何进度下都是一条连续的链，
+   *     不会出现某几节被单独插值到对侧、与其余体节相隔整张画面（体节视觉分离 / 孤立体节）。
+   *  2) 每节按「展开坐标 → 加上本步环绕最短位移」插值，单步位移始终不超过一格，
+   *     体节平滑滑出边界，而不会横穿画面。
+   *  3) 整条链再按网格周期平移出镜像副本（见 periodicRuns），与本体同步滑入 / 滑出。
+   *     相邻两帧的位移不足一圈时，展开坐标下的落点与真实落点之差即环绕平移量，
+   *     记为镜像偏移（gx / gy）供外部查询。
    *
    * @returns {{pts: Array, ghosts: Array<Array>, headTarget: object|null}}
    */
   agentPoints(a, b, alpha) {
-    const pts = [];
-    const ghosts = [];
     const segsA = a.segments;
     const segsB = b && b.segments.length ? b.segments : null;
+    const pts = [];
     let headTarget = null;
-    let run = [];
+    // 1) 连续展开坐标：锚点为蛇头格，逐节累加与前一节之间的环绕最短位移
+    const un = new Array(segsA.length);
     for (let i = 0; i < segsA.length; i++) {
-      const from = { col: segsA[i][0], row: segsA[i][1] };
+      if (!i) {
+        un[i] = { col: segsA[i][0], row: segsA[i][1] };
+        continue;
+      }
+      const d = this.grid.wrapDelta(
+        { col: segsA[i - 1][0], row: segsA[i - 1][1] },
+        { col: segsA[i][0], row: segsA[i][1] },
+      );
+      un[i] = { col: un[i - 1].col + d.dc, row: un[i - 1].row + d.dr };
+    }
+    for (let i = 0; i < segsA.length; i++) {
+      const from = un[i];
       const pa = this.center(from);
       const p = { x: pa.x, y: pa.y, gi: i };
       if (segsB && alpha > 0) {
         const s = segsB[Math.min(i, segsB.length - 1)];
         const to = { col: s[0], row: s[1] };
-        const d = this.grid.wrapDelta(from, to);
+        const d = this.grid.wrapDelta({ col: segsA[i][0], row: segsA[i][1] }, to);
         const target = this.center({ col: from.col + d.dc, row: from.row + d.dr });
         p.x += (target.x - pa.x) * alpha;
         p.y += (target.y - pa.y) * alpha;
         if (i === 0) headTarget = target;
         // 真实落点与未环绕落点不一致，说明本步穿越了边界：
-        // 两者之差即环绕平移量，记录镜像坐标供绘制时在对侧补画
-        if (d.dc !== to.col - from.col || d.dr !== to.row - from.row) {
+        // 两者之差即环绕平移量，记录对侧镜像坐标供外部查询
+        if (d.dc !== to.col - segsA[i][0] || d.dr !== to.row - segsA[i][1]) {
           const real = this.center(to);
           p.gx = p.x + real.x - target.x;
           p.gy = p.y + real.y - target.y;
         }
       }
-      if (p.gx === undefined) {
-        if (run.length) {
-          ghosts.push(run);
-          run = [];
-        }
-      } else {
-        run.push({ x: p.gx, y: p.gy, gi: i });
-      }
       pts.push(p);
     }
-    if (run.length) ghosts.push(run);
-    return { pts, ghosts, headTarget };
+    return { pts, ghosts: this.periodicRuns(pts), headTarget };
+  }
+
+  /**
+   * 体节链的周期镜像副本：把整条链按网格周期（横向 / 纵向）平移，只保留可能与网格区域相交的副本。
+   *
+   * 穿越边界时画面上必须同时看到「滑出的一侧」与「滑入的一侧」。副本取自同一条连续展开的链，
+   * 因此副本自身也是连续的一条蛇身，不会出现脱离蛇身的孤立体节（低速播放时尤其明显）。
+   */
+  periodicRuns(pts) {
+    const out = [];
+    const g = this.grid;
+    if (!pts.length || !g || g.boundary !== 'wrap') return out;
+    const wrapX = g.width > 1;
+    const wrapY = g.height > 1;
+    if (!wrapX && !wrapY) return out;
+    const rect = this.gridRect();
+    // 体节半径 + 描边余量：副本只要有可能露出一角就保留
+    const pad = (this.style.cellSize / 2) * ((this.body && this.body.segmentSize) || 0.82) + 4;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const origin = this.center({ col: 0, row: 0 });
+    const px = this.center({ col: g.width, row: 0 }).x - origin.x;
+    const py = this.center({ col: 0, row: g.height }).y - origin.y;
+    // 周期数由几何关系推出：小网格下窗口可能跨越多个周期，故按需多取几份（上限 ±3 份）
+    const kMin = wrapX ? Math.max(-3, Math.ceil((rect.left - pad - maxX) / px)) : 0;
+    const kMax = wrapX ? Math.min(3, Math.floor((rect.right + pad - minX) / px)) : 0;
+    const lMin = wrapY ? Math.max(-3, Math.ceil((rect.top - pad - maxY) / py)) : 0;
+    const lMax = wrapY ? Math.min(3, Math.floor((rect.bottom + pad - minY) / py)) : 0;
+    for (let k = kMin; k <= kMax; k++) {
+      for (let l = lMin; l <= lMax; l++) {
+        if (!k && !l) continue; // (0, 0) 即本体，由调用方直接绘制
+        const dx = k * px;
+        const dy = l * py;
+        out.push(pts.map((p) => ({ x: p.x + dx, y: p.y + dy, gi: p.gi })));
+      }
+    }
+    return out;
   }
 
   /**
@@ -7314,7 +7630,7 @@ class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d' };
+    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0' };
     for (let fi = start; fi <= frameIndex; fi++) {
       const f = frames[fi];
       if (!f || !f.highlights) continue;
@@ -7325,6 +7641,9 @@ class Renderer {
         if (h.col === undefined || h.row === undefined) continue;
         const p = this.center({ col: h.col, row: h.row });
         const color = h.color || (h.state ? (this.stateColor(h.state) || colors[h.type]) : colors[h.type]) || '#e5e9f0';
+        // 边界穿越：沿进出方向在网格内补一段渐隐的「穿梭」光带，
+        // 让「从对侧滑入」在画面上有明确的方向感
+        if (h.type === 'wrap') this.drawWrapStreak(p, h, t, cellSize, color);
         ctx.save();
         ctx.globalAlpha = 0.15 + 0.6 * t;
         ctx.strokeStyle = color;
@@ -7336,6 +7655,44 @@ class Renderer {
         ctx.restore();
       }
     }
+  }
+
+  /**
+   * 边界穿越的「穿梭」光带：从落点格朝进入方向画一段由粗到细、由亮到暗的拖尾。
+   *
+   * 落点格位于网格边缘，进入方向指向网格内部，因此光带不会溢出网格区域；
+   * 仍按网格矩形裁剪一次，避免极端样式下越界。
+   */
+  drawWrapStreak(p, h, t, cellSize, color) {
+    if (h.fromCol === undefined || h.fromRow === undefined) return;
+    const from = this.center({ col: h.fromCol, row: h.fromRow });
+    const dx = p.x - from.x;
+    const dy = p.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (!len) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const reach = cellSize * (0.85 + 0.95 * (1 - t));
+    const steps = 6;
+    const ctx = this.ctx;
+    const rect = this.gridRect();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < steps; i++) {
+      const a0 = (i / steps) * reach;
+      const a1 = ((i + 0.75) / steps) * reach;
+      ctx.globalAlpha = Math.max(0, (0.5 - i * 0.075) * (0.35 + 0.65 * t));
+      ctx.lineWidth = Math.max(1, cellSize * 0.26 * (1 - i / steps) * (0.5 + 0.5 * t));
+      ctx.beginPath();
+      ctx.moveTo(p.x + ux * a0, p.y + uy * a0);
+      ctx.lineTo(p.x + ux * a1, p.y + uy * a1);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   drawArrow(a, cellSize) {
@@ -8378,6 +8735,8 @@ const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultActio
 const { defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText, trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS, TRAIL_QUERY_LOGICS, TRAIL_QUERY_LOGIC_LABELS, snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText } = __MODULES["src/core/trail.js"];
 const { PRESETS, buildPresetConfig, matchPreset } = __MODULES["src/core/presets.js"];
 const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } = __MODULES["src/core/simulation.js"];
+const { formatScore } = __MODULES["src/core/score.js"];
+const { difficultyOf } = __MODULES["src/core/difficulty.js"];
 const { Renderer } = __MODULES["src/ui/canvas.js"];
 const { dirNames, DIR_LABEL_CN: DIR_LABELS } = __MODULES["src/core/grid.js"];
 const { stateLabel, stateLabelWithKey } = __MODULES["src/core/world.js"];
@@ -8477,6 +8836,12 @@ const state = {
   trailSnapshot: null,
   /** 多轨迹对比：基准快照与当前运行结果的坐标差异 */
   compareDiff: null,
+  /** 自适应难度：拥挤时自动放慢播放速度 */
+  adaptive: false,
+  /** 本轮运行的得分（总分 / 等级），由 summary.score 得到 */
+  score: null,
+  /** 当前地图的最高分（按网格类型 / 尺寸 / 边界策略区分） */
+  highScore: 0,
 };
 
 const els = {};
@@ -8535,12 +8900,14 @@ function init() {
   if (legacyHint) legacyHint.className = 'hidden';
 }
 
-/** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
+/** 键盘快捷键：空格播放/暂停，← → 单步（Shift 加速跳 10 帧），Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
 function bindKeyboard() {
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    /** Shift 组合键用于「大步长」跳帧 */
+    const jump = e.shiftKey ? 10 : 1;
     switch (e.key) {
       case ' ':
         e.preventDefault();
@@ -8550,12 +8917,13 @@ function bindKeyboard() {
       case 'ArrowLeft':
         e.preventDefault();
         pause();
-        gotoFrame(state.frameIndex - 1);
+        gotoFrame(state.frameIndex - jump);
         break;
       case 'ArrowRight':
         e.preventDefault();
         pause();
-        if (advance()) frameChanged();
+        if (e.shiftKey) gotoFrame(state.frameIndex + jump);
+        else if (advance()) frameChanged();
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -8575,6 +8943,26 @@ function bindKeyboard() {
         pause();
         gotoFrame(state.result ? state.result.frames.length - 1 : 0);
         break;
+      case '-':
+      case '_':
+        e.preventDefault();
+        setSpeed(state.cfg.speed / 2);
+        break;
+      case '=':
+      case '+':
+        e.preventDefault();
+        setSpeed(state.cfg.speed * 2);
+        break;
+      case 'r':
+      case 'R':
+        e.preventDefault();
+        pause();
+        gotoFrame(0);
+        break;
+      case 'Escape':
+        e.preventDefault();
+        pause();
+        break;
       default:
         break;
     }
@@ -8583,13 +8971,25 @@ function bindKeyboard() {
 
 /** 按倍率微调播放速度，并同步控制条上的滑块与数值框 */
 function nudgeSpeed(factor) {
-  const cur = state.cfg.speed;
-  const next = Math.max(0.5, Math.min(120, Math.round(cur * factor * 2) / 2));
-  if (next === cur) return;
+  setSpeed(state.cfg.speed * factor);
+}
+
+/** 直接设定播放速度：收敛到 [0.5, 120] 并取 0.5 的整数倍，同步滑块 / 数值框 / 标签 */
+function setSpeed(v) {
+  const next = Math.max(0.5, Math.min(120, Math.round(Number(v) * 2) / 2));
+  if (!Number.isFinite(next) || next === state.cfg.speed) return;
   state.cfg.speed = next;
   if (els.speedSlider) els.speedSlider.value = String(next);
   if (els.speedNum) els.speedNum.value = String(next);
   updateSpeedLabel();
+}
+
+/** 当前播放位置的难度评估：用于自适应调速与难度指示 */
+function currentDifficulty() {
+  const r = state.result;
+  if (!r || !r.frames.length) return difficultyOf({}, null);
+  const f = r.frames[statFrameIndex()];
+  return difficultyOf(f ? f.stats : r.stats, r.grid);
 }
 
 /**
@@ -8653,6 +9053,10 @@ function loadLocalConfig() {
 const TRAIL_QUERY_KEY = 'gridsneaker:trail-query';
 const TRAIL_MODE_KEY = 'gridsneaker:stat-mode';
 const TRAIL_PRESET_KEY = 'gridsneaker:trail-presets';
+/** 自适应难度开关 */
+const ADAPTIVE_KEY = 'gridsneaker:adaptive-speed';
+/** 最高分记录：按地图指纹分别保存，避免不同网格尺寸互相覆盖 */
+const HIGH_SCORE_KEY = 'gridsneaker:high-score';
 /** 预设数量上限，超出后按保存顺序淘汰最早的 */
 const TRAIL_PRESET_LIMIT = 20;
 
@@ -8685,6 +9089,60 @@ function loadTrailState() {
     /* 忽略读取失败 */
   }
   state.trailPresets = loadTrailPresets();
+  state.adaptive = loadAdaptive();
+}
+
+/* ---------------- 得分系统：最高分与自适应难度的本地持久化 ---------------- */
+
+/** 地图指纹：同一张地图（类型 / 尺寸 / 边界策略）共用一份最高分记录 */
+function gridSignature(grid) {
+  if (!grid) return 'unknown';
+  return `${grid.type}-${grid.width}x${grid.height}-${grid.boundary}`;
+}
+
+/** 读取当前地图指纹对应的最高分 */
+function loadHighScore(grid) {
+  try {
+    const raw = localStorage.getItem(HIGH_SCORE_KEY);
+    if (!raw) return 0;
+    const map = JSON.parse(raw);
+    const v = Number(map && map[gridSignature(grid)]);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** 记录最高分：仅当超过历史记录时写盘，返回是否刷新了记录 */
+function saveHighScore(grid, total) {
+  const key = gridSignature(grid);
+  try {
+    const raw = localStorage.getItem(HIGH_SCORE_KEY);
+    const map = raw ? (JSON.parse(raw) || {}) : {};
+    const prev = Number(map[key]) || 0;
+    if (total <= prev) return false;
+    map[key] = total;
+    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(map));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function loadAdaptive() {
+  try {
+    return localStorage.getItem(ADAPTIVE_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveAdaptive(v) {
+  try {
+    localStorage.setItem(ADAPTIVE_KEY, v ? '1' : '0');
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
 }
 
 function loadTrailPresets() {
@@ -8798,6 +9256,14 @@ function recompute(opts = {}) {
   state.result = result;
   state.dirty = false;
   state.frameIndex = Math.min(state.frameIndex, result.frames.length - 1);
+  // 得分系统：结算本轮得分并刷新该地图的最高分记录
+  state.score = result.summary.score || null;
+  state.highScore = loadHighScore(result.grid);
+  let brokeRecord = false;
+  if (state.score) {
+    brokeRecord = saveHighScore(result.grid, state.score.total);
+    if (brokeRecord) state.highScore = state.score.total;
+  }
   saveLocalConfig(cfg);
   renderer.setResult(result);
   renderer.setStyle(cfg.style, cfg.body);
@@ -8810,6 +9276,7 @@ function recompute(opts = {}) {
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
+  if (brokeRecord && state.score) toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`, 'success');
 }
 
 /**
@@ -8887,7 +9354,9 @@ function loopTick(ts) {
   const dt = Math.min(250, ts - lastTs);
   lastTs = ts;
   acc += dt;
-  const stepMs = 1000 / Math.max(0.5, state.cfg.speed);
+  const baseMs = 1000 / Math.max(0.5, state.cfg.speed);
+  // 自适应难度：拥挤度升高时按难度倍率放慢播放（倍率 0.3~1），给观察留出余量
+  const stepMs = state.adaptive ? baseMs / Math.max(0.05, currentDifficulty().speedScale) : baseMs;
   let guard = 0;
   while (acc >= stepMs && guard++ < 400) {
     acc -= stepMs;
@@ -8981,17 +9450,40 @@ function buildControls() {
   els.endJumpBtn = button('查看结束规则', () => focusEndReason(), 'ghost small');
   els.continueBtn = button('继续运行 +' + DEFAULT_FRAME_CAP, () => continueRun(), 'primary small');
 
+  // 得分系统：本轮得分 / 等级 / 该地图的最高分
+  els.scoreLabel = h('span', { class: 'score-label' }, '得分：尚未运行');
+  // 动态难度：拥挤度与难度等级指示
+  els.diffLabel = h('span', { class: 'hint' }, '');
+  // 自适应难度：拥挤时自动放慢播放
+  els.adaptiveChk = checkbox(state.adaptive, (v) => {
+    state.adaptive = v;
+    saveAdaptive(v);
+    updateControls();
+    toast(v ? '已开启自适应难度：拥挤时自动放慢播放' : '已关闭自适应难度', 'info');
+  }, '自适应难度');
+  els.adaptiveChk.title = '拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面';
+
+  // 速度档位：一键切换到常用播放速度
+  const speedBtns = [0.5, 2, 8, 30, 120].map((v) => {
+    const b = button(String(v), () => setSpeed(v), 'ghost small');
+    b.title = `设为 ${v} 步/秒`;
+    return b;
+  });
+
   c.appendChild(h('div', { class: 'controls-line' },
     els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn));
   c.appendChild(h('div', { class: 'controls-line' },
-    els.loopChk, els.autoChk, els.followChk,
+    els.loopChk, els.autoChk, els.followChk, els.adaptiveChk,
     h('span', { class: 'mini-label' }, '速度'), els.speedRange, els.speedLabel));
+  c.appendChild(h('div', { class: 'controls-line' },
+    h('span', { class: 'mini-label' }, '速度档位'), ...speedBtns));
   c.appendChild(h('div', { class: 'controls-line' },
     h('span', { class: 'mini-label' }, '种子'), els.seedInput, els.seedDice));
   c.appendChild(h('div', { class: 'controls-line' }, els.timeline, els.frameLabel));
   c.appendChild(h('div', { class: 'controls-line' }, els.endLabel, els.endJumpBtn, els.continueBtn));
+  c.appendChild(h('div', { class: 'controls-line' }, els.scoreLabel, els.diffLabel));
   c.appendChild(h('div', { class: 'controls-line' },
-    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步 · ↑ ↓ 调速 · Home / End 首末帧')));
+    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步（Shift 跳 10 帧） · ↑ ↓ 调速 · - = 减半/加倍 · Home / End 首末帧 · R 重置 · Esc 暂停')));
   updateSpeedLabel();
 }
 
@@ -9053,6 +9545,22 @@ function updateControls() {
   els.endLabel.className = reason ? 'end-label ended' : 'end-label';
   els.endJumpBtn.disabled = !state.result;
   els.continueBtn.hidden = reason?.code !== 'frameLimit';
+  updateScoreLabel();
+}
+
+/** 刷新得分 / 最高分与当前难度指示 */
+function updateScoreLabel() {
+  if (els.scoreLabel) {
+    const sc = state.score;
+    els.scoreLabel.textContent = sc
+      ? `得分 ${formatScore(sc.total)}（${sc.gradeLabel}） · 最高分 ${formatScore(state.highScore)}`
+      : '得分：尚未运行';
+    els.scoreLabel.classList.toggle('record', !!sc && state.highScore > 0 && sc.total >= state.highScore);
+  }
+  if (els.diffLabel) {
+    const d = currentDifficulty();
+    els.diffLabel.textContent = `难度 ${d.label} · 拥挤度 ${Math.round(d.crowding * 100)}%${state.adaptive ? ' · 自适应调速中' : ''}`;
+  }
 }
 
 /** 隐藏悬浮提示 */
@@ -9124,7 +9632,8 @@ function bindCanvasEvents() {
 
 const STAT_KEYS = [
   ['steps', '步数'], ['framePos', '当前帧 / 总帧数'], ['frames', '缓存帧数'], ['elapsed', '运行耗时'],
-  ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
+  ['endReason', '结束原因 / 本步事件'], ['score', '得分'], ['scoreGrade', '评分等级'],
+  ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
   ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
@@ -9195,6 +9704,9 @@ function statValues() {
       elapsed: formatDuration(r.elapsedMs),
       frames: pick(`${i + 1}${stride}`, `${r.frames.length}${stride}`),
       endReason: pick(f && f.events && f.events.length ? f.events.map(eventLabel).join('、') : '—', s.endReason),
+      // 得分为整轮量：两种口径都展示结束时的结算得分
+      score: formatScore(s.score ? s.score.total : 0),
+      scoreGrade: s.score ? s.score.gradeLabel : '-',
       collisions: pick(st.collisions, s.collisions),
       selfCollisions: pick(st.selfCollisions, s.selfCollisions),
       length: pick(st.length, s.finalLength),

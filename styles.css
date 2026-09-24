@@ -519,6 +519,15 @@ html, body {
 }
 .end-label.ended { color: var(--warn); }
 
+/* ---------------- 得分与难度 ---------------- */
+
+.score-label {
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.score-label.record { color: #ffd166; }
+
 /* ---------------- Toast ---------------- */
 
 .toast-box {

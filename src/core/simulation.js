@@ -13,6 +13,7 @@ import { RuleEngine } from './rules.js';
 import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled } from './config.js';
 import { resolveTurn, occupiedByAgent, findSpawnCoord } from './actions.js';
 import { evaluateCondition } from './conditions.js';
+import { computeScore } from './score.js';
 
 /** 单次运行默认的安全帧上限（未启用「达到步数上限」时的保护值，可由界面「继续运行」递增） */
 export const DEFAULT_FRAME_CAP = 20000;
@@ -346,6 +347,8 @@ export class Simulation {
         merges: stats.merges,
         endReason: endReason ? endReason.label : '未结束（达到帧上限）',
         finalLength: frameStats.length ?? stats.length,
+        /** 得分系统：总分 / 等级 / 分项，由 core/score.js 纯函数折算 */
+        score: computeScore(stats, grid, endReason),
       },
     };
   }
@@ -446,7 +449,19 @@ export class Simulation {
       outOfBounds = true;
       const mode = cfg.grid.boundary;
       if (mode === 'wrap') {
+        // 记录穿越：起始格在网格外（滑出的一侧），落点格在对侧（滑入的一侧）。
+        // 渲染层据此绘制「穿梭」特效，让边界穿越在画面上可见。
+        const exit = { ...target };
         target = grid.wrap(target);
+        ctx.highlights.push({
+          col: target.col,
+          row: target.row,
+          type: 'wrap',
+          fromCol: exit.col,
+          fromRow: exit.row,
+          dir,
+          agentId: agent.id,
+        });
       } else if (mode === 'bounce') {
         dir = grid.opposite(dir);
         const t2 = grid.step(agent.head, dir);
@@ -455,8 +470,8 @@ export class Simulation {
       } else if (mode === 'randomTurn') {
         const options = [];
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (grid.inBounds(t) && !this.isBlocked(ctx, t)) options.push({ d, t });
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (c.ok && !this.isBlocked(ctx, c.coord)) options.push({ d, t: c.coord });
         }
         if (options.length) {
           const pick = rng.pick(options);
@@ -470,8 +485,8 @@ export class Simulation {
         engine.run('onBoundary', ctx, { sync: false });
         if (ctx.pending.forcedTurns.length) {
           dir = resolveTurn(ctx.pending.forcedTurns[0].turn, agent, grid, rng);
-          const t2 = grid.step(agent.head, dir);
-          if (grid.inBounds(t2)) target = t2;
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+          if (c.ok) target = c.coord;
           else wallHit = true;
         } else {
           wallHit = true;
@@ -515,8 +530,8 @@ export class Simulation {
       } else if (policy === 'turn') {
         const options = [];
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (grid.inBounds(t) && !this.isBlocked(ctx, t)) options.push({ d, t });
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (c.ok && !this.isBlocked(ctx, c.coord)) options.push({ d, t: c.coord });
         }
         if (options.length) {
           const pick = rng.pick(options);
@@ -572,9 +587,9 @@ export class Simulation {
       const stopReason = { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } };
       if (ctx.pending.forcedTurns.length) {
         dir = resolveTurn(ctx.pending.forcedTurns[0].turn, agent, grid, rng);
-        const t2 = grid.step(agent.head, dir);
-        if (grid.inBounds(t2) && !this.detectCollision(ctx, agent, t2, false) && !ctx.world.isBlocking(t2)) {
-          target = t2;
+        const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+        if (c.ok && !this.detectCollision(ctx, agent, c.coord, false) && !ctx.world.isBlocking(c.coord)) {
+          target = c.coord;
         }
       } else {
         switch (policy.action) {
@@ -590,8 +605,8 @@ export class Simulation {
             const options = [];
             for (let d = 0; d < grid.dirCount; d++) {
               if (d === grid.opposite(dir)) continue;
-              const t = grid.step(agent.head, d);
-              if (grid.inBounds(t) && !this.detectCollision(ctx, agent, t, false) && !ctx.world.isBlocking(t)) options.push({ d, t });
+              const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+              if (c.ok && !this.detectCollision(ctx, agent, c.coord, false) && !ctx.world.isBlocking(c.coord)) options.push({ d, t: c.coord });
             }
             if (options.length) {
               const pick = rng.pick(options);
@@ -680,11 +695,31 @@ export class Simulation {
     return ctx.world.isBlocking(coord);
   }
 
-  /** 目标格是否落在自身身体上（不含头部） */
+  /**
+   * 把「可能越界的候选落点」解析为可判定的有效格。
+   *
+   * 边界穿越（wrap）开启时，越界邻居应当环绕回网格另一侧再参与判定；
+   * 否则蛇头位于画布四角等位置时，越界方向会被误判为「不可走」，
+   * 进而错误触发「无路可走」（noMove）。
+   *
+   * @returns {{coord: object|null, ok: boolean, wrapped: boolean}}
+   *          ok=false 表示该落点在当前边界策略下不可达（如撞墙 / 反弹无路）。
+   */
+  resolveCandidate(ctx, coord) {
+    const grid = ctx.grid;
+    if (grid.inBounds(coord)) return { coord, ok: true, wrapped: false };
+    if (ctx.config.grid.boundary === 'wrap') {
+      return { coord: grid.wrap(coord), ok: true, wrapped: true };
+    }
+    return { coord: null, ok: false, wrapped: false };
+  }
+
+  /** 目标格是否落在自身身体上（不含头部），兼容边界穿越 */
   selfBlocks(ctx, agent, target) {
     const grid = ctx.grid;
-    if (!grid.inBounds(target)) return false;
-    const index = grid.idx(target.col, target.row);
+    const c = this.resolveCandidate(ctx, target);
+    if (!c.ok) return false;
+    const index = grid.idx(c.coord.col, c.coord.row);
     for (let i = 1; i < agent.segments.length; i++) {
       if (grid.idx(agent.segments[i].col, agent.segments[i].row) === index) return true;
     }
@@ -707,8 +742,12 @@ export class Simulation {
     for (const o of options) {
       if (o.weight <= 0) continue;
       const dir = o.dir !== undefined ? o.dir : resolveTurn(o.key, agent, grid, ctx.rng);
-      const target = grid.step(agent.head, dir);
-      if (s.avoidObstacle && grid.inBounds(target) && ctx.world.isBlocking(target)) continue;
+      // 边界穿越开启时，越界候选先环绕回网格内再判定，避免四角位置被误剔；
+      // 非穿越边界下越界候选仍照旧保留，交由后续撞墙 / 反弹逻辑处理。
+      const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
+      if (!c.ok) { out.push({ ...o, dir }); continue; }
+      const target = c.coord;
+      if (s.avoidObstacle && ctx.world.isBlocking(target)) continue;
       if (s.avoidBody && this.selfBlocks(ctx, agent, target)) continue;
       if (avoidOthers && occupiedByAgent(ctx, target, agent)) continue;
       out.push({ ...o, dir });
@@ -1104,9 +1143,12 @@ export class Simulation {
       allAgentsGone: () => ctx.agents.filter((a) => a.alive).length === 0 && (stats.agentDeaths || 0) > 0,
       noMove: () => {
         if (!agent) return false;
+        // 必须兼容边界穿越：越界邻居在 wrap 下应环绕回网格另一侧再判定，
+        // 否则蛇头位于画布四角时所有方向都被跳过，会误判「无路可走」。
         for (let d = 0; d < grid.dirCount; d++) {
-          const t = grid.step(agent.head, d);
-          if (!grid.inBounds(t)) continue;
+          const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+          if (!c.ok) continue;
+          const t = c.coord;
           if (this.isBlocked(ctx, t)) continue;
           if (this.detectCollision(ctx, agent, t, false)) continue;
           return false;
@@ -1155,6 +1197,10 @@ export class Simulation {
         state: h.state,
         ruleId: h.ruleId,
         color: h.color,
+        // 边界穿越特效需要「滑出侧坐标」，渲染层才能解出穿梭方向
+        fromCol: h.fromCol,
+        fromRow: h.fromRow,
+        dir: h.dir,
       })),
       collisions: events.filter((e) => ['selfCollision', 'wall', 'obstacle'].includes(e.type)).map((e) => [e.coord.col, e.coord.row]),
       turn,

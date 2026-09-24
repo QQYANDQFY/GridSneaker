@@ -20,6 +20,8 @@ import { World, Agent } from '../src/core/world.js';
 import { evaluateClause, describeClause } from '../src/core/conditions.js';
 import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
 import { PRESETS, buildPresetConfig } from '../src/core/presets.js';
+import { computeScore, formatScore, gradeFor } from '../src/core/score.js';
+import { crowdingOf, difficultyOf, adaptiveSpeedScale } from '../src/core/difficulty.js';
 import { Renderer, STYLE_DEFAULTS } from '../src/ui/canvas.js';
 
 let pass = 0;
@@ -1991,6 +1993,204 @@ section('运行计时与分享链接的本地兼容');
     if (saved === undefined) delete globalThis.location;
     else globalThis.location = saved;
   }
+}
+
+/* ---------- 迭代优化：得分系统 / 动态难度 / 边界穿越修复 ---------- */
+
+section('得分系统（总分 / 等级 / 分项）');
+{
+  eq(formatScore(0), '0', '千分位格式：0');
+  eq(formatScore(999), '999', '千分位格式：不足千位不加分隔符');
+  eq(formatScore(1234567), '1,234,567', '千分位格式：百万级正确分组');
+  eq(formatScore(-5), '-5', '千分位格式：负数不产生异常分组');
+
+  const grid = new Grid({ type: 'square', width: 20, height: 20 }); // size = 400
+  const stats = {
+    maxLength: 10, coverage: 25, steps: 100,
+    markerInteractions: 2, merges: 1, repels: 3, spawns: 1,
+    collisionsTotal: 4, selfCollisions: 2,
+  };
+  const s = computeScore(stats, grid, { code: 'coverage' });
+  // growth 10×12=120 + explore 25×6=150 + endurance 100×0.8=80
+  // + interaction 2×15+1×25+3×5+1×10=80 + bonus(coverage)=350 - penalty (4×3+2×8)=28 → 752
+  eq(s.total, 752, '总分按分项权重精确折算');
+  eq(s.parts.length, 6, '得分包含 6 个分项（成长 / 探索 / 存活 / 交互 / 收尾奖励 / 碰撞罚分）');
+  eq(s.parts.find((p) => p.key === 'penalty').value, -28, '碰撞罚分以负值计入');
+  eq(s.endCode, 'coverage', '记录结束原因代码用于收尾奖励');
+
+  const zero = computeScore(
+    { maxLength: 0, coverage: 0, steps: 0, collisionsTotal: 100, selfCollisions: 100 },
+    grid,
+    { code: 'wall' },
+  );
+  eq(zero.total, 0, '罚分超过收益时总分下限为 0，不出现负分');
+
+  eq(gradeFor(760, grid).grade, 'S', '相对分 ≥1.9 判为 S');
+  eq(gradeFor(500, grid).grade, 'A', '相对分 ≥1.25 判为 A');
+  eq(gradeFor(300, grid).grade, 'B', '相对分 ≥0.75 判为 B');
+  eq(gradeFor(160, grid).grade, 'C', '相对分 ≥0.4 判为 C');
+  eq(gradeFor(10, grid).grade, 'D', '低相对分判为 D');
+  ok(gradeFor(760, grid).ratio > gradeFor(500, grid).ratio, '等级判定基于与网格尺寸无关的相对分');
+
+  // 集成：运行结果必须携带结算得分
+  const cfg = defaultConfig();
+  cfg.grid = { ...cfg.grid, type: 'square', width: 16, height: 12, boundary: 'wrap' };
+  cfg.endConditions.maxSteps = 60;
+  cfg.endConditions.wall = false;
+  const r = new Simulation(cfg).run();
+  ok(!!r.summary.score, '运行结果携带结算得分对象');
+  ok(Number.isFinite(r.summary.score.total) && r.summary.score.total >= 0, '结算总分是非负有限数');
+  ok(typeof r.summary.score.gradeLabel === 'string' && r.summary.score.gradeLabel.length > 0, '结算结果携带评分等级标签');
+  ok(computeScore(r.stats, r.grid, r.endReason).total === r.summary.score.total, '同一统计量重复计算得分结果一致（纯函数）');
+}
+
+section('动态难度评估（拥挤度 / 等级 / 自适应倍率）');
+{
+  const grid = new Grid({ type: 'square', width: 20, height: 20 }); // size = 400
+  eq(crowdingOf({ coverage: 0, length: 0, agents: 1 }, grid), 0, '空旷场景拥挤度为 0');
+  near(crowdingOf({ coverage: 100, length: 400, agents: 1 }, grid), 0.9, 1e-9, '单个移动体占满地图时拥挤度为 0.9');
+  eq(crowdingOf({ coverage: 100, length: 400, agents: 7 }, grid), 1, '多移动体同时占满时拥挤度达到上限 1');
+  eq(crowdingOf({ coverage: 999, length: 99999, agents: 99 }, grid), 1, '异常输入被夹取到上限 1');
+  eq(crowdingOf({ coverage: -5, length: -5, agents: 0 }, grid), 0, '异常输入被夹取到下限 0');
+
+  eq(difficultyOf({ coverage: 0, length: 1, agents: 1 }, grid).label, '轻松', '低拥挤度为「轻松」');
+  eq(difficultyOf({ coverage: 100, length: 400, agents: 1 }, grid).label, '绝境', '高拥挤度为「绝境」');
+  eq(difficultyOf({ coverage: 0, length: 0, agents: 1 }, grid).level, 1, '难度等级为 1~5 的整数');
+  eq(difficultyOf({ coverage: 100, length: 400, agents: 1 }, grid).level, 5, '最高难度等级为 5');
+
+  eq(adaptiveSpeedScale({ coverage: 0, length: 0, agents: 1 }, grid), 1, '轻松时不放慢播放');
+  ok(adaptiveSpeedScale({ coverage: 100, length: 400, agents: 1 }, grid) < 0.5, '绝境时显著放慢播放');
+  const scales = [0, 20, 40, 60, 80, 100].map((c) => adaptiveSpeedScale({ coverage: c, length: 0, agents: 1 }, grid));
+  ok(scales.every((v, i) => i === 0 || v <= scales[i - 1]), '播放倍率随拥挤度单调不增（不会越拥挤越快）');
+
+  // 网格为空时不应抛错（界面在尚未运行时也会取一次难度）
+  const empty = difficultyOf({}, null);
+  eq(empty.level, 1, '无网格 / 无统计时回退到最低难度');
+  ok(Number.isFinite(empty.crowding), '无网格时拥挤度为有限数');
+}
+
+section('边界穿越：四角不误判「无路可走」');
+{
+  /** 构造只含边界判定所需字段的上下文（不依赖 World 状态表） */
+  const mkCtx = (sim, segments, blocked) => {
+    const agent = new Agent('main', segments, 1, { label: '主移动体', isMain: true });
+    return {
+      grid: sim.grid,
+      world: {
+        isBlocking: (c) => blocked.has(`${c.col},${c.row}`),
+        get: () => 'empty',
+      },
+      agents: [agent],
+      agent,
+      config: sim.config,
+      rng: new RNG(11),
+      tick: 5,
+      stats: { selfCollisions: 0, selfCollisionsConsecutive: 0, coverage: 0, caStableCount: 0, agentDeaths: 0 },
+      logs: [],
+      log: () => { /* 不收集日志 */ },
+      highlights: [],
+      pending: { forcedTurns: [], lengthDelta: 0, setLength: null, end: null },
+    };
+  };
+
+  // 四角蛇头：界内两个方向被占，越界的两个方向在 wrap 下应环绕到对侧
+  const wrapCfg = defaultConfig();
+  wrapCfg.grid = { type: 'square', width: 4, height: 4, boundary: 'wrap' };
+  wrapCfg.endConditions.noMove = true;
+  const wrapSim = new Simulation(wrapCfg);
+  const cornerBlocked = new Set(['1,0', '0,1']);
+
+  // resolveCandidate：wrap 下越界坐标环绕回网格内并被判定为可达
+  const probe = { grid: wrapSim.grid, config: wrapSim.config };
+  const up = wrapSim.resolveCandidate(probe, { col: -1, row: 0 });
+  eq(`${up.ok}:${up.coord.col},${up.coord.row}:${up.wrapped}`, 'true:3,0:true', 'wrap：越界坐标环绕回对侧且标记为环绕');
+  const left = wrapSim.resolveCandidate(probe, { col: 0, row: -1 });
+  eq(`${left.coord.col},${left.coord.row}`, '0,3', 'wrap：向上越界环绕到同行对侧边界');
+  const inside = wrapSim.resolveCandidate(probe, { col: 1, row: 0 });
+  eq(`${inside.ok}:${inside.wrapped}`, 'true:false', 'wrap：界内坐标不标记为环绕');
+
+  eq(
+    wrapSim.checkEndConditions(mkCtx(wrapSim, [{ col: 0, row: 0 }], cornerBlocked), []),
+    null,
+    '四角 + 边界穿越：环绕方向可走，不判定「无路可走」',
+  );
+
+  // 对照：非穿越边界下同样局面确实无路可走（保证判定未被放宽）
+  const stopCfg = defaultConfig();
+  stopCfg.grid = { type: 'square', width: 4, height: 4, boundary: 'stop' };
+  stopCfg.endConditions.noMove = true;
+  const stopSim = new Simulation(stopCfg);
+  const stopProbe = { grid: stopSim.grid, config: stopSim.config };
+  eq(stopSim.resolveCandidate(stopProbe, { col: -1, row: 0 }).ok, false, '非穿越边界：越界坐标判定为不可达');
+  const stopEnd = stopSim.checkEndConditions(mkCtx(stopSim, [{ col: 0, row: 0 }], cornerBlocked), []);
+  ok(stopEnd && stopEnd.code === 'noMove', '非穿越边界：四角被围住时正确判定「无路可走」');
+
+  // 环绕落点也被占据时，四角同样应判为无路可走
+  const sealed = new Set(['1,0', '0,1', '3,0', '0,3']);
+  const sealedEnd = wrapSim.checkEndConditions(mkCtx(wrapSim, [{ col: 0, row: 0 }], sealed), []);
+  ok(sealedEnd && sealedEnd.code === 'noMove', '四角 + 边界穿越：环绕落点也被占满时正确判定「无路可走」');
+}
+
+section('边界穿越：穿梭特效与跨缝渲染连续性');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { type: 'square', width: 10, height: 8, boundary: 'wrap' };
+  cfg.start = { col: 0, row: 4, direction: 'left' };
+  cfg.body.initialLength = 8;
+  cfg.moveRules = { left: 0, straight: 1, right: 0 }; // 固定直行，保证每步都跨缝
+  cfg.endConditions.maxSteps = 60;
+  cfg.endConditions.wall = false;
+  const result = new Simulation(cfg).run();
+
+  // 1) 模拟层：穿越写入 'wrap' 高亮，并记录滑出侧坐标（位于网格外）
+  const wrapFrames = result.frames.filter((f) => f.highlights.some((h) => h.type === 'wrap'));
+  ok(wrapFrames.length > 0, '开启边界穿越后画面高亮包含穿梭特效');
+  const h = wrapFrames[0].highlights.find((x) => x.type === 'wrap');
+  ok(
+    h.fromCol < 0 || h.fromCol >= cfg.grid.width || h.fromRow < 0 || h.fromRow >= cfg.grid.height,
+    '穿梭特效记录滑出侧坐标（位于网格外）',
+  );
+  ok(result.grid.inBounds({ col: h.col, row: h.row }), '穿梭特效落点位于网格内（滑入侧）');
+
+  // 2) 渲染层：无头渲染器能正常绘制穿梭光带并裁剪到网格区域
+  const { r: fx, calls: fxCalls } = headlessRenderer({ showEffects: true });
+  attachResult(fx, result);
+  const fxIndex = result.frames.findIndex((f) => f === wrapFrames[0]);
+  fx.drawEffects(fxIndex);
+  ok(fxCalls.some((c) => c.name === 'clip'), '穿梭光带按网格区域裁剪绘制');
+  ok(fxCalls.filter((c) => c.name === 'stroke').length > 0, '穿梭光带产生描边绘制调用');
+
+  // 3) 渲染层：任意插值进度下，本体链与镜像链都保持连续（无孤立副本）
+  const { r: rend } = headlessRenderer();
+  attachResult(rend, result);
+  const pitch = rend.center({ col: 1, row: 0 }).x - rend.center({ col: 0, row: 0 }).x;
+  const maxGap = pitch * 1.6;
+  let gapViolations = 0;
+  let shapeViolations = 0;
+  let crossingSamples = 0;
+  const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+  for (let i = 1; i < result.frames.length; i++) {
+    const a = result.frames[i - 1].agents[0];
+    const b = result.frames[i].agents[0];
+    if (!a.segments.length || !b.segments.length) continue;
+    for (const alpha of [0.1, 0.35, 0.5, 0.75, 0.95]) {
+      const model = rend.agentPoints(a, b, alpha);
+      for (let k = 1; k < model.pts.length; k++) {
+        if (dist(model.pts[k], model.pts[k - 1]) > maxGap) gapViolations++;
+      }
+      // 镜像副本取自同一条连续展开链，长度必须与本体一致、且自身同样连续
+      for (const run of model.ghosts) {
+        if (run.length !== model.pts.length) shapeViolations++;
+        for (let k = 1; k < run.length; k++) {
+          if (dist(run[k], run[k - 1]) > maxGap) shapeViolations++;
+        }
+      }
+      if (model.ghosts.length) crossingSamples++;
+    }
+  }
+  eq(gapViolations, 0, '本体链在任意插值进度下相邻体节间距均不超过 1.6 格（无视觉断层）');
+  eq(shapeViolations, 0, '镜像链与本体链形状一致（不出现孤立单节副本）');
+  ok(crossingSamples > 0, '测试确实覆盖了跨缝插值场景');
 }
 
 /* ---------- 结果 ---------- */

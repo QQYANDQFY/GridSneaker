@@ -14,6 +14,8 @@ import {
 } from '../core/trail.js';
 import { PRESETS, buildPresetConfig, matchPreset } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
+import { formatScore } from '../core/score.js';
+import { difficultyOf } from '../core/difficulty.js';
 import { Renderer } from './canvas.js';
 import { dirNames, DIR_LABEL_CN as DIR_LABELS } from '../core/grid.js';
 import { stateLabel, stateLabelWithKey } from '../core/world.js';
@@ -120,6 +122,12 @@ const state = {
   trailSnapshot: null,
   /** 多轨迹对比：基准快照与当前运行结果的坐标差异 */
   compareDiff: null,
+  /** 自适应难度：拥挤时自动放慢播放速度 */
+  adaptive: false,
+  /** 本轮运行的得分（总分 / 等级），由 summary.score 得到 */
+  score: null,
+  /** 当前地图的最高分（按网格类型 / 尺寸 / 边界策略区分） */
+  highScore: 0,
 };
 
 const els = {};
@@ -178,12 +186,14 @@ function init() {
   if (legacyHint) legacyHint.className = 'hidden';
 }
 
-/** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
+/** 键盘快捷键：空格播放/暂停，← → 单步（Shift 加速跳 10 帧），Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
 function bindKeyboard() {
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    /** Shift 组合键用于「大步长」跳帧 */
+    const jump = e.shiftKey ? 10 : 1;
     switch (e.key) {
       case ' ':
         e.preventDefault();
@@ -193,12 +203,13 @@ function bindKeyboard() {
       case 'ArrowLeft':
         e.preventDefault();
         pause();
-        gotoFrame(state.frameIndex - 1);
+        gotoFrame(state.frameIndex - jump);
         break;
       case 'ArrowRight':
         e.preventDefault();
         pause();
-        if (advance()) frameChanged();
+        if (e.shiftKey) gotoFrame(state.frameIndex + jump);
+        else if (advance()) frameChanged();
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -218,6 +229,26 @@ function bindKeyboard() {
         pause();
         gotoFrame(state.result ? state.result.frames.length - 1 : 0);
         break;
+      case '-':
+      case '_':
+        e.preventDefault();
+        setSpeed(state.cfg.speed / 2);
+        break;
+      case '=':
+      case '+':
+        e.preventDefault();
+        setSpeed(state.cfg.speed * 2);
+        break;
+      case 'r':
+      case 'R':
+        e.preventDefault();
+        pause();
+        gotoFrame(0);
+        break;
+      case 'Escape':
+        e.preventDefault();
+        pause();
+        break;
       default:
         break;
     }
@@ -226,13 +257,25 @@ function bindKeyboard() {
 
 /** 按倍率微调播放速度，并同步控制条上的滑块与数值框 */
 function nudgeSpeed(factor) {
-  const cur = state.cfg.speed;
-  const next = Math.max(0.5, Math.min(120, Math.round(cur * factor * 2) / 2));
-  if (next === cur) return;
+  setSpeed(state.cfg.speed * factor);
+}
+
+/** 直接设定播放速度：收敛到 [0.5, 120] 并取 0.5 的整数倍，同步滑块 / 数值框 / 标签 */
+function setSpeed(v) {
+  const next = Math.max(0.5, Math.min(120, Math.round(Number(v) * 2) / 2));
+  if (!Number.isFinite(next) || next === state.cfg.speed) return;
   state.cfg.speed = next;
   if (els.speedSlider) els.speedSlider.value = String(next);
   if (els.speedNum) els.speedNum.value = String(next);
   updateSpeedLabel();
+}
+
+/** 当前播放位置的难度评估：用于自适应调速与难度指示 */
+function currentDifficulty() {
+  const r = state.result;
+  if (!r || !r.frames.length) return difficultyOf({}, null);
+  const f = r.frames[statFrameIndex()];
+  return difficultyOf(f ? f.stats : r.stats, r.grid);
 }
 
 /**
@@ -296,6 +339,10 @@ function loadLocalConfig() {
 const TRAIL_QUERY_KEY = 'gridsneaker:trail-query';
 const TRAIL_MODE_KEY = 'gridsneaker:stat-mode';
 const TRAIL_PRESET_KEY = 'gridsneaker:trail-presets';
+/** 自适应难度开关 */
+const ADAPTIVE_KEY = 'gridsneaker:adaptive-speed';
+/** 最高分记录：按地图指纹分别保存，避免不同网格尺寸互相覆盖 */
+const HIGH_SCORE_KEY = 'gridsneaker:high-score';
 /** 预设数量上限，超出后按保存顺序淘汰最早的 */
 const TRAIL_PRESET_LIMIT = 20;
 
@@ -328,6 +375,60 @@ function loadTrailState() {
     /* 忽略读取失败 */
   }
   state.trailPresets = loadTrailPresets();
+  state.adaptive = loadAdaptive();
+}
+
+/* ---------------- 得分系统：最高分与自适应难度的本地持久化 ---------------- */
+
+/** 地图指纹：同一张地图（类型 / 尺寸 / 边界策略）共用一份最高分记录 */
+function gridSignature(grid) {
+  if (!grid) return 'unknown';
+  return `${grid.type}-${grid.width}x${grid.height}-${grid.boundary}`;
+}
+
+/** 读取当前地图指纹对应的最高分 */
+function loadHighScore(grid) {
+  try {
+    const raw = localStorage.getItem(HIGH_SCORE_KEY);
+    if (!raw) return 0;
+    const map = JSON.parse(raw);
+    const v = Number(map && map[gridSignature(grid)]);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** 记录最高分：仅当超过历史记录时写盘，返回是否刷新了记录 */
+function saveHighScore(grid, total) {
+  const key = gridSignature(grid);
+  try {
+    const raw = localStorage.getItem(HIGH_SCORE_KEY);
+    const map = raw ? (JSON.parse(raw) || {}) : {};
+    const prev = Number(map[key]) || 0;
+    if (total <= prev) return false;
+    map[key] = total;
+    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(map));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function loadAdaptive() {
+  try {
+    return localStorage.getItem(ADAPTIVE_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveAdaptive(v) {
+  try {
+    localStorage.setItem(ADAPTIVE_KEY, v ? '1' : '0');
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
 }
 
 function loadTrailPresets() {
@@ -441,6 +542,14 @@ function recompute(opts = {}) {
   state.result = result;
   state.dirty = false;
   state.frameIndex = Math.min(state.frameIndex, result.frames.length - 1);
+  // 得分系统：结算本轮得分并刷新该地图的最高分记录
+  state.score = result.summary.score || null;
+  state.highScore = loadHighScore(result.grid);
+  let brokeRecord = false;
+  if (state.score) {
+    brokeRecord = saveHighScore(result.grid, state.score.total);
+    if (brokeRecord) state.highScore = state.score.total;
+  }
   saveLocalConfig(cfg);
   renderer.setResult(result);
   renderer.setStyle(cfg.style, cfg.body);
@@ -453,6 +562,7 @@ function recompute(opts = {}) {
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
+  if (brokeRecord && state.score) toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`, 'success');
 }
 
 /**
@@ -530,7 +640,9 @@ function loopTick(ts) {
   const dt = Math.min(250, ts - lastTs);
   lastTs = ts;
   acc += dt;
-  const stepMs = 1000 / Math.max(0.5, state.cfg.speed);
+  const baseMs = 1000 / Math.max(0.5, state.cfg.speed);
+  // 自适应难度：拥挤度升高时按难度倍率放慢播放（倍率 0.3~1），给观察留出余量
+  const stepMs = state.adaptive ? baseMs / Math.max(0.05, currentDifficulty().speedScale) : baseMs;
   let guard = 0;
   while (acc >= stepMs && guard++ < 400) {
     acc -= stepMs;
@@ -624,17 +736,40 @@ function buildControls() {
   els.endJumpBtn = button('查看结束规则', () => focusEndReason(), 'ghost small');
   els.continueBtn = button('继续运行 +' + DEFAULT_FRAME_CAP, () => continueRun(), 'primary small');
 
+  // 得分系统：本轮得分 / 等级 / 该地图的最高分
+  els.scoreLabel = h('span', { class: 'score-label' }, '得分：尚未运行');
+  // 动态难度：拥挤度与难度等级指示
+  els.diffLabel = h('span', { class: 'hint' }, '');
+  // 自适应难度：拥挤时自动放慢播放
+  els.adaptiveChk = checkbox(state.adaptive, (v) => {
+    state.adaptive = v;
+    saveAdaptive(v);
+    updateControls();
+    toast(v ? '已开启自适应难度：拥挤时自动放慢播放' : '已关闭自适应难度', 'info');
+  }, '自适应难度');
+  els.adaptiveChk.title = '拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面';
+
+  // 速度档位：一键切换到常用播放速度
+  const speedBtns = [0.5, 2, 8, 30, 120].map((v) => {
+    const b = button(String(v), () => setSpeed(v), 'ghost small');
+    b.title = `设为 ${v} 步/秒`;
+    return b;
+  });
+
   c.appendChild(h('div', { class: 'controls-line' },
     els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn));
   c.appendChild(h('div', { class: 'controls-line' },
-    els.loopChk, els.autoChk, els.followChk,
+    els.loopChk, els.autoChk, els.followChk, els.adaptiveChk,
     h('span', { class: 'mini-label' }, '速度'), els.speedRange, els.speedLabel));
+  c.appendChild(h('div', { class: 'controls-line' },
+    h('span', { class: 'mini-label' }, '速度档位'), ...speedBtns));
   c.appendChild(h('div', { class: 'controls-line' },
     h('span', { class: 'mini-label' }, '种子'), els.seedInput, els.seedDice));
   c.appendChild(h('div', { class: 'controls-line' }, els.timeline, els.frameLabel));
   c.appendChild(h('div', { class: 'controls-line' }, els.endLabel, els.endJumpBtn, els.continueBtn));
+  c.appendChild(h('div', { class: 'controls-line' }, els.scoreLabel, els.diffLabel));
   c.appendChild(h('div', { class: 'controls-line' },
-    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步 · ↑ ↓ 调速 · Home / End 首末帧')));
+    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步（Shift 跳 10 帧） · ↑ ↓ 调速 · - = 减半/加倍 · Home / End 首末帧 · R 重置 · Esc 暂停')));
   updateSpeedLabel();
 }
 
@@ -696,6 +831,22 @@ function updateControls() {
   els.endLabel.className = reason ? 'end-label ended' : 'end-label';
   els.endJumpBtn.disabled = !state.result;
   els.continueBtn.hidden = reason?.code !== 'frameLimit';
+  updateScoreLabel();
+}
+
+/** 刷新得分 / 最高分与当前难度指示 */
+function updateScoreLabel() {
+  if (els.scoreLabel) {
+    const sc = state.score;
+    els.scoreLabel.textContent = sc
+      ? `得分 ${formatScore(sc.total)}（${sc.gradeLabel}） · 最高分 ${formatScore(state.highScore)}`
+      : '得分：尚未运行';
+    els.scoreLabel.classList.toggle('record', !!sc && state.highScore > 0 && sc.total >= state.highScore);
+  }
+  if (els.diffLabel) {
+    const d = currentDifficulty();
+    els.diffLabel.textContent = `难度 ${d.label} · 拥挤度 ${Math.round(d.crowding * 100)}%${state.adaptive ? ' · 自适应调速中' : ''}`;
+  }
 }
 
 /** 隐藏悬浮提示 */
@@ -767,7 +918,8 @@ function bindCanvasEvents() {
 
 const STAT_KEYS = [
   ['steps', '步数'], ['framePos', '当前帧 / 总帧数'], ['frames', '缓存帧数'], ['elapsed', '运行耗时'],
-  ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
+  ['endReason', '结束原因 / 本步事件'], ['score', '得分'], ['scoreGrade', '评分等级'],
+  ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
   ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
@@ -838,6 +990,9 @@ function statValues() {
       elapsed: formatDuration(r.elapsedMs),
       frames: pick(`${i + 1}${stride}`, `${r.frames.length}${stride}`),
       endReason: pick(f && f.events && f.events.length ? f.events.map(eventLabel).join('、') : '—', s.endReason),
+      // 得分为整轮量：两种口径都展示结束时的结算得分
+      score: formatScore(s.score ? s.score.total : 0),
+      scoreGrade: s.score ? s.score.gradeLabel : '-',
       collisions: pick(st.collisions, s.collisions),
       selfCollisions: pick(st.selfCollisions, s.selfCollisions),
       length: pick(st.length, s.finalLength),
