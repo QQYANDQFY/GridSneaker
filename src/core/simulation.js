@@ -222,6 +222,7 @@ export class Simulation {
     /** 多蛇「随机时间间隔」生成所需的调度状态 */
     const spawnCtl = { nextTick: null };
 
+    stats.rngCalls = rng.calls; // 帧级快照需要「截至该帧」的随机调用次数
     frames.push(this.captureFrame(0, agents, storedCells, [], stats, logs, null, null));
 
     while (true) {
@@ -278,6 +279,7 @@ export class Simulation {
           halveInPlace(stats.lengthHistory);
         }
         stats.lengthHistory.push(stats.length);
+        stats.rngCalls = rng.calls; // 帧级快照需要「截至该帧」的随机调用次数
         frames.push(this.captureFrame(
           tick,
           agents,
@@ -1150,6 +1152,18 @@ export class Simulation {
         spawns: stats.spawns || 0,
         merges: stats.merges || 0,
         agentDeaths: stats.agentDeaths || 0,
+        // 以下为该帧的累计量快照，供界面「实时统计」模式与「总计统计」逐项对齐口径
+        peakAgents: stats.peakAgents || 0,
+        maxLength: stats.maxLength || 0,
+        obstacleCount: stats.obstacleCount || 0,
+        markerCount: stats.markerCount || 0,
+        repels: stats.repels || 0,
+        markerInteractions: stats.markerInteractions || 0,
+        rngCalls: stats.rngCalls || 0,
+        turnsLeft: stats.turnsLeft || 0,
+        turnsStraight: stats.turnsStraight || 0,
+        turnsRight: stats.turnsRight || 0,
+        turnsReverse: stats.turnsReverse || 0,
       },
       logFrom: logFrom === null ? 0 : logFrom,
       logTo: logTo === null ? 0 : logTo,

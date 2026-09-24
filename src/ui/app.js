@@ -9,6 +9,7 @@ import {
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
+  trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS,
   snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
 } from '../core/trail.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
@@ -109,6 +110,12 @@ const state = {
   frameCap: DEFAULT_FRAME_CAP,
   /** 坐标筛选查询条件（上下限 / 与或 / 反选） */
   trailQuery: defaultTrailQuery(),
+  /** 统计口径：realtime 截至当前播放位置 / total 整轮汇总 */
+  statMode: 'total',
+  /** 用户保存的常用筛选配置 */
+  trailPresets: [],
+  /** 当前选中的筛选预设名（用于保存后回显） */
+  trailPresetName: '',
   /** 最近一次筛选命中的格下标集合（用于高亮与导出） */
   trailFilter: null,
   /** 最近一次筛选命中的轨迹点（含次序 / 次数 / 首末步） */
@@ -152,6 +159,8 @@ function notifyEndConditionSync(code, on) {
 
 function init() {
   state.cfg = initialConfig();
+  state.trailQuery = defaultTrailQuery();
+  loadTrailState();
   els.canvas = document.getElementById('canvas');
   els.canvasWrap = document.getElementById('canvas-wrap');
   els.tooltip = document.getElementById('tooltip');
@@ -286,6 +295,100 @@ function loadLocalConfig() {
   }
 }
 
+/* ---------------- 筛选条件 / 统计口径 / 筛选预设的本地持久化 ---------------- */
+
+const TRAIL_QUERY_KEY = 'gridsneaker:trail-query';
+const TRAIL_MODE_KEY = 'gridsneaker:stat-mode';
+const TRAIL_PRESET_KEY = 'gridsneaker:trail-presets';
+/** 预设数量上限，超出后按保存顺序淘汰最早的 */
+const TRAIL_PRESET_LIMIT = 20;
+
+let trailPersistTimer = null;
+
+/** 写入筛选条件（防抖，滑动滑块时避免高频落盘） */
+function saveTrailQuery() {
+  if (trailPersistTimer) clearTimeout(trailPersistTimer);
+  trailPersistTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(TRAIL_QUERY_KEY, JSON.stringify(state.trailQuery));
+    } catch (e) {
+      /* 隐私模式或超配额时静默忽略 */
+    }
+  }, 260);
+}
+
+/** 启动时读取上次的筛选条件与统计口径，使刷新后配置保持不变 */
+function loadTrailState() {
+  try {
+    const raw = localStorage.getItem(TRAIL_QUERY_KEY);
+    if (raw) state.trailQuery = normalizeTrailQuery(JSON.parse(raw));
+  } catch (e) {
+    state.trailQuery = defaultTrailQuery();
+  }
+  try {
+    const mode = localStorage.getItem(TRAIL_MODE_KEY);
+    if (mode === 'realtime' || mode === 'total') state.statMode = mode;
+  } catch (e) {
+    /* 忽略读取失败 */
+  }
+  state.trailPresets = loadTrailPresets();
+}
+
+function loadTrailPresets() {
+  try {
+    const raw = localStorage.getItem(TRAIL_PRESET_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((p) => p && typeof p.name === 'string' && p.name && p.query)
+      .slice(0, TRAIL_PRESET_LIMIT)
+      .map((p) => ({ name: p.name, query: normalizeTrailQuery(p.query) }));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeTrailPresets() {
+  try {
+    localStorage.setItem(TRAIL_PRESET_KEY, JSON.stringify(state.trailPresets));
+  } catch (e) {
+    /* 隐私模式或超配额时静默忽略 */
+  }
+}
+
+/** 保存当前筛选条件为命名预设（同名覆盖，超出上限淘汰最早的） */
+function saveTrailPreset(name) {
+  const key = String(name || '').trim();
+  if (!key) {
+    toast('请先填写预设名称', 'warn');
+    return false;
+  }
+  const query = normalizeTrailQuery(state.trailQuery);
+  const idx = state.trailPresets.findIndex((p) => p.name === key);
+  if (idx >= 0) state.trailPresets[idx] = { name: key, query };
+  else state.trailPresets.unshift({ name: key, query });
+  if (state.trailPresets.length > TRAIL_PRESET_LIMIT) state.trailPresets.length = TRAIL_PRESET_LIMIT;
+  writeTrailPresets();
+  state.trailPresetName = key;
+  refreshTrailPresetSelect(key);
+  toast(`已保存筛选预设「${key}」`, 'success');
+  return true;
+}
+
+function removeTrailPreset(name) {
+  const before = state.trailPresets.length;
+  state.trailPresets = state.trailPresets.filter((p) => p.name !== name);
+  if (state.trailPresets.length === before) {
+    toast('请先选择要删除的预设', 'warn');
+    return;
+  }
+  writeTrailPresets();
+  state.trailPresetName = '';
+  refreshTrailPresetSelect('');
+  toast(`已删除预设「${name}」`, 'info');
+}
+
 /* ------------------------------------------------------------------ */
 /* 运行 / 播放                                                         */
 /* ------------------------------------------------------------------ */
@@ -345,10 +448,12 @@ function recompute(opts = {}) {
   saveLocalConfig(cfg);
   renderer.setResult(result);
   renderer.setStyle(cfg.style, cfg.body);
+  liveTrailCache = { tick: -1, at: 0, trail: null }; // 轨迹已重建，实时缓存失效
   renderStageStats();
   renderLog();
   updateControls();
   draw();
+  syncStatModeUI(); // 新结果就绪后刷新口径提示（实时已统计帧数 / 总计步数）
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
@@ -420,6 +525,7 @@ function pause() {
   rafId = null;
   updateControls();
   draw();
+  maybeRefreshLiveFilter(); // 暂停后按精确的播放位置重算一次筛选结果
 }
 
 function loopTick(ts) {
@@ -448,6 +554,7 @@ function frameChanged() {
   followAgentView();
   updateControls();
   highlightLogs();
+  maybeRefreshLiveFilter(); // 实时口径下按节流刷新轨迹筛选结果
 }
 
 function gotoFrame(i) {
@@ -671,71 +778,124 @@ const STAT_KEYS = [
   ['rngCalls', '随机调用次数'],
 ];
 
+/** 统计口径：实时 = 截至当前播放位置（会话内动态数据）/ 总计 = 整轮运行全量汇总 */
+const STAT_MODES = [
+  { value: 'realtime', label: '实时统计', hint: '按当前播放位置统计，轨迹筛选范围随播放/跳帧同步变化' },
+  { value: 'total', label: '总计统计', hint: '展示整轮运行的全量汇总与完整轨迹' },
+];
+
+/** 实时口径长度曲线的抽样上限（与迷你图宽度一致，长跑时避免逐帧拷贝） */
+const SPARK_MAX_POINTS = 220;
+
+function statModeInfo() {
+  return STAT_MODES.find((m) => m.value === state.statMode) || STAT_MODES[1];
+}
+
+/** 当前口径对应的帧下标：实时取播放位置，总计取末帧 */
+function statFrameIndex() {
+  const r = state.result;
+  if (!r || !r.frames.length) return 0;
+  if (state.statMode !== 'realtime') return r.frames.length - 1;
+  return Math.max(0, Math.min(state.frameIndex, r.frames.length - 1));
+}
+
+/** 实时口径的长度曲线：按像素宽度抽样，避免长跑时逐帧生成数组 */
+function liveLengthHistory(frames, endIndex) {
+  const count = endIndex + 1;
+  const out = [];
+  if (count <= SPARK_MAX_POINTS) {
+    for (let i = 0; i <= endIndex; i++) out.push(frames[i].stats.length);
+    return out;
+  }
+  const stride = count / SPARK_MAX_POINTS;
+  for (let k = 0; k < SPARK_MAX_POINTS; k++) out.push(frames[Math.floor(k * stride)].stats.length);
+  out[out.length - 1] = frames[endIndex].stats.length;
+  return out;
+}
+
+/**
+ * 按当前统计口径计算指标取值。
+ * 两种口径共用同一套键（见 STAT_KEYS），因此切换时展示格式完全一致。
+ */
+function statValues() {
+  const r = state.result;
+  if (!r || !r.frames.length) return null;
+  const i = statFrameIndex();
+  const f = r.frames[i];
+  const st = f ? f.stats : {};
+  const live = state.statMode === 'realtime';
+  const s = r.summary;
+  const stride = r.frameStride > 1 ? `（抽样 1/${r.frameStride}）` : '';
+  const pick = (liveValue, totalValue) => (live ? liveValue : totalValue);
+  return {
+    values: {
+      steps: pick(st.steps ?? 0, s.steps),
+      frames: pick(`${i + 1}${stride}`, `${r.frames.length}${stride}`),
+      endReason: pick(f && f.events && f.events.length ? f.events.map(eventLabel).join('、') : '—', s.endReason),
+      collisions: pick(st.collisions, s.collisions),
+      selfCollisions: pick(st.selfCollisions, s.selfCollisions),
+      length: pick(st.length, s.finalLength),
+      finalLength: s.finalLength,
+      maxLength: pick(st.maxLength, s.maxLength),
+      coverage: `${formatNumber(pick(st.coverage, s.coverage))}%`,
+      ruleTriggers: pick(st.ruleTriggers, s.ruleTriggers),
+      agents: pick(st.agents, s.agents),
+      peakAgents: pick(st.peakAgents, s.peakAgents),
+      spawns: pick(st.spawns, s.spawns),
+      agentDeaths: pick(st.agentDeaths, s.agentDeaths),
+      merges: pick(st.merges, s.merges),
+      repels: pick(st.repels, r.stats.repels || 0),
+      markerInteractions: pick(st.markerInteractions, r.stats.markerInteractions || 0),
+      caSteps: pick(st.caSteps, s.caSteps),
+      obstacleCount: pick(st.obstacleCount, s.obstacleCount),
+      markerCount: pick(st.markerCount, s.markerCount),
+      seed: r.seed,
+      rngCalls: pick(st.rngCalls, r.rngCalls),
+    },
+    turns: live ? st : r.stats,
+    history: live ? liveLengthHistory(r.frames, i) : r.stats.lengthHistory,
+  };
+}
+
 function renderStageStats() {
   const host = els.stageStats;
   clear(host);
   els.statSpans = {};
-  const r = state.result;
-  if (!r) return;
-  const s = r.summary;
-  const values = {
-    steps: s.steps,
-    frames: r.frameStride > 1 ? `${r.frames.length}（抽样 1/${r.frameStride}）` : r.frames.length,
-    endReason: s.endReason,
-    collisions: s.collisions,
-    selfCollisions: s.selfCollisions,
-    length: '-',
-    finalLength: s.finalLength,
-    maxLength: s.maxLength,
-    coverage: `${formatNumber(s.coverage)}%`,
-    ruleTriggers: s.ruleTriggers,
-    agents: s.agents,
-    peakAgents: s.peakAgents,
-    spawns: s.spawns,
-    agentDeaths: s.agentDeaths,
-    merges: s.merges,
-    repels: r.stats.repels || 0,
-    markerInteractions: r.stats.markerInteractions || 0,
-    caSteps: s.caSteps,
-    obstacleCount: s.obstacleCount,
-    markerCount: s.markerCount,
-    seed: r.seed,
-    rngCalls: r.rngCalls,
-  };
+  if (!state.result) return;
   for (const [key, label] of STAT_KEYS) {
-    const span = h('span', { class: 'stat-value' }, String(values[key] ?? '-'));
+    const span = h('span', { class: 'stat-value' }, '-');
     els.statSpans[key] = span;
     host.appendChild(h('div', { class: `stat ${key === 'endReason' ? 'wide' : ''}` },
       h('span', { class: 'stat-label' }, label), span));
   }
+  els.spark = h('canvas', { class: 'spark', width: 220, height: 44 });
+  els.turnBars = h('div', { class: 'bars' });
   host.appendChild(h('div', { class: 'stat wide' },
-    h('span', { class: 'stat-label' }, '长度曲线'), buildSparkline(r.stats.lengthHistory)));
+    h('span', { class: 'stat-label' }, '长度曲线'), els.spark));
   host.appendChild(h('div', { class: 'stat wide' },
-    h('span', { class: 'stat-label' }, '转向分布'), buildTurnBars(r.stats)));
+    h('span', { class: 'stat-label' }, '转向分布'), els.turnBars));
+  fillStageStats();
 }
 
-function updateFrameStats() {
-  if (!state.result || !els.statSpans) return;
-  const f = state.result.frames[state.frameIndex];
-  if (!f) return;
-  const set = (key, value) => {
-    const span = els.statSpans[key];
-    if (span) span.textContent = String(value);
-  };
-  set('length', f.stats.length);
-  set('steps', f.stats.steps);
-  set('collisions', f.stats.collisions);
-  set('selfCollisions', f.stats.selfCollisions);
-  set('coverage', `${formatNumber(f.stats.coverage)}%`);
-  set('ruleTriggers', f.stats.ruleTriggers);
-  set('caSteps', f.stats.caSteps);
-  set('agents', f.stats.agents);
-  set('spawns', f.stats.spawns);
-  set('agentDeaths', f.stats.agentDeaths);
-  set('merges', f.stats.merges);
-  if (f.events && f.events.length) {
-    set('endReason', f.events.map(eventLabel).join('、'));
+/**
+ * 按当前口径刷新统计数值与图表。
+ * 只更新既有节点上的文本与画布内容，不重建 DOM，因此切换口径时不会闪烁。
+ */
+function fillStageStats() {
+  const data = statValues();
+  if (!data || !els.statSpans) return;
+  for (const [key, span] of Object.entries(els.statSpans)) {
+    span.textContent = String(data.values[key] ?? '-');
   }
+  drawSparkline(els.spark, data.history);
+  renderTurnBars(els.turnBars, data.turns);
+}
+
+/** 播放 / 跳帧后的统计刷新：仅实时口径需要跟随播放位置重算 */
+function updateFrameStats() {
+  if (!state.result) return;
+  if (state.statMode === 'realtime') fillStageStats();
+  if (!state.playing) syncStatModeHint();
 }
 
 function eventLabel(e) {
@@ -750,20 +910,22 @@ function eventLabel(e) {
   return `${map[e.type] || e.type}${extra}${pos}`;
 }
 
-function buildSparkline(history) {
-  const w = 220;
-  const hh = 44;
-  const canvas = h('canvas', { class: 'spark', width: w, height: hh });
+function drawSparkline(canvas, history) {
+  if (!canvas) return;
+  const w = canvas.width;
+  const hh = canvas.height;
   const ctx = canvas.getContext('2d');
   // 步数上限可放宽到数十万，按像素宽度抽样，避免逐点绘制拖慢界面
   const maxPoints = Math.max(2, w);
-  let data = history;
-  if (history.length > maxPoints) {
-    const stride = history.length / maxPoints;
+  const src = Array.isArray(history) ? history : [];
+  let data = src;
+  if (src.length > maxPoints) {
+    const stride = src.length / maxPoints;
     data = [];
-    for (let i = 0; i < maxPoints; i++) data.push(history[Math.floor(i * stride)]);
-    data[data.length - 1] = history[history.length - 1];
+    for (let i = 0; i < maxPoints; i++) data.push(src[Math.floor(i * stride)]);
+    data[data.length - 1] = src[src.length - 1];
   }
+  if (!data.length) data = [0];
   const max = Math.max(2, ...data);
   ctx.clearRect(0, 0, w, hh);
   ctx.strokeStyle = 'rgba(120,140,170,0.3)';
@@ -783,26 +945,27 @@ function buildSparkline(history) {
   ctx.strokeStyle = '#4dabf7';
   ctx.lineWidth = 1.6;
   ctx.stroke();
-  return canvas;
 }
 
-function buildTurnBars(stats) {
-  const total = Math.max(1, stats.turnsLeft + stats.turnsStraight + stats.turnsRight + stats.turnsReverse);
+/** 转向分布条：按当前口径的累计转向次数重绘（两种口径共用同样的行结构） */
+function renderTurnBars(host, stats) {
+  if (!host) return;
+  clear(host);
+  const s = stats || {};
   const items = [
-    ['左转', stats.turnsLeft, '#ff922b'],
-    ['直行', stats.turnsStraight, '#4dabf7'],
-    ['右转', stats.turnsRight, '#51cf66'],
-    ['掉头', stats.turnsReverse, '#c084fc'],
+    ['左转', s.turnsLeft || 0, '#ff922b'],
+    ['直行', s.turnsStraight || 0, '#4dabf7'],
+    ['右转', s.turnsRight || 0, '#51cf66'],
+    ['掉头', s.turnsReverse || 0, '#c084fc'],
   ];
-  const wrap = h('div', { class: 'bars' });
+  const total = Math.max(1, items.reduce((sum, it) => sum + it[1], 0));
   for (const [label, v, color] of items) {
     const pct = (v / total) * 100;
-    wrap.appendChild(h('div', { class: 'bar-row' },
+    host.appendChild(h('div', { class: 'bar-row' },
       h('span', { class: 'bar-label' }, label),
       h('div', { class: 'bar-track' }, h('div', { class: 'bar-fill', style: { width: `${pct}%`, background: color } })),
       h('span', { class: 'bar-val' }, `${v} · ${pct.toFixed(1)}%`)));
   }
-  return wrap;
 }
 
 /* ------------------------------------------------------------------ */
@@ -961,6 +1124,8 @@ function renderSidePanel() {
     ...state.cfg.environmentRules.map((r) => ({ value: r.id, label: r.name })),
   ], (v) => { state.logFilter = v; renderLog(); });
 
+  side.appendChild(statsModeGroup());
+
   side.appendChild(trailQueryGroup());
 
   side.appendChild(trailCompareGroup());
@@ -979,106 +1144,436 @@ function renderSidePanel() {
 /* ------------------------------------------------------------------ */
 
 /**
+ * 统计模块：实时 / 总计口径切换。
+ * 切换只更新统计数值文本与图表内容（不重建 DOM），因此不会出现闪烁。
+ */
+function statsModeGroup() {
+  const seg = h('div', { class: 'mode-switch' });
+  els.statModeBtns = {};
+  for (const m of STAT_MODES) {
+    const b = button(m.label, () => setStatMode(m.value), 'mode-btn');
+    b.title = m.hint;
+    els.statModeBtns[m.value] = b;
+    seg.appendChild(b);
+  }
+  els.statModeHint = h('div', { class: 'hint' }, '');
+  syncStatModeUI();
+  return group('统计模块', [
+    h('div', { class: 'hint' }, '实时统计按当前播放位置统计（含轨迹数据，随播放 / 跳帧变化）；总计统计展示整轮运行的全量汇总。两种口径共用同一套指标与展示格式。'),
+    seg,
+    els.statModeHint,
+  ], { key: 'stat-mode', open: true });
+}
+
+/** 切换统计口径：更新控件高亮、状态提示、统计数值与轨迹筛选数据源 */
+function setStatMode(mode) {
+  if ((mode !== 'realtime' && mode !== 'total') || state.statMode === mode) return;
+  state.statMode = mode;
+  try {
+    localStorage.setItem(TRAIL_MODE_KEY, mode);
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
+  // 口径切换时给统计面板一次淡入过渡，数值在原节点上更新，避免整块重绘造成的闪烁
+  if (els.stageStats) {
+    els.stageStats.classList.add('stat-switch');
+    setTimeout(() => els.stageStats && els.stageStats.classList.remove('stat-switch'), 240);
+  }
+  syncStatModeUI();
+  fillStageStats();
+  liveTrailCache = { tick: -1, at: 0, trail: null };
+  applyTrailQuery(true);
+  toast(`已切换为「${statModeInfo().label}」`, 'info');
+}
+
+function syncStatModeUI() {
+  if (els.statModeBtns) {
+    for (const [value, btn] of Object.entries(els.statModeBtns)) {
+      btn.classList.toggle('on', value === state.statMode);
+      btn.setAttribute('aria-pressed', value === state.statMode ? 'true' : 'false');
+    }
+  }
+  syncStatModeHint();
+}
+
+function syncStatModeHint() {
+  const hint = els.statModeHint;
+  if (!hint) return;
+  const r = state.result;
+  if (!r || !r.frames.length) {
+    hint.textContent = '尚未运行模拟';
+    return;
+  }
+  if (state.statMode === 'realtime') {
+    const i = statFrameIndex();
+    const tick = r.frames[i] ? r.frames[i].tick : 0;
+    hint.textContent = `实时：已统计 ${i + 1} 帧（第 ${tick} 步 / 共 ${r.summary.steps} 步）`;
+  } else {
+    hint.textContent = `总计：整轮 ${r.summary.steps} 步 · ${r.frames.length} 帧的全量汇总`;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 坐标筛选查询                                                        */
+/* ------------------------------------------------------------------ */
+
+/** 列表最多渲染的条目数（超出仅提示，数据仍可完整导出） */
+const TRAIL_QUERY_LIMIT = 400;
+/** 轨迹点数量超过该值时改用异步筛选并显示加载状态，避免长任务卡住界面 */
+const TRAIL_QUERY_ASYNC_THRESHOLD = 20000;
+/** 实时口径下轨迹截取与筛选重算的最小间隔（播放中节流，保证动画流畅） */
+const LIVE_TRAIL_MIN_INTERVAL = 220;
+
+/** 筛选控件的引用表：键 → { input, slide } */
+let trailQueryRefs = {};
+/** 筛选请求序号：参数连续变化时丢弃过期的异步结果 */
+let trailQuerySeq = 0;
+/** 实时口径轨迹缓存（按当前播放步数截取） */
+let liveTrailCache = { tick: -1, at: 0, trail: null };
+let liveRefreshAt = 0;
+
+function nowMs() {
+  return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+}
+
+/**
+ * 当前统计口径下的轨迹数据源：
+ * 总计口径用全量轨迹；实时口径用截至当前播放位置的轨迹（按步数二分截取，无需重跑模拟）。
+ * 播放中按最小间隔复用上次结果，避免逐帧重建十万级轨迹点。
+ */
+function trailForMode() {
+  if (!renderer || !renderer.trail || !state.result) return null;
+  if (state.statMode !== 'realtime') return renderer.trail;
+  const f = state.result.frames[statFrameIndex()];
+  const tick = f ? f.tick : 0;
+  const now = nowMs();
+  const cached = liveTrailCache;
+  if (cached.trail && (cached.tick === tick || (state.playing && now - cached.at < LIVE_TRAIL_MIN_INTERVAL))) {
+    return cached.trail;
+  }
+  const trail = sliceTrailUpToTick(renderer.trail, tick);
+  liveTrailCache = { tick, at: now, trail };
+  return trail;
+}
+
+/**
  * 坐标筛选查询面板：
- * 按轨迹点的「经过次序」「经过次数（序数）」「首次经过步数」的上下限筛选坐标，
- * 支持「全部满足 / 任一满足」组合与反选，结果在画面上高亮并可跳转 / 复制 / 导出。
- * 上限填 0 表示该侧不限。
+ * 按轨迹点的序数范围（「经过次序」「经过次数」「首次步数」）筛选坐标，
+ * 每组上下限都提供数值输入框与滑块（双向同步，改动即时生效），上限填 0 表示不限。
+ * 支持「全部满足 / 任一满足」组合、反选，以及常用配置的保存 / 载入 / 导入。
  */
 function trailQueryGroup() {
   const q = state.trailQuery;
-  const inputs = {};
-  const num = (key) => {
-    const el = numberInput(q[key], (v) => { q[key] = v; applyTrailQuery(false); }, { min: 0, step: 1, default: q[key] });
-    inputs[key] = el;
-    return el;
-  };
-  const dash = () => h('span', { class: 'query-dash' }, '~');
+  trailQueryRefs = {};
   els.trailQueryStat = h('div', { class: 'hint' }, '尚未执行筛选');
+  els.trailQuerySource = h('div', { class: 'hint' }, '');
+  els.trailQueryError = h('div', { class: 'query-error hidden' }, '');
+  els.trailQueryLoading = h('div', { class: 'query-loading hidden' }, '');
   els.trailQueryList = h('div', { class: 'query-list' });
   const logicSel = select(q.logic, [
     { value: 'and', label: '全部满足（且）' },
     { value: 'or', label: '任一满足（或）' },
-  ], (v) => { q.logic = v; applyTrailQuery(false); });
-  const invertChk = checkbox(q.invert, (v) => { q.invert = v; applyTrailQuery(false); });
+  ], (v) => { q.logic = v; commitTrailQuery(); });
+  const invertChk = checkbox(q.invert, (v) => { q.invert = v; commitTrailQuery(); });
   els.trailLogicSel = logicSel;
   els.trailInvertChk = invertChk;
 
   const reset = () => {
     Object.assign(q, defaultTrailQuery());
-    for (const [k, el] of Object.entries(inputs)) el.value = String(q[k]);
-    logicSel.value = q.logic;
-    invertChk.checked = q.invert;
-    applyTrailQuery(true);
+    setTrailQueryError('');
+    syncTrailQueryControls();
+    commitTrailQuery();
   };
 
-  return group('坐标筛选查询', [
-    h('div', { class: 'hint' }, '按轨迹点的上下限筛选坐标：上限填 0 表示不限。可用「反选」取出未匹配的坐标，结果会在画面上高亮。'),
-    field('经过次序', row(num('orderMin'), dash(), num('orderMax')), '按首次经过时间排序的名次，从 1 起算'),
-    field('经过次数', row(num('visitsMin'), dash(), num('visitsMax')), '该坐标被经过的总次数（序数）'),
-    field('首次步数', row(num('stepMin'), dash(), num('stepMax')), '首次经过该坐标时的步数'),
+  const body = [
+    h('div', { class: 'hint' }, '按轨迹点的序数范围筛选坐标：上限填 0 表示不限；输入框与滑块双向同步，调整后即时更新结果与画面高亮。'),
+  ];
+  for (const f of TRAIL_RANGE_FIELDS) body.push(trailRangeField(f));
+  body.push(
+    els.trailQueryError,
     field('组合方式', row(
       logicSel,
       h('label', { class: 'check-wrap' }, invertChk, h('span', {}, '反选')),
-    )),
+    ), '「反选」选中所有不在当前序数区间内的轨迹点坐标'),
     row(
       button('执行筛选', () => applyTrailQuery(true), 'primary'),
       button('清除筛选', reset, 'ghost'),
       button('复制坐标', () => copyText(trailCellsToText(state.trailCells || []), '已复制筛选结果坐标')),
       button('导出 CSV', () => downloadText('trail-query.csv', trailCellsToCSV(state.trailCells || []), 'text/csv;charset=utf-8')),
     ),
+    trailPresetSection(),
+    els.trailQuerySource,
     els.trailQueryStat,
+    els.trailQueryLoading,
     els.trailQueryList,
-  ], { key: 'trail-query', open: false });
+  );
+  return group('坐标筛选查询', body, { key: 'trail-query', open: false });
 }
 
-/** 列表最多渲染的条目数（超出仅提示，数据仍可完整导出） */
-const TRAIL_QUERY_LIMIT = 400;
+/**
+ * 单个序数范围条件的配置行：下限 / 上限各一行（数值输入框 + 滑块）。
+ * 输入框停顿 220ms 即自动提交，滑块拖动实时提交，均无需刷新页面。
+ */
+function trailRangeField(f) {
+  const line = (key) => {
+    const lo = key === f.minKey ? f.minDefault : 0;
+    const value = state.trailQuery[key];
+    const num = numberInput(value, (v) => setTrailRangeValue(key, v), { min: lo, max: Math.max(1, value), step: 1, default: value });
+    const slide = slider(value, (v) => setTrailRangeValue(key, v), { min: lo, max: Math.max(1, value), step: 1, cls: 'range query-range' });
+    let timer = null;
+    num.addEventListener('input', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => num.dispatchEvent(new Event('change')), 220);
+    });
+    trailQueryRefs[key] = { input: num, slide, lo };
+    return h('div', { class: 'range-line' },
+      h('span', { class: 'range-tag' }, key === f.minKey ? '下限' : '上限'),
+      num,
+      slide);
+  };
+  return field(f.label, h('div', { class: 'range-rows' }, line(f.minKey), line(f.maxKey)),
+    `${f.label}区间（含端点）；上限填 0 表示不限`);
+}
+
+/** 修改某个序数上下限：自动纠正非法区间 → 提示 → 同步控件 → 即时重算 */
+function setTrailRangeValue(key, value) {
+  const q = state.trailQuery;
+  const fieldDef = TRAIL_RANGE_FIELDS.find((f) => f.minKey === key || f.maxKey === key);
+  const raw = normalizeTrailQuery({ ...q, [key]: value });
+  const fixed = reconcileTrailQuery(raw, key);
+  const corrected = !!fieldDef
+    && (fixed[fieldDef.minKey] !== raw[fieldDef.minKey] || fixed[fieldDef.maxKey] !== raw[fieldDef.maxKey]);
+  Object.assign(q, fixed);
+  setTrailQueryError(corrected
+    ? `${fieldDef.label}：上限（${fixed[fieldDef.maxKey] || '不限'}）不能小于下限（${fixed[fieldDef.minKey]}），已自动纠正`
+    : '');
+  syncTrailQueryControls();
+  commitTrailQuery();
+}
+
+/** 筛选条件变更后的统一出口：持久化 + 重算（即时生效） */
+function commitTrailQuery() {
+  saveTrailQuery();
+  applyTrailQuery(true);
+}
+
+function setTrailQueryError(text) {
+  const el = els.trailQueryError;
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('hidden', !text);
+}
+
+/** 把当前筛选条件写回所有输入框与滑块（自动纠正 / 载入预设后需要回显） */
+function syncTrailQueryControls() {
+  for (const [key, ref] of Object.entries(trailQueryRefs)) {
+    const v = String(state.trailQuery[key] ?? 0);
+    if (document.activeElement !== ref.input) ref.input.value = v;
+    ref.slide.value = v;
+  }
+  if (els.trailLogicSel) els.trailLogicSel.value = state.trailQuery.logic;
+  if (els.trailInvertChk) els.trailInvertChk.checked = !!state.trailQuery.invert;
+}
+
+/**
+ * 同步滑块的取值范围：随当前口径的数据源变化（实时口径轨迹点更少，上限随之收窄）。
+ * 只扩大不缩小到当前取值以下，避免静默改动用户已配置的阈值。
+ */
+function syncTrailQueryLimits() {
+  const bounds = trailQueryBounds(trailForMode());
+  for (const f of TRAIL_RANGE_FIELDS) {
+    const b = bounds[f.bound] || { max: 1 };
+    for (const key of [f.minKey, f.maxKey]) {
+      const ref = trailQueryRefs[key];
+      if (!ref) continue;
+      const lo = key === f.minKey ? f.minDefault : 0;
+      const hi = Math.max(b.max, Math.abs(Number(state.trailQuery[key])) || 0, lo + 1);
+      ref.input.min = lo;
+      ref.input.max = hi;
+      ref.slide.min = lo;
+      ref.slide.max = hi;
+    }
+  }
+}
+
+/** 筛选配置的保存 / 载入 / 导入 */
+function trailPresetSection() {
+  els.trailPresetName = textInput(state.trailPresetName, () => {}, { placeholder: '预设名称，如「前 200 个新坐标」' });
+  els.trailPresetSel = h('select', { class: 'input' });
+  refreshTrailPresetSelect(state.trailPresetName);
+  const importArea = textArea('', () => {}, { rows: 2, placeholder: '粘贴筛选配置 JSON…' });
+  return h('div', { class: 'query-preset' },
+    h('div', { class: 'sub-title' }, '常用配置'),
+    field('保存为预设', row(
+      els.trailPresetName,
+      button('保存', () => saveTrailPreset(els.trailPresetName.value), 'primary small'),
+    ), '刷新页面后仍会保留当前条件下次自动生效'),
+    field('已存预设', row(
+      els.trailPresetSel,
+      button('载入', () => loadTrailPreset(els.trailPresetSel.value)),
+      button('删除', () => removeTrailPreset(els.trailPresetSel.value), 'ghost'),
+    )),
+    field('导入 / 导出', h('div', {},
+      importArea,
+      row(
+        button('导入配置', () => importTrailQueryJSON(importArea.value), 'primary small'),
+        button('复制当前配置', () => copyText(
+          JSON.stringify({ query: normalizeTrailQuery(state.trailQuery) }, null, 2),
+          '筛选配置 JSON 已复制'), 'ghost small'),
+        button('清空', () => { importArea.value = ''; }, 'ghost small'),
+      ))));
+}
+
+function refreshTrailPresetSelect(selected) {
+  const sel = els.trailPresetSel;
+  if (!sel) return;
+  clear(sel);
+  if (!state.trailPresets.length) {
+    sel.appendChild(h('option', { value: '' }, '（暂无预设）'));
+  } else {
+    for (const p of state.trailPresets) sel.appendChild(h('option', { value: p.name }, p.name));
+  }
+  sel.value = selected || '';
+}
+
+function loadTrailPreset(name) {
+  const preset = state.trailPresets.find((p) => p.name === name);
+  if (!preset) {
+    toast('请先选择要载入的预设', 'warn');
+    return;
+  }
+  Object.assign(state.trailQuery, normalizeTrailQuery(preset.query));
+  state.trailPresetName = preset.name;
+  if (els.trailPresetName) els.trailPresetName.value = preset.name;
+  setTrailQueryError('');
+  syncTrailQueryControls();
+  commitTrailQuery();
+  toast(`已载入筛选预设「${preset.name}」`, 'success');
+}
+
+/** 导入筛选配置：支持 { name?, query } 结构与直接的筛选条件对象 */
+function importTrailQueryJSON(text) {
+  const raw = String(text || '').trim();
+  if (!raw) {
+    toast('请先粘贴筛选配置 JSON', 'warn');
+    return;
+  }
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    toast(`JSON 解析失败：${e.message}`, 'error');
+    return;
+  }
+  const query = obj && obj.query && typeof obj.query === 'object' ? obj.query : obj;
+  const check = validateTrailQuery(query);
+  if (!check.ok) toast(`${check.errors[0].message}，已自动纠正`, 'warn');
+  Object.assign(state.trailQuery, reconcileTrailQuery(query));
+  const name = obj && typeof obj.name === 'string' ? obj.name.trim() : '';
+  if (name) saveTrailPreset(name);
+  setTrailQueryError('');
+  syncTrailQueryControls();
+  commitTrailQuery();
+  toast('筛选配置已导入', 'success');
+}
+
+/** 数据源提示：说明当前筛选作用在实时轨迹还是全量轨迹上 */
+function updateTrailQuerySource(total) {
+  const el = els.trailQuerySource;
+  if (!el) return;
+  const r = state.result;
+  if (!r) {
+    el.textContent = '';
+    return;
+  }
+  if (state.statMode === 'realtime') {
+    const i = statFrameIndex();
+    el.textContent = `数据源：实时轨迹（截至第 ${r.frames[i] ? r.frames[i].tick : 0} 步），共 ${total} 个坐标`;
+  } else {
+    el.textContent = `数据源：全量轨迹（整轮 ${r.summary.steps} 步），共 ${total} 个坐标`;
+  }
+}
+
+function setTrailQueryBusy(busy, text) {
+  const el = els.trailQueryLoading;
+  if (!el) return;
+  el.textContent = busy ? text || '正在筛选…' : '';
+  el.classList.toggle('hidden', !busy);
+}
 
 /**
  * 执行坐标筛选：更新画面高亮与结果列表。
- * rerender 为 false 时只刷新高亮（调整数值时用，避免频繁重建 DOM）。
+ * 轨迹点数量较大时先给出加载状态，再把计算放到下一个事件循环，避免界面卡顿；
+ * 参数连续变化时用序号丢弃过期结果。
  */
 function applyTrailQuery(rerender = true) {
   const stat = els.trailQueryStat;
   const list = els.trailQueryList;
   if (!stat || !list) return;
+  const seq = ++trailQuerySeq;
   if (!state.result || !renderer) {
+    setTrailQueryBusy(false);
     stat.textContent = '尚未运行模拟';
     state.trailCells = [];
     state.trailFilter = null;
     if (rerender) clear(list);
     return;
   }
-  const res = queryTrail(renderer.trail, state.trailQuery);
-  const active = trailQueryActive(state.trailQuery);
-  if (!active) {
-    state.trailCells = [];
-    state.trailFilter = null;
-    renderer.setFilter(null);
-    stat.textContent = `未设置筛选条件（共 ${res.total} 个轨迹坐标）`;
-    if (rerender) clear(list);
+  const trail = trailForMode();
+  syncTrailQueryLimits();
+  const total = trail ? trail.order.length : 0;
+  const heavy = total > TRAIL_QUERY_ASYNC_THRESHOLD;
+  if (heavy) setTrailQueryBusy(true, `正在筛选 ${total} 个轨迹坐标…`);
+
+  const run = () => {
+    if (seq !== trailQuerySeq) return; // 参数已再次变化，丢弃本次结果
+    const res = queryTrail(trail, state.trailQuery);
+    const active = trailQueryActive(state.trailQuery);
+    setTrailQueryBusy(false);
+    updateTrailQuerySource(res.total);
+    if (!active) {
+      state.trailCells = [];
+      state.trailFilter = null;
+      renderer.setFilter(null);
+      stat.textContent = `未设置筛选条件（共 ${res.total} 个轨迹坐标）`;
+      if (rerender) clear(list);
+      drawFrameOnly();
+      return;
+    }
+    state.trailCells = res.cells;
+    state.trailFilter = res.cells.map((c) => c.index);
+    renderer.setFilter(state.trailFilter);
+    stat.textContent = `匹配 ${res.matched} / ${res.total} 个坐标 · ${trailQueryLabel(state.trailQuery)}`;
+    if (!rerender) {
+      drawFrameOnly();
+      return;
+    }
+    clear(list);
+    if (!res.cells.length) {
+      list.appendChild(h('div', { class: 'hint' }, '没有匹配的坐标'));
+      drawFrameOnly();
+      return;
+    }
+    for (const c of res.cells.slice(0, TRAIL_QUERY_LIMIT)) list.appendChild(trailCellRow(c));
+    if (res.cells.length > TRAIL_QUERY_LIMIT) {
+      list.appendChild(h('div', { class: 'hint' }, `仅显示前 ${TRAIL_QUERY_LIMIT} 项，可用「复制坐标 / 导出 CSV」获取全部结果`));
+    }
     drawFrameOnly();
-    return;
-  }
-  state.trailCells = res.cells;
-  state.trailFilter = res.cells.map((c) => c.index);
-  renderer.setFilter(state.trailFilter);
-  stat.textContent = `匹配 ${res.matched} / ${res.total} 个坐标 · ${trailQueryLabel(state.trailQuery)}`;
-  if (!rerender) {
-    drawFrameOnly();
-    return;
-  }
-  clear(list);
-  if (!res.cells.length) {
-    list.appendChild(h('div', { class: 'hint' }, '没有匹配的坐标'));
-    drawFrameOnly();
-    return;
-  }
-  for (const c of res.cells.slice(0, TRAIL_QUERY_LIMIT)) list.appendChild(trailCellRow(c));
-  if (res.cells.length > TRAIL_QUERY_LIMIT) {
-    list.appendChild(h('div', { class: 'hint' }, `仅显示前 ${TRAIL_QUERY_LIMIT} 项，可用「复制坐标 / 导出 CSV」获取全部结果`));
-  }
-  drawFrameOnly();
+  };
+  if (heavy) setTimeout(run, 0);
+  else run();
+}
+
+/**
+ * 实时口径下播放位置变化后的筛选刷新（节流）。
+ * 未启用筛选时直接跳过，避免播放中做无意义的轨迹截取。
+ */
+function maybeRefreshLiveFilter() {
+  if (state.statMode !== 'realtime' || !trailQueryActive(state.trailQuery)) return;
+  const now = nowMs();
+  if (state.playing && now - liveRefreshAt < LIVE_TRAIL_MIN_INTERVAL) return;
+  liveRefreshAt = now;
+  applyTrailQuery(true);
 }
 
 /** 筛选结果行：点击跳转到该坐标首次经过的步数 */

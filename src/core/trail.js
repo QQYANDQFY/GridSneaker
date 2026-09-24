@@ -27,7 +27,7 @@ function rowOf(grid, index) {
  * 构建轨迹模型。
  * @param {Grid} grid
  * @param {Array} frames Simulation.run() 输出的帧序列
- * @returns {{path: Array<{index:number,tick:number,agent:number}>, order: number[], info: Map<number, object>, maxTick: number}}
+ * @returns {{path: Array<{index:number,tick:number,agent:number}>, order: number[], info: Map<number, object>, maxTick: number, grid: Grid}}
  */
 export function buildTrail(grid, frames) {
   const path = [];
@@ -82,12 +82,59 @@ export function buildTrail(grid, frames) {
     }
   }
 
-  return { path, order, info, maxTick };
+  return { path, order, info, maxTick, grid };
 }
 
 /* ------------------------------------------------------------------ */
 /* 坐标筛选查询                                                        */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 按步数截取轨迹模型：只保留 tick ≤ maxTick 的轨迹点，并重算逐格聚合信息。
+ * 轨迹路径本身按经过时间升序，这里二分定位截断点后只遍历保留部分，
+ * 供「实时统计」模式按当前播放位置统计轨迹数据（无需重跑模拟）。
+ * @param {object} trail buildTrail 的输出
+ * @param {number} tick 目标步数（含）
+ * @returns {{path: Array, order: number[], info: Map<number, object>, maxTick: number}}
+ */
+export function sliceTrailUpToTick(trail, tick) {
+  const path = (trail && trail.path) || [];
+  const limit = Math.round(Number(tick));
+  if (!Number.isFinite(limit) || limit < 0) return { path: [], order: [], info: new Map(), maxTick: 0 };
+  let lo = 0;
+  let hi = path.length - 1;
+  let cut = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (path[mid].tick <= limit) { cut = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  const kept = path.slice(0, cut + 1);
+  const order = [];
+  const info = new Map();
+  let maxTick = 0;
+  for (const p of kept) {
+    if (p.tick > maxTick) maxTick = p.tick;
+    let cell = info.get(p.index);
+    if (!cell) {
+      order.push(p.index);
+      cell = {
+        index: p.index,
+        col: colOf(trail.grid || { width: 1 }, p.index),
+        row: rowOf(trail.grid || { width: 1 }, p.index),
+        order: order.length,
+        first: p.tick,
+        last: p.tick,
+        visits: 1,
+      };
+      info.set(p.index, cell);
+      continue;
+    }
+    if (p.tick < cell.first) cell.first = p.tick;
+    if (p.tick > cell.last) cell.last = p.tick;
+    cell.visits++;
+  }
+  return { path: kept, order, info, maxTick };
+}
 
 /** 多条件组合方式 */
 export const TRAIL_QUERY_LOGICS = ['and', 'or'];
@@ -125,6 +172,72 @@ export function normalizeTrailQuery(raw = {}) {
     logic: raw.logic === 'or' ? 'or' : 'and',
     invert: !!raw.invert,
   };
+}
+
+/**
+ * 三组范围条件的键与显示名。
+ * minKey / maxKey 对应查询对象里的上下限字段，minDefault 为该侧「不限」时的取值，
+ * 供界面的滑块边界与校验提示复用。
+ */
+export const TRAIL_RANGE_FIELDS = [
+  { minKey: 'orderMin', maxKey: 'orderMax', label: '经过次序', minDefault: 1, bound: 'order' },
+  { minKey: 'visitsMin', maxKey: 'visitsMax', label: '经过次数', minDefault: 1, bound: 'visits' },
+  { minKey: 'stepMin', maxKey: 'stepMax', label: '首次步数', minDefault: 0, bound: 'step' },
+];
+
+/**
+ * 校验上下限：上限为 0（不限）或 ≥ 下限时合法。
+ * 上限小于下限属于非法配置，界面据此给出提示并自动纠正。
+ * @returns {{ok:boolean, errors:Array<{key:string,fields:string[],message:string}>, query:object}}
+ */
+export function validateTrailQuery(raw = {}) {
+  const q = normalizeTrailQuery(raw);
+  const errors = [];
+  for (const f of TRAIL_RANGE_FIELDS) {
+    if (q[f.maxKey] > 0 && q[f.maxKey] < q[f.minKey]) {
+      errors.push({
+        key: f.maxKey,
+        fields: [f.minKey, f.maxKey],
+        message: `${f.label}上限（${q[f.maxKey]}）不能小于下限（${q[f.minKey]}）`,
+      });
+    }
+  }
+  return { ok: !errors.length, errors, query: q };
+}
+
+/**
+ * 把非法上下限自动纠正为合法区间：`changed` 是刚被编辑的键，另一侧随之对齐，
+ * 保证用户无论从下限还是上限下手，都留下一个「上限 ≥ 下限」的合法配置。
+ */
+export function reconcileTrailQuery(raw = {}, changed = '') {
+  const q = normalizeTrailQuery(raw);
+  for (const { minKey, maxKey, minDefault } of TRAIL_RANGE_FIELDS) {
+    if (q[maxKey] > 0 && q[maxKey] < q[minKey]) {
+      if (changed === maxKey) q[minKey] = Math.max(minDefault, q[maxKey]);
+      else q[maxKey] = q[minKey];
+    }
+  }
+  return q;
+}
+
+/**
+ * 当前轨迹的可用取值范围（供界面配置滑块上下界）：
+ * order 为轨迹点总数，visits 为最大经过次数，step 为最大经过步数。
+ */
+export function trailQueryBounds(trail) {
+  const bounds = { order: { min: 1, max: 1 }, visits: { min: 1, max: 1 }, step: { min: 0, max: 1 } };
+  if (!trail || !trail.info) return bounds;
+  bounds.order.max = Math.max(1, trail.order.length);
+  let visits = 1;
+  let step = 0;
+  for (const cell of trail.info.values()) {
+    if (cell.visits > visits) visits = cell.visits;
+    if (cell.first > step) step = cell.first;
+    if (cell.last > step) step = cell.last;
+  }
+  bounds.visits.max = visits;
+  bounds.step.max = Math.max(1, step);
+  return bounds;
 }
 
 /** 某个范围条件是否真正生效（上下限都为「不限」时该条不参与判断） */
@@ -170,6 +283,12 @@ export function trailQueryLabel(rawQuery) {
 /**
  * 按「经过次序 / 经过次数（序数）/ 首次经过步数」的上下限筛选坐标。
  * logic 为 and 时须满足全部已启用条件；or 时满足任一即可；invert 为反选。
+ *
+ * 性能：trail.order 本身即「按经过次序升序」的坐标下标数组，
+ * 因此当次序范围生效且非反选时，可直接切出候选区间，只遍历区间内的轨迹点
+ * （长跑产生的十万级轨迹点下，避免全量遍历）。
+ *
+ * @param {{order:number[], info:Map<number,object>}} trail
  * @returns {{query: object, cells: object[], matched: number, total: number}}
  */
 export function queryTrail(trail, rawQuery) {
@@ -180,6 +299,22 @@ export function queryTrail(trail, rawQuery) {
   if (activeSteps(q)) checks.push((c) => inRange(c.first, q.stepMin, q.stepMax));
 
   const cells = [];
+  const orderActive = activeOrder(q);
+  // 次序切片快路径：反选需要对全量取补集，故仅在非反选时可用；
+  // 「或」逻辑下只有次序条件单条生效时，切片结果同样成立。
+  const sliceable = orderActive && !q.invert && (q.logic === 'and' || checks.length === 1);
+  if (sliceable) {
+    const from = Math.max(0, q.orderMin - 1);
+    const to = q.orderMax > 0 ? Math.min(trail.order.length, q.orderMax) : trail.order.length;
+    for (let i = from; i < to; i++) {
+      const cell = trail.info.get(trail.order[i]);
+      if (!cell) continue;
+      if (checks.length > 1 && !checks.every((fn) => fn(cell))) continue;
+      cells.push(cell);
+    }
+    return { query: q, cells, matched: cells.length, total: trail.order.length };
+  }
+
   for (const index of trail.order) {
     const cell = trail.info.get(index);
     if (!cell) continue;

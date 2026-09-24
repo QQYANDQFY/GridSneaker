@@ -12,6 +12,7 @@ import {
 import {
   buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
   trailQueryLabel, trailCellsToCSV, trailCellsToText,
+  trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS,
   snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
 } from '../src/core/trail.js';
 import { trailToSVG } from '../src/core/exporters.js';
@@ -1313,6 +1314,84 @@ section('轨迹模型与坐标筛选查询');
   ok(trailCellsToText(all.cells.slice(0, 2)).includes('次序 #'), '筛选结果文本包含次序信息');
   ok(trailQueryLabel({ orderMin: 2, orderMax: 6 }).includes('次序'), '筛选条件可读描述包含次序');
   ok(trailQueryLabel({ invert: true }).startsWith('反选'), '反选条件描述带反选前缀');
+}
+
+/* ---------- 新增：序数范围筛选的上下限校验、可选范围与查询快路径 ---------- */
+section('序数范围筛选：上下限校验 / 可选范围 / 快路径等价性');
+{
+  const r = new Simulation(buildPresetConfig('avoid-lab')).run();
+  const trail = buildTrail(r.grid, r.frames);
+  const cells = [...trail.info.values()];
+
+  eq(TRAIL_RANGE_FIELDS.length, 3, '三组序数范围条件（次序 / 次数 / 步数）');
+  const bounds = trailQueryBounds(trail);
+  eq(bounds.order.max, trail.order.length, '次序上界 = 轨迹点总数');
+  eq(bounds.visits.max, Math.max(...cells.map((c) => c.visits)), '次数上界 = 最大经过次数');
+  eq(bounds.step.max, Math.max(...cells.map((c) => c.last)), '步数上界 = 最大经过步数');
+  eq(bounds.order.min, 1, '次序下界从 1 起算');
+  eq(trailQueryBounds(null).order.max, 1, '无轨迹时返回安全边界');
+
+  ok(validateTrailQuery({ orderMin: 2, orderMax: 5 }).ok, '上限大于下限时校验通过');
+  ok(validateTrailQuery({ orderMin: 5, orderMax: 5 }).ok, '上下限相等（单点区间）校验通过');
+  ok(validateTrailQuery({ orderMin: 5, orderMax: 0 }).ok, '上限为 0（不限）时校验通过');
+  ok(validateTrailQuery({ stepMin: 0, stepMax: 0 }).ok, '步数区间全不限时校验通过');
+  const bad = validateTrailQuery({ orderMin: 8, orderMax: 3 });
+  ok(!bad.ok, '上限小于下限时校验失败');
+  ok(bad.errors[0].message.includes('经过次序'), '校验信息包含条件名称');
+  ok(!validateTrailQuery({ visitsMin: 4, visitsMax: 2, stepMin: 9, stepMax: 1 }).ok, '多组非法区间可同时检出');
+
+  eq(reconcileTrailQuery({ orderMin: 8, orderMax: 3 }, 'orderMin').orderMax, 8, '编辑下限时自动抬高上限');
+  eq(reconcileTrailQuery({ orderMin: 8, orderMax: 3 }, 'orderMax').orderMin, 3, '编辑上限时自动下调下限');
+  eq(reconcileTrailQuery({ stepMin: 6, stepMax: 2 }, 'stepMax').stepMin, 2, '步数区间按同样规则纠正');
+  eq(reconcileTrailQuery({ visitsMin: 1, visitsMax: 0 }).visitsMax, 0, '上限为 0（不限）不参与纠正');
+  eq(reconcileTrailQuery({ orderMin: 2, orderMax: 6 }).orderMax, 6, '合法区间不被改动');
+
+  /** 全量遍历的朴素实现：用于验证次序切片快路径的结果一致性 */
+  const brute = (query) => {
+    const q = normalizeTrailQuery(query);
+    return trail.order.filter((index) => {
+      const c = trail.info.get(index);
+      const checks = [];
+      if (q.orderMax > 0 || q.orderMin > 1) checks.push(c.order >= q.orderMin && (q.orderMax === 0 || c.order <= q.orderMax));
+      if (q.visitsMax > 0 || q.visitsMin > 1) checks.push(c.visits >= q.visitsMin && (q.visitsMax === 0 || c.visits <= q.visitsMax));
+      if (q.stepMax > 0 || q.stepMin > 0) checks.push(c.first >= q.stepMin && (q.stepMax === 0 || c.first <= q.stepMax));
+      const hit = checks.length ? (q.logic === 'or' ? checks.some(Boolean) : checks.every(Boolean)) : true;
+      return q.invert ? !hit : hit;
+    });
+  };
+  const cases = [
+    { orderMin: 1, orderMax: 1 },
+    { orderMin: 2, orderMax: 9 },
+    { orderMin: 3, orderMax: 0 },
+    { orderMin: 1, orderMax: 5, visitsMin: 2, logic: 'and' },
+    { orderMin: 2, orderMax: 6, visitsMin: 2, logic: 'or' },
+    { orderMin: 2, orderMax: 5, stepMin: 10, logic: 'or' },
+    { visitsMin: 3, visitsMax: 5 },
+    { orderMin: 1, orderMax: 4, invert: true },
+    { orderMin: 2, orderMax: 6, invert: true, logic: 'or' },
+  ];
+  let same = true;
+  for (const query of cases) {
+    const fast = queryTrail(trail, query).cells.map((c) => c.index).join(',');
+    if (fast !== brute(query).join(',')) same = false;
+  }
+  ok(same, '次序切片快路径与全量遍历结果一致（含反选与「或」组合）');
+
+  const matchedOrder = queryTrail(trail, { orderMin: 3, orderMax: 12 }).matched;
+  eq(queryTrail(trail, { orderMin: 3, orderMax: 12, invert: true }).matched,
+    trail.order.length - matchedOrder, '反选结果 = 全量坐标 - 区间内坐标');
+
+  // 实时口径：按当前播放步数截取轨迹（不重跑模拟）
+  const midTick = r.frames[Math.floor(r.frames.length / 2)].tick;
+  const live = sliceTrailUpToTick(trail, midTick);
+  ok(live.path.length > 0 && live.path.length < trail.path.length, '中途截取得到的轨迹点子集非空且小于全量');
+  ok(live.path.every((p) => p.tick <= midTick), '截取后仅保留不超过目标步数的轨迹点');
+  eq(new Set(live.order).size, live.order.length, '截取后坐标不重复');
+  ok(live.order.every((index, k) => live.info.get(index).order === k + 1), '截取后经过次序从 1 连续编号');
+  const liveVisits = [...live.info.values()].reduce((sum, c) => sum + c.visits, 0);
+  eq(liveVisits, live.path.length, '截取后逐格经过次数之和 = 轨迹点数');
+  eq(sliceTrailUpToTick(trail, trail.maxTick).order.length, trail.order.length, '截取到末步时与全量轨迹一致');
+  eq(sliceTrailUpToTick(trail, -1).order.length, 0, '目标步数为负时返回空轨迹');
 }
 
 /* ---------- 新增：轨迹 / 蛇身连接方式 ---------- */

@@ -354,6 +354,29 @@ html, body {
 .stat.wide { flex: 1 1 100%; }
 .stat-label { display: block; color: var(--muted); font-size: 10.5px; }
 .stat-value { font-size: 13px; font-weight: 600; }
+/* 统计口径切换：数值在原节点上更新，只用一次淡入过渡提示「数据已重算」 */
+.stage-stats.stat-switch .stat-value { animation: stat-fade 0.24s ease; }
+@keyframes stat-fade {
+  from { opacity: 0.25; }
+  to { opacity: 1; }
+}
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 4px 0 2px;
+}
+.mode-switch .btn.mode-btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 12px;
+  font-size: 12px;
+}
+.mode-switch .btn.mode-btn + .btn.mode-btn { border-left: 1px solid var(--line); }
+.mode-switch .btn.mode-btn.on { background: #1c3b5a; color: #d7ecff; }
 .spark { display: block; width: 100%; max-width: 260px; height: 44px; }
 
 .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
@@ -396,6 +419,38 @@ html, body {
 
 /* ---------------- 坐标筛选查询 ---------------- */
 
+.hidden { display: none !important; }
+/* 范围配置行：下行标签 + 数值框 + 滑块 */
+.range-rows { display: flex; flex-direction: column; gap: 4px; }
+.range-line { display: flex; align-items: center; gap: 6px; }
+.range-tag { flex: 0 0 26px; color: var(--muted); font-size: 11px; }
+.range-line .input { flex: 0 0 66px; width: 66px; padding: 3px 6px; font-size: 12px; text-align: center; }
+.range.query-range { flex: 1 1 auto; min-width: 60px; }
+.query-error {
+  color: #ffb4b4;
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid #6b2b2b;
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 11px;
+  margin: 6px 0;
+}
+.query-loading {
+  color: #ffd166;
+  font-size: 11px;
+  margin: 6px 0;
+}
+.query-loading::before {
+  content: "◌ ";
+  animation: query-spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes query-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.query-preset { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 2px; }
+.query-preset .field { margin: 5px 0; }
 .query-dash { color: var(--muted); font-size: 12px; padding: 0 2px; }
 .query-list {
   max-height: 260px;
