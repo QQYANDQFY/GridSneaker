@@ -200,8 +200,8 @@ export function defaultConfig() {
       },
       lengthPolicy: {
         mode: 'fixed',
-        growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, interval: 1 },
-        shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, minLength: 1, interval: 1 },
+        growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, minLength: 1, interval: 1 },
+        shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, maxLength: 100000, minLength: 1, interval: 1 },
       },
     },
     moveRules: { left: 0.33, straight: 0.34, right: 0.33 },

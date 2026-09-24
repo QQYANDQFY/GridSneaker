@@ -373,6 +373,22 @@ html, body {
   min-width: 96px;
 }
 .stat.wide { flex: 1 1 100%; }
+/* 可点击的统计项（如「得分」→ 弹出分项明细） */
+.stat.clickable { cursor: pointer; }
+.stat.clickable:hover { border-color: var(--accent); }
+/* 配置面板设置搜索 */
+.cfg-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 4px 0 6px;
+  background: var(--panel);
+}
+.cfg-search .input { flex: 1 1 auto; }
+.cfg-search .mini-label { flex: 0 0 auto; }
 .stat-label { display: block; color: var(--muted); font-size: 10.5px; }
 .stat-value { font-size: 13px; font-weight: 600; }
 /* 统计口径切换：数值在原节点上更新，只用一次淡入过渡提示「数据已重算」 */
@@ -537,6 +553,59 @@ html, body {
 }
 .score-label.record { color: #ffd166; }
 
+/* ---------------- 模态对话框 ---------------- */
+
+.modal-mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 8, 12, 0.62);
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  z-index: 12000;
+}
+.modal-mask.show { opacity: 1; }
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  transform: translateY(8px);
+  transition: transform 0.16s ease;
+}
+.modal-mask.show .modal { transform: none; }
+.modal-title { font-size: 14px; font-weight: 600; }
+.modal-msg { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.modal-body {
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: #0d1117;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.modal-sec + .modal-sec {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.modal-sec-title { margin-bottom: 3px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.modal-item { color: #c8d3de; font-size: 12px; line-height: 1.7; }
+.modal-item::before { content: "· "; color: var(--muted); }
+.modal-foot { color: #6f7d8c; font-size: 11.5px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 /* ---------------- Toast ---------------- */
 
 .toast-box {
@@ -655,7 +724,7 @@ html, body {
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.2.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.3.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -1827,8 +1896,8 @@ function defaultConfig() {
       },
       lengthPolicy: {
         mode: 'fixed',
-        growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, interval: 1 },
-        shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, minLength: 1, interval: 1 },
+        growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, minLength: 1, interval: 1 },
+        shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, maxLength: 100000, minLength: 1, interval: 1 },
       },
     },
     moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
@@ -2956,7 +3025,7 @@ function readConfigFromLocation() {
     return null;
   }
 }
-return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT };
+return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, centerCoord, gridSizeFor, isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT };
 })();
 
 /* ===== src/core/trail.js ===== */
@@ -6569,6 +6638,236 @@ function adaptiveSpeedScale(stats, grid) {
 return { difficultyOf };
 })();
 
+/* ===== src/core/config-diff.js ===== */
+__MODULES["src/core/config-diff.js"] = (function () {
+/**
+ * 配置差异比对
+ * 把「当前配置」与「基准配置（模板基准）」的差异整理成可直接展示的中文条目，
+ * 供「载入模板前提示将被覆盖的自定义改动」等场景使用。
+ *
+ * 设计原则：
+ *  - 纯函数：只读取两个配置对象，不产生副作用，便于离线回归测试；
+ *  - 可读：字段名 / 枚举取值按界面文案中文化，且与配置面板用语保持一致；
+ *  - 克制：仅比对普通对象与原始值，数组（规则表 / 状态表等）按整体内容变化报告一条，
+ *    不递归展开，避免一条规则改动产生成百上千条噪声差异。
+ */
+const { INTERACTION_LABELS, SPAWN_LABELS } = __MODULES["src/core/config.js"];
+const { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } = __MODULES["src/core/ca.js"];
+const { DIR_LABEL_CN } = __MODULES["src/core/grid.js"];
+
+/** 顶层配置键 → 中文分组名 */
+const CONFIG_SECTION_LABELS = {
+  meta: '场景信息',
+  seed: '随机种子',
+  speed: '播放速度',
+  ruleExecution: '规则执行方式',
+  grid: '网格与坐标',
+  start: '起点与方向',
+  body: '移动体与身体',
+  moveRules: '移动规则',
+  safety: '安全避撞',
+  multiSnake: '多移动体',
+  collision: '碰撞处理',
+  selfCollisionPolicy: '自撞策略',
+  advancedRules: '高级规则',
+  environmentRules: '环境规则',
+  caMode: '元胞自动机',
+  endConditions: '结束规则',
+  style: '展示样式',
+};
+
+/** 叶子字段名 → 中文标签（与配置面板上的标签一致） */
+const CONFIG_FIELD_LABELS = {
+  name: '名称', description: '描述',
+  type: '网格类型', width: '宽', height: '高', boundary: '边界行为',
+  col: '起点列', row: '起点行', direction: '起始方向',
+  enabled: '启用', initialLength: '初始长度', segmentSize: '体节尺寸', shape: '体节形状', colorMode: '配色模式',
+  head: '头色', tail: '尾色', solid: '单色', trail: '轨迹色', custom: '自定义色带',
+  mode: '模式', trigger: '触发时机', amount: '变化量', probability: '概率',
+  maxLength: '最大长度', minLength: '最小长度', interval: '间隔',
+  left: '左转权重', straight: '直行权重', right: '右转权重',
+  avoidBody: '避让自身身体', avoidObstacle: '避让障碍物', avoidOtherAgents: '避让其它移动体',
+  times: '预定时间点', minInterval: '最小间隔', maxInterval: '最大间隔',
+  maxAgents: '最大同时存在', length: '长度', events: '触发事件', colorPalette: '逐个体配色',
+  headIntoBody: '撞到自身身体', headIntoTail: '撞到尾部', wall: '撞墙', outOfBounds: '越界',
+  obstacle: '撞障碍物', countMode: '碰撞计数方式',
+  action: '处理动作', n: '次数', maxConsecutive: '连续上限',
+  states: '状态表', neighborhood: '邻域', radius: '邻域半径', update: '更新顺序',
+  rules: '状态转移规则表', initial: '初始状态', density: '散布密度', pattern: '图案文本',
+  environmentRules: '环境规则表', advancedRules: '高级规则表',
+  syncWithAgent: '与移动体同步时机', every: '演化间隔', stopWhenAgentEnds: '随移动体结束',
+  stopOnStable: '稳定即结束', stableSteps: '稳定判定步数',
+  markerInteraction: '标记物交互机制', effects: '触碰反馈规则表', value: '数值',
+  consume: '消耗标记物', consumeTo: '消耗后状态', color: '颜色',
+  maxSteps: '步数上限', lengthReached: '长度达标', lengthTarget: '目标长度',
+  coverage: '覆盖率达标', coveragePercent: '覆盖比例', noMove: '无路可走',
+  maxTime: '运行超时', maxTimeMs: '超时毫秒', ruleEnd: '规则驱动结束',
+  caStable: '元胞稳定结束', allAgentsGone: '移动体全部消失', priority: '结束优先级',
+  selfCollision: '撞到自身', selfCollisionTotal: '自撞总次数', selfCollisionTotalN: '自撞总次数阈值',
+  selfCollisionConsecutive: '连续自撞', selfCollisionConsecutiveN: '连续自撞阈值',
+  cellSize: '格子大小', gap: '格子间距', darkMode: '暗黑模式', showGrid: '网格线',
+  showTrail: '轨迹', showBody: '身体', showArrows: '方向箭头', showCoords: '坐标文本',
+  showObstacles: '障碍物', showMarkers: '标记物', highlightRules: '规则高亮', showStartEnd: '起点/终点',
+  trailFade: '轨迹渐隐', fadeMode: '轨迹衰减模式', fadeLength: '衰减步长',
+  showEyes: '蛇头眼睛', showEffects: '交互特效', glow: '蛇身发光',
+  trailJoin: '轨迹连接方式', bodyJoin: '蛇身连接方式', trailAngle: '切角角度',
+  followAgent: '跟随移动体', axisLabels: '坐标轴',
+};
+
+/** 按「完整路径」覆盖的枚举文案（优先于按字段名匹配） */
+const VALUE_LABELS_BY_PATH = {
+  'grid.type': { square: '方格图（4 方向）', hex: '六边形图（6 方向）' },
+  'grid.boundary': {
+    stop: '停止（撞墙即停）', bounce: '反弹', wrap: '穿越到另一侧',
+    randomTurn: '随机转向', custom: '自定义（由环境规则决定）',
+  },
+  'start.direction': { ...DIR_LABEL_CN, random: '任意（每次运行随机）' },
+  'body.shape': { round: '圆形', square: '方形', hexagon: '六边形' },
+  'body.colorMode': { gradient: '头尾渐变', solid: '单色', custom: '自定义多色' },
+  'body.lengthPolicy.mode': { fixed: '固定长度（头进尾出）', variable: '可变长度（增长 / 缩短）', custom: '自定义（由环境规则决定）' },
+  'body.lengthPolicy.growth.trigger': { step: '每步', eat: '吃到标记物', collision: '发生碰撞', timer: '每 N 步' },
+  'body.lengthPolicy.shrink.trigger': { step: '每步', eat: '吃到标记物', collision: '发生碰撞', timer: '每 N 步' },
+  ruleExecution: { async: '异步（逐条即时生效）', sync: '同步（基于阶段快照）' },
+  'collision.obstacle': { stop: '停止', destroy: '撞毁障碍物后继续', pass: '直接穿过' },
+  'multiSnake.spawn.mode': SPAWN_LABELS,
+  'multiSnake.interaction.mode': INTERACTION_LABELS,
+  'caMode.neighborhood': {
+    vonNeumann: '4 邻域（Von Neumann）', moore: '8 邻域（Moore）',
+    hex: '6 邻域（六边形）', radius: '半径 r 邻域',
+  },
+  'caMode.boundary': CA_BOUNDARY_LABELS,
+  'caMode.update': CA_UPDATE_LABELS,
+  'caMode.initial.mode': { empty: '全空', random: '随机散布', pattern: '图案文本' },
+  'style.fadeMode': { linear: '线性（等速变暗）', exponential: '指数（先急后缓）' },
+  'style.trailJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
+  'style.bodyJoin': { curve: '曲线（贝塞尔）', line: '直线', angle: '预设角度切角' },
+};
+
+/** 按字段名匹配的枚举文案（无路径覆盖时使用） */
+const VALUE_LABELS_BY_KEY = {
+  direction: { ...DIR_LABEL_CN, random: '任意（每次运行随机）' },
+  mode: { fixed: '固定', variable: '可变', custom: '自定义' },
+};
+
+/** 派生 / 内部字段：与其它字段重复表达同一设置，不参与差异比对 */
+const SKIP_KEYS = new Set(['version', 'id', 'smoothTrail', 'smoothBody']);
+
+function isPlainObject(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * 「空值」归一的判定。
+ * 基准配置由 JSON 往返（JSON.parse(JSON.stringify(cfg))）得到，而 NaN / Infinity / undefined
+ * 都不可被 JSON 表示：undefined 会丢键、NaN 会变成 null。若不做归一化，
+ * 「基准里的 null ↔ 当前配置里的 NaN」会被当成用户改动，产生「（空） → NaN」这类假差异。
+ */
+function isEmptyValue(v) {
+  return v === undefined || v === null || (typeof v === 'number' && !Number.isFinite(v));
+}
+
+/** 值 → 可读文本（对象 / 数组只给规模，避免成串 JSON 撑爆提示） */
+function describeConfigValue(v) {
+  if (isEmptyValue(v)) return '（空）';
+  if (Array.isArray(v)) return `${v.length} 项`;
+  if (typeof v === 'boolean') return v ? '开' : '关';
+  if (typeof v === 'number') return String(v);
+  const text = String(v);
+  if (!text) return '（空）';
+  return text.length > 28 ? `${text.slice(0, 28)}…` : text;
+}
+
+/** 枚举取值 → 中文文案：先按完整路径匹配，再按字段名兜底 */
+function valueLabel(path, key, value) {
+  const table = VALUE_LABELS_BY_PATH[path] || VALUE_LABELS_BY_KEY[key];
+  if (table && Object.prototype.hasOwnProperty.call(table, value)) return table[value];
+  return null;
+}
+
+function formatValue(path, key, v) {
+  const label = valueLabel(path, key, v);
+  if (label !== null) return label;
+  return describeConfigValue(v);
+}
+
+function sameJSON(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function fieldLabel(path, key) {
+  return CONFIG_FIELD_LABELS[key] || key;
+}
+
+function pushChange(out, section, path, key, a, b) {
+  const label = fieldLabel(path, key);
+  const item = {
+    section,
+    path,
+    key,
+    label,
+    from: formatValue(path, key, a),
+    to: formatValue(path, key, b),
+    kind: Array.isArray(a) || Array.isArray(b) ? 'list' : 'value',
+  };
+  item.text = item.kind === 'list'
+    ? `${label}：内容已改动（${describeConfigValue(a)} → ${describeConfigValue(b)}）`
+    : `${label}：${item.from} → ${item.to}`;
+  out.push(item);
+}
+
+function walk(base, next, path, section, out) {
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(next || {})]);
+  for (const key of keys) {
+    if (SKIP_KEYS.has(key)) continue;
+    const a = base ? base[key] : undefined;
+    const b = next ? next[key] : undefined;
+    const nextPath = path ? `${path}.${key}` : key;
+    const nextSection = path ? section : key;
+    if (isPlainObject(a) && isPlainObject(b)) {
+      walk(a, b, nextPath, nextSection, out);
+      continue;
+    }
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!sameJSON(a, b)) pushChange(out, nextSection, nextPath, key, a, b);
+      continue;
+    }
+    if (a !== b) {
+      // NaN / Infinity / null / undefined 之间互不相等，但都属于「空值」，不算用户改动
+      if (isEmptyValue(a) && isEmptyValue(b)) continue;
+      pushChange(out, nextSection, nextPath, key, a, b);
+    }
+  }
+}
+
+/**
+ * 比对基准配置与当前配置，返回差异条目（按配置结构顺序）。
+ * @returns {Array<{section: string, path: string, key: string, label: string, from: string, to: string, text: string, kind: string}>}
+ */
+function diffConfigs(base, next) {
+  const out = [];
+  walk(base || {}, next || {}, '', '', out);
+  return out;
+}
+
+/** 按分组聚合差异条目，供对话框分节展示 */
+function summarizeConfigChanges(changes) {
+  const order = [];
+  const grouped = new Map();
+  for (const c of changes || []) {
+    if (!grouped.has(c.section)) {
+      grouped.set(c.section, []);
+      order.push(c.section);
+    }
+    grouped.get(c.section).push(c.text);
+  }
+  return order.map((section) => ({
+    title: CONFIG_SECTION_LABELS[section] || section,
+    items: grouped.get(section),
+  }));
+}
+return { diffConfigs, summarizeConfigChanges };
+})();
+
 /* ===== src/ui/canvas.js ===== */
 __MODULES["src/ui/canvas.js"] = (function () {
 /**
@@ -8723,7 +9022,95 @@ function toast(message, kind = 'info') {
     setTimeout(() => item.remove(), 300);
   }, 2600);
 }
-return { h, clear, group, field, row, button, numberInput, textInput, textArea, select, checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind, colorBind, toast, formatNumber };
+
+/* ---------------- 模态对话框 ---------------- */
+
+/** 当前是否有模态框打开：全局快捷键据此让位（如 Esc 不再触发暂停播放） */
+function dialogOpen() {
+  return !!document.getElementById('modal-mask');
+}
+
+/**
+ * 打开模态对话框。
+ * 关闭方式：确认 / 取消按钮、遮罩点击、Esc。
+ *
+ * @param {object} opts
+ * @param {string} opts.title       标题
+ * @param {string} [opts.message]   正文说明
+ * @param {Array<{title: string, items: string[]}>} [opts.sections] 分节明细列表
+ * @param {string} [opts.footnote]  底部补充说明
+ * @param {string} [opts.confirmText='确认']
+ * @param {string} [opts.cancelText='取消']
+ * @param {boolean} [opts.danger]   破坏性操作：默认焦点落在「取消」，避免误按回车覆盖
+ * @param {boolean} [opts.alert]    仅提示：隐藏取消按钮
+ * @returns {Promise<boolean>} 确认为 true，取消为 false
+ */
+function openDialog(opts = {}) {
+  return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
+    const mask = h('div', { id: 'modal-mask', class: 'modal-mask' });
+    const dialog = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
+
+    dialog.appendChild(h('div', { class: 'modal-title' }, opts.title || '提示'));
+    if (opts.message) dialog.appendChild(h('div', { class: 'modal-msg' }, opts.message));
+    if (opts.sections && opts.sections.length) {
+      const body = h('div', { class: 'modal-body' });
+      for (const sec of opts.sections) {
+        body.appendChild(h('div', { class: 'modal-sec' },
+          sec.title ? h('div', { class: 'modal-sec-title' }, sec.title) : null,
+          ...(sec.items || []).map((item) => h('div', { class: 'modal-item' }, item))));
+      }
+      dialog.appendChild(body);
+    }
+    if (opts.footnote) dialog.appendChild(h('div', { class: 'modal-foot' }, opts.footnote));
+
+    let settled = false;
+    const close = (ok) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      mask.remove();
+      if (prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected) prevFocus.focus();
+      resolve(ok);
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // 阻止全局快捷键（Esc = 暂停播放）同时触发
+      close(false);
+    };
+
+    const actions = h('div', { class: 'modal-actions' });
+    let primary = null;
+    let cancel = null;
+    if (!opts.alert) {
+      cancel = button(opts.cancelText || '取消', () => close(false), 'ghost');
+      actions.appendChild(cancel);
+    }
+    primary = button(opts.confirmText || (opts.alert ? '知道了' : '确认'), () => close(true), opts.danger ? 'primary danger' : 'primary');
+    actions.appendChild(primary);
+    dialog.appendChild(actions);
+
+    mask.appendChild(dialog);
+    mask.addEventListener('mousedown', (e) => { if (e.target === mask) close(false); });
+    document.body.appendChild(mask);
+    document.addEventListener('keydown', onKey, true);
+    requestAnimationFrame(() => { if (mask.isConnected) mask.classList.add('show'); });
+    // 破坏性操作默认聚焦「取消」：回车不会误触发覆盖
+    (opts.danger && cancel ? cancel : primary).focus();
+  });
+}
+
+/** 确认对话框（确认 / 取消两个操作） */
+function confirmDialog(opts) {
+  return openDialog({ ...opts, alert: false });
+}
+
+/** 提示对话框（仅一个关闭按钮） */
+function alertDialog(opts) {
+  return openDialog({ ...opts, alert: true });
+}
+return { h, clear, group, field, row, button, numberInput, textInput, textArea, select, checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind, colorBind, toast, formatNumber, confirmDialog, alertDialog, dialogOpen };
 })();
 
 /* ===== src/ui/app.js ===== */
@@ -8737,6 +9124,7 @@ const { PRESETS, buildPresetConfig, matchPreset } = __MODULES["src/core/presets.
 const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } = __MODULES["src/core/simulation.js"];
 const { formatScore } = __MODULES["src/core/score.js"];
 const { difficultyOf } = __MODULES["src/core/difficulty.js"];
+const { diffConfigs, summarizeConfigChanges } = __MODULES["src/core/config-diff.js"];
 const { Renderer } = __MODULES["src/ui/canvas.js"];
 const { dirNames, DIR_LABEL_CN: DIR_LABELS } = __MODULES["src/core/grid.js"];
 const { stateLabel, stateLabelWithKey } = __MODULES["src/core/world.js"];
@@ -8745,7 +9133,7 @@ const { SUBJECT_LABELS, TRIGGER_LABELS } = __MODULES["src/core/rules.js"];
 const { CA_UPDATE_LABELS, CA_BOUNDARY_LABELS } = __MODULES["src/core/ca.js"];
 const { OBJECT_LABELS, STAT_LABELS } = __MODULES["src/core/conditions.js"];
 const { configToJSON, trailToCSV, trailToJSON, trailToSVG, logsToCSV, logsToJSON, frameToSVG, downloadText, downloadCanvasPNG, downloadSVG } = __MODULES["src/core/exporters.js"];
-const { h, clear, group, field, row, button, numberInput, textInput, textArea, select, checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind, colorBind, toast, formatNumber } = __MODULES["src/ui/forms.js"];
+const { h, clear, group, field, row, button, numberInput, textInput, textArea, select, checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind, colorBind, toast, formatNumber, confirmDialog, alertDialog, dialogOpen } = __MODULES["src/ui/forms.js"];
 
 /* ------------------------------------------------------------------ */
 /* 常量                                                                */
@@ -8842,6 +9230,17 @@ const state = {
   score: null,
   /** 当前地图的最高分（按网格类型 / 尺寸 / 边界策略区分） */
   highScore: 0,
+  /**
+   * 是否显示「运行评价」读数：得分 / 评分等级（控制条与统计面板）+ 难度 / 拥挤度（控制条）。
+   * 默认隐藏，可在「展示样式 → 界面配置」开启，选择结果本地持久化。
+   */
+  showScore: false,
+  /** 模板基准配置：用于检测「载入模板」前的用户自定义改动 */
+  cfgBaseline: null,
+  /** 配置撤销栈：记录被模板 / 导入替换掉的配置，支持 Ctrl+Z 回退 */
+  cfgHistory: [],
+  /** 配置面板设置搜索关键词 */
+  cfgSearch: '',
 };
 
 const els = {};
@@ -8877,6 +9276,8 @@ function notifyEndConditionSync(code, on) {
 
 function init() {
   state.cfg = initialConfig();
+  // 启动即把当前配置记为「模板基准」：之后用户的自定义改动都由它与当前配置比对得出
+  state.cfgBaseline = snapshotConfig(state.cfg);
   state.trailQuery = defaultTrailQuery();
   loadTrailState();
   els.canvas = document.getElementById('canvas');
@@ -8889,6 +9290,7 @@ function init() {
 
   renderer = new Renderer(els.canvas);
   buildControls();
+  applyScoreVisibility();
   bindCanvasEvents();
   bindKeyboard();
   renderConfigPanel();
@@ -8905,7 +9307,17 @@ function bindKeyboard() {
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // 模态对话框打开时让位：Esc / 回车交由对话框处理
+    if (dialogOpen()) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      // Ctrl/Cmd + Z：撤销上一次配置整体替换（载入模板 / 导入 / 恢复）
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        undoConfigReplace();
+      }
+      return;
+    }
+    if (e.altKey) return;
     /** Shift 组合键用于「大步长」跳帧 */
     const jump = e.shiftKey ? 10 : 1;
     switch (e.key) {
@@ -9057,8 +9469,14 @@ const TRAIL_PRESET_KEY = 'gridsneaker:trail-presets';
 const ADAPTIVE_KEY = 'gridsneaker:adaptive-speed';
 /** 最高分记录：按地图指纹分别保存，避免不同网格尺寸互相覆盖 */
 const HIGH_SCORE_KEY = 'gridsneaker:high-score';
+/** 「得分 / 评分等级」模块的显示偏好（默认隐藏） */
+const SHOW_SCORE_KEY = 'gridsneaker:show-score';
 /** 预设数量上限，超出后按保存顺序淘汰最早的 */
 const TRAIL_PRESET_LIMIT = 20;
+/** 配置撤销栈上限 */
+const CONFIG_HISTORY_LIMIT = 12;
+/** 「载入模板」确认窗口中最多逐项列出的改动条数 */
+const CONFIG_CHANGE_DISPLAY_LIMIT = 40;
 
 let trailPersistTimer = null;
 
@@ -9090,6 +9508,7 @@ function loadTrailState() {
   }
   state.trailPresets = loadTrailPresets();
   state.adaptive = loadAdaptive();
+  state.showScore = loadShowScore();
 }
 
 /* ---------------- 得分系统：最高分与自适应难度的本地持久化 ---------------- */
@@ -9143,6 +9562,144 @@ function saveAdaptive(v) {
   } catch (e) {
     /* 隐私模式静默忽略 */
   }
+}
+
+/* ---------------- 界面显示偏好：运行评价读数（得分 / 评分等级 / 难度 / 拥挤度，默认隐藏） ---------------- */
+
+/** 「得分 / 评分等级」在统计面板中的键名 */
+const SCORE_STAT_KEYS = new Set(['score', 'scoreGrade']);
+
+function loadShowScore() {
+  try {
+    return localStorage.getItem(SHOW_SCORE_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveShowScore(v) {
+  try {
+    localStorage.setItem(SHOW_SCORE_KEY, v ? '1' : '0');
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
+}
+
+/** 切换「运行评价」读数的显示状态：控制条得分行 / 难度行与统计面板两项同步显隐 */
+function setShowScore(v) {
+  state.showScore = !!v;
+  saveShowScore(state.showScore);
+  applyScoreVisibility();
+  renderStageStats();
+  toast(state.showScore ? '已显示「得分 / 评级 / 难度」' : '已隐藏「得分 / 评级 / 难度」', 'info');
+}
+
+/**
+ * 按偏好切换控制条上运行评价读数的显隐：
+ * 得分行（得分 + 最高分）与难度行（难度等级 + 拥挤度）作为同一类读数整体开关，
+ * 整行一起隐藏可避免留下空行占位。
+ */
+function applyScoreVisibility() {
+  if (els.evalLine) els.evalLine.classList.toggle('hidden', !state.showScore);
+}
+
+/** 当前需要展示的统计项：运行评价读数隐藏时不生成对应统计格与摘要行 */
+function activeStatKeys() {
+  return state.showScore ? STAT_KEYS : STAT_KEYS.filter(([key]) => !SCORE_STAT_KEYS.has(key));
+}
+
+/* ---------------- 配置基准 / 改动检测 / 撤销栈 ---------------- */
+
+/** 深拷贝配置（配置为纯 JSON 结构，不含函数） */
+function snapshotConfig(cfg) {
+  return JSON.parse(JSON.stringify(cfg));
+}
+
+function rememberConfigBaseline(cfg) {
+  state.cfgBaseline = snapshotConfig(cfg);
+}
+
+/** 当前配置相对「模板基准」的自定义改动条目 */
+function collectConfigChanges() {
+  if (!state.cfgBaseline) return [];
+  return diffConfigs(state.cfgBaseline, state.cfg);
+}
+
+/** 配置即将被整体替换前记录现场，供 Ctrl+Z 撤销 */
+function pushConfigHistory(label) {
+  state.cfgHistory.push({
+    label,
+    cfg: snapshotConfig(state.cfg),
+    baseline: state.cfgBaseline ? snapshotConfig(state.cfgBaseline) : null,
+  });
+  if (state.cfgHistory.length > CONFIG_HISTORY_LIMIT) state.cfgHistory.shift();
+}
+
+/** 用新配置整体替换当前配置，并把新配置记为新的模板基准 */
+function applyConfigReplacement(cfg, label, okMsg) {
+  pushConfigHistory(label);
+  state.cfg = cfg;
+  rememberConfigBaseline(cfg);
+  state.frameIndex = 0;
+  state.dirty = true;
+  rebuildAll();
+  if (okMsg) toast(okMsg, 'success');
+}
+
+/** 撤销上一次配置整体替换（载入模板 / 空白配置 / 导入 / 恢复） */
+function undoConfigReplace() {
+  const entry = state.cfgHistory.pop();
+  if (!entry) {
+    toast('没有可撤销的配置变更', 'info');
+    return;
+  }
+  state.cfg = entry.cfg;
+  state.cfgBaseline = entry.baseline;
+  state.frameIndex = 0;
+  state.dirty = true;
+  rebuildAll();
+  toast(`已撤销「${entry.label}」`, 'success');
+}
+
+/** 载入模板后的状态校验提示（如交互类模板未启用「蛇长度可变」） */
+function warnAfterTemplate() {
+  const warn = markerLengthWarning();
+  if (warn) toast(warn, 'warn');
+}
+
+/**
+ * 载入预设模板。
+ * 载入前先用「模板基准 ↔ 当前配置」比对出用户的自定义改动：
+ * 无改动直接载入；有改动则弹出确认窗口逐项列明将被覆盖的内容，
+ * 由用户选择「覆盖保存」或「取消载入」，避免误操作丢失已调好的配置。
+ */
+function loadPresetTemplate(presetId) {
+  const target = normalizeConfig(buildPresetConfig(presetId));
+  const changes = collectConfigChanges();
+  if (!changes.length) {
+    applyConfigReplacement(target, '载入模板', '已载入模板');
+    warnAfterTemplate();
+    return;
+  }
+  const shown = changes.slice(0, CONFIG_CHANGE_DISPLAY_LIMIT);
+  confirmDialog({
+    title: '载入模板将覆盖当前自定义改动',
+    message: `当前配置相对模板基准共有 ${changes.length} 处自定义改动，载入「${target.meta.name}」会覆盖以下内容：`,
+    sections: summarizeConfigChanges(shown),
+    footnote: changes.length > shown.length
+      ? `仅列出前 ${shown.length} 项，实际共 ${changes.length} 项改动。覆盖后可用 Ctrl+Z 撤销。`
+      : '覆盖后仍可用 Ctrl+Z 撤销本次载入。',
+    confirmText: '覆盖保存',
+    cancelText: '取消载入',
+    danger: true,
+  }).then((ok) => {
+    if (!ok) {
+      toast('已取消载入模板', 'info');
+      return;
+    }
+    applyConfigReplacement(target, '载入模板', '已载入模板（原自定义改动已覆盖）');
+    warnAfterTemplate();
+  });
 }
 
 function loadTrailPresets() {
@@ -9276,7 +9833,7 @@ function recompute(opts = {}) {
   refreshTrailFilter(); // 轨迹模型已重建，按当前筛选条件重新高亮
   refreshCompare(); // 轨迹模型已重建，按基准快照重算差异叠加层
   refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
-  if (brokeRecord && state.score) toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`, 'success');
+  if (brokeRecord && state.score && state.showScore) toast(`刷新最高分：${formatScore(state.score.total)}（${state.score.gradeLabel}）`, 'success');
 }
 
 /**
@@ -9450,10 +10007,11 @@ function buildControls() {
   els.endJumpBtn = button('查看结束规则', () => focusEndReason(), 'ghost small');
   els.continueBtn = button('继续运行 +' + DEFAULT_FRAME_CAP, () => continueRun(), 'primary small');
 
-  // 得分系统：本轮得分 / 等级 / 该地图的最高分
+  // 运行评价读数：得分 / 评分等级 + 难度 / 拥挤度，默认隐藏，可在「展示样式 → 界面配置」开启
   els.scoreLabel = h('span', { class: 'score-label' }, '得分：尚未运行');
   // 动态难度：拥挤度与难度等级指示
   els.diffLabel = h('span', { class: 'hint' }, '');
+  els.evalLine = h('div', { class: 'controls-line' }, els.scoreLabel, els.diffLabel);
   // 自适应难度：拥挤时自动放慢播放
   els.adaptiveChk = checkbox(state.adaptive, (v) => {
     state.adaptive = v;
@@ -9481,9 +10039,9 @@ function buildControls() {
     h('span', { class: 'mini-label' }, '种子'), els.seedInput, els.seedDice));
   c.appendChild(h('div', { class: 'controls-line' }, els.timeline, els.frameLabel));
   c.appendChild(h('div', { class: 'controls-line' }, els.endLabel, els.endJumpBtn, els.continueBtn));
-  c.appendChild(h('div', { class: 'controls-line' }, els.scoreLabel, els.diffLabel));
+  c.appendChild(els.evalLine);
   c.appendChild(h('div', { class: 'controls-line' },
-    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步（Shift 跳 10 帧） · ↑ ↓ 调速 · - = 减半/加倍 · Home / End 首末帧 · R 重置 · Esc 暂停')));
+    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步（Shift 跳 10 帧） · ↑ ↓ 调速 · - = 减半/加倍 · Home / End 首末帧 · R 重置 · Esc 暂停 · Ctrl+Z 撤销配置')));
   updateSpeedLabel();
 }
 
@@ -9561,6 +10119,23 @@ function updateScoreLabel() {
     const d = currentDifficulty();
     els.diffLabel.textContent = `难度 ${d.label} · 拥挤度 ${Math.round(d.crowding * 100)}%${state.adaptive ? ' · 自适应调速中' : ''}`;
   }
+}
+
+/** 得分分项明细：把总分拆成可解释的 6 项，说明每一个得分来源 */
+function showScoreDetail() {
+  const sc = state.score;
+  if (!sc) {
+    toast('尚未运行模拟', 'warn');
+    return;
+  }
+  alertDialog({
+    title: `得分明细 · ${sc.gradeLabel}`,
+    message: `总分 ${formatScore(sc.total)} · 相对分 ${sc.ratio.toFixed(2)}（总分 ÷ 网格格数 ${state.result ? state.result.grid.size : '-'}）`,
+    sections: [
+      { title: '分项构成', items: sc.parts.map((p) => `${p.label}：${formatScore(p.value)}（${p.detail}）`) },
+      ...(state.highScore > 0 ? [{ title: '地图记录', items: [`当前地图最高分：${formatScore(state.highScore)}`] }] : []),
+    ],
+  });
 }
 
 /** 隐藏悬浮提示 */
@@ -9737,11 +10312,16 @@ function renderStageStats() {
   clear(host);
   els.statSpans = {};
   if (!state.result) return;
-  for (const [key, label] of STAT_KEYS) {
+  // 得分模块默认隐藏：隐藏时不生成对应统计格，也无对应摘要行
+  for (const [key, label] of activeStatKeys()) {
     const span = h('span', { class: 'stat-value' }, '-');
     els.statSpans[key] = span;
-    host.appendChild(h('div', { class: `stat ${key === 'endReason' ? 'wide' : ''}` },
-      h('span', { class: 'stat-label' }, label), span));
+    const clickable = key === 'score';
+    host.appendChild(h('div', {
+      class: `stat ${key === 'endReason' ? 'wide' : ''}${clickable ? ' clickable' : ''}`,
+      title: clickable ? '点击查看得分分项明细' : null,
+      onclick: clickable ? showScoreDetail : null,
+    }, h('span', { class: 'stat-label' }, label), span));
   }
   els.spark = h('canvas', { class: 'spark', width: 220, height: 44 });
   els.turnBars = h('div', { class: 'bars' });
@@ -9931,27 +10511,17 @@ function renderSidePanel() {
   side.appendChild(group('预设模板', [
     field('模板', presetSel),
     presetDesc,
-    row(button('载入模板', () => {
-      state.cfg = normalizeConfig(buildPresetConfig(presetSel.value));
-      state.frameIndex = 0;
-      state.dirty = true;
-      rebuildAll();
-      toast('已载入模板', 'success');
-      // 状态校验：交互类模板若未启用「蛇长度可变」，立刻醒目提示
-      const warn = markerLengthWarning();
-      if (warn) toast(warn, 'warn');
-    }, 'primary'), button('空白配置', () => {
-      state.cfg = normalizeConfig(defaultConfig());
-      state.frameIndex = 0;
-      rebuildAll();
-    }, 'ghost'), button('恢复上次配置', () => {
-      const last = loadLocalConfig();
-      if (!last) { toast('本地没有可恢复的配置', 'warn'); return; }
-      state.cfg = last;
-      state.frameIndex = 0;
-      rebuildAll();
-      toast('已恢复上次配置', 'success');
-    }, 'ghost')),
+    row(
+      button('载入模板', () => loadPresetTemplate(presetSel.value), 'primary'),
+      button('空白配置', () => applyConfigReplacement(normalizeConfig(defaultConfig()), '空白配置', '已载入空白配置'), 'ghost'),
+      button('恢复上次配置', () => {
+        const last = loadLocalConfig();
+        if (!last) { toast('本地没有可恢复的配置', 'warn'); return; }
+        applyConfigReplacement(last, '恢复上次配置', '已恢复上次配置');
+      }, 'ghost'),
+      button('撤销上次变更', undoConfigReplace, 'ghost'),
+    ),
+    h('div', { class: 'hint' }, '载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
   ], { open: true }));
 
   side.appendChild(group('配置导入导出', [
@@ -9964,9 +10534,7 @@ function renderSidePanel() {
       button('载入链接配置', () => {
         const shared = readConfigFromLocation();
         if (!shared) { toast('当前链接中没有配置参数', 'warn'); return; }
-        state.cfg = normalizeConfig(shared);
-        rebuildAll();
-        toast('已从链接载入配置', 'success');
+        applyConfigReplacement(normalizeConfig(shared), '载入链接配置', '已从链接载入配置');
       }),
     ),
     field('粘贴 JSON 导入', (() => {
@@ -9977,9 +10545,7 @@ function renderSidePanel() {
           const v = validateConfig(obj);
           if (!v.ok) { toast(`配置无效：${v.errors[0]}`, 'error'); return; }
           if (v.warnings.length) toast(v.warnings[0], 'warn');
-          state.cfg = normalizeConfig(obj);
-          rebuildAll();
-          toast('配置导入成功', 'success');
+          applyConfigReplacement(normalizeConfig(obj), '导入配置', '配置导入成功');
         } catch (e) {
           toast(`JSON 解析失败：${e.message}`, 'error');
         }
@@ -10101,7 +10667,7 @@ function statsSummaryText() {
   const data = statValues();
   if (!data) return '';
   const lines = [`# GridSneaker 统计摘要 · ${state.cfg.meta.name || '未命名'} · ${statModeInfo().label}`];
-  for (const [key, label] of STAT_KEYS) lines.push(`${label}：${data.values[key] ?? '-'}`);
+  for (const [key, label] of activeStatKeys()) lines.push(`${label}：${data.values[key] ?? '-'}`);
   if (state.trailCells && state.trailCells.length) {
     lines.push(`坐标筛选：匹配 ${state.trailCells.length} 个坐标 · ${trailQueryLabel(state.trailQuery)}`);
   }
@@ -10789,6 +11355,7 @@ function renderConfigPanel() {
   clear(root);
   endConditionSyncers.clear(); // 重建面板前清空旧的联动回调，避免重复累积
   const cfg = state.cfg;
+  root.appendChild(configSearchBar());
   root.appendChild(sceneGroup(cfg));
   root.appendChild(gridGroup(cfg));
   root.appendChild(bodyGroup(cfg));      // 起点 · 移动体 · 长度策略
@@ -10799,6 +11366,66 @@ function renderConfigPanel() {
   root.appendChild(caGroup(cfg));
   root.appendChild(endGroup(cfg));
   root.appendChild(styleGroup(cfg));
+  // 面板重建后按当前关键词重新过滤，避免调整参数后搜索状态丢失
+  applyConfigSearch(state.cfgSearch);
+}
+
+/* ---------------- 设置搜索 ---------------- */
+
+/** 由搜索自动展开过的分组键：清除搜索时还原为展开前的状态 */
+const cfgSearchOpened = new Set();
+
+function configSearchBar() {
+  const input = h('input', {
+    type: 'text',
+    class: 'input cfg-search-input',
+    placeholder: '搜索设置项（如：边界 / 长度 / 颜色 / 概率）',
+  });
+  input.value = state.cfgSearch;
+  input.addEventListener('input', () => {
+    state.cfgSearch = input.value;
+    applyConfigSearch(input.value);
+  });
+  els.cfgSearchHint = h('span', { class: 'mini-label' }, '');
+  return h('div', { class: 'cfg-search' },
+    input,
+    button('清除', () => { state.cfgSearch = ''; input.value = ''; applyConfigSearch(''); }, 'ghost small'),
+    els.cfgSearchHint);
+}
+
+/**
+ * 按关键词过滤配置分组：
+ * 命中（自身或其子分组文本包含关键词）的分组保留并自动展开，未命中的整组隐藏；
+ * 关键词清空后恢复全部显示，并收起由搜索自动展开的分组。
+ */
+function applyConfigSearch(query) {
+  const root = els.config;
+  if (!root) return;
+  const groups = [...root.querySelectorAll('details.group')];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) {
+    for (const g of groups) {
+      g.classList.remove('hidden');
+      if (cfgSearchOpened.has(g.dataset.groupKey)) g.open = false;
+    }
+    cfgSearchOpened.clear();
+    if (els.cfgSearchHint) els.cfgSearchHint.textContent = '';
+    return;
+  }
+  let matched = 0;
+  for (const g of groups) {
+    const hit = String(g.textContent || '').toLowerCase().includes(q);
+    g.classList.toggle('hidden', !hit);
+    if (!hit) continue;
+    matched++;
+    if (!g.open) {
+      g.open = true;
+      cfgSearchOpened.add(g.dataset.groupKey);
+    }
+  }
+  if (els.cfgSearchHint) {
+    els.cfgSearchHint.textContent = matched ? `${matched} 个分组匹配` : '未找到匹配设置';
+  }
 }
 
 function sceneGroup(cfg) {
@@ -10818,6 +11445,10 @@ function sceneGroup(cfg) {
 
 function gridGroup(cfg) {
   const g = cfg.grid;
+  // 格数提示随宽 / 高即时刷新：改宽高不会重建面板，静态文本会停留在旧值
+  const gridSizeLabel = h('div', { class: 'hint' });
+  const syncGridSize = () => { gridSizeLabel.textContent = `网格共 ${g.width * g.height} 格`; };
+  syncGridSize();
   return group('网格与坐标', [
     field('网格类型', selBind(g, 'type', () => {
       g.width = Math.min(g.width, 200);
@@ -10833,8 +11464,8 @@ function gridGroup(cfg) {
       { value: 'hex', label: '六边形图（6 方向，轴向坐标）' },
     ]), g.type === 'hex' ? '六边形使用尖顶轴向坐标，邻居为 6 方向' : '方格使用偏移坐标，4 方向移动 + 4/8 邻域感知'),
     row(
-      field('宽', numBind(g, 'width', () => onSimChange(), { min: 2, max: 400 })),
-      field('高', numBind(g, 'height', () => onSimChange(), { min: 2, max: 400 })),
+      field('宽', numBind(g, 'width', () => { syncGridSize(); onSimChange(); }, { min: 2, max: 400 })),
+      field('高', numBind(g, 'height', () => { syncGridSize(); onSimChange(); }, { min: 2, max: 400 })),
     ),
     field('边界行为', selBind(g, 'boundary', () => onSimChange(), [
       { value: 'stop', label: '停止（撞墙即停）' },
@@ -10843,7 +11474,7 @@ function gridGroup(cfg) {
       { value: 'randomTurn', label: '随机转向' },
       { value: 'custom', label: '自定义（由环境规则决定）' },
     ])),
-    h('div', { class: 'hint' }, `网格共 ${g.width * g.height} 格`),
+    gridSizeLabel,
   ]);
 }
 
@@ -11788,6 +12419,7 @@ const CA_TEMPLATE_PRESET_IDS = {
 };
 
 function applyCaTemplate(cfg, kind) {
+  pushConfigHistory('应用 CA 快捷模板');
   const ca = cfg.caMode;
   ca.enabled = true;
   ca.radius = 1;
@@ -11872,6 +12504,8 @@ function applyCaTemplate(cfg, kind) {
   const preset = PRESETS.find((p) => p.id === CA_TEMPLATE_PRESET_IDS[kind]);
   if (preset) cfg.meta.name = preset.name;
   rebuildAll();
+  // 快捷模板同样视作一次基准变更：之后的用户改动都以这里的配置为基准比对
+  rememberConfigBaseline(state.cfg);
   toast(kind === 'lifeInteractive' ? '已应用「生命游戏（交互版）」模板：吞噬活细胞即增长' : '已应用元胞自动机模板', 'success');
   // 状态校验：交互版依赖「蛇长度可变」，未启用时立刻醒目提示
   const warn = markerLengthWarning();
@@ -11986,6 +12620,9 @@ function styleGroup(cfg) {
       checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
       checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛'),
     ), '蛇头眼睛默认隐藏，勾选后显示'),
+    field('界面配置', row(
+      checkbox(state.showScore, (v) => setShowScore(v), '得分 / 评级 / 难度 / 拥挤度'),
+    ), '默认隐藏；勾选后在控制条与统计面板显示得分、评分等级、难度与拥挤度（地图最高分记录始终照常保存）'),
   ], { open: false });
 }
 

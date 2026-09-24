@@ -265,3 +265,91 @@ export function toast(message, kind = 'info') {
     setTimeout(() => item.remove(), 300);
   }, 2600);
 }
+
+/* ---------------- 模态对话框 ---------------- */
+
+/** 当前是否有模态框打开：全局快捷键据此让位（如 Esc 不再触发暂停播放） */
+export function dialogOpen() {
+  return !!document.getElementById('modal-mask');
+}
+
+/**
+ * 打开模态对话框。
+ * 关闭方式：确认 / 取消按钮、遮罩点击、Esc。
+ *
+ * @param {object} opts
+ * @param {string} opts.title       标题
+ * @param {string} [opts.message]   正文说明
+ * @param {Array<{title: string, items: string[]}>} [opts.sections] 分节明细列表
+ * @param {string} [opts.footnote]  底部补充说明
+ * @param {string} [opts.confirmText='确认']
+ * @param {string} [opts.cancelText='取消']
+ * @param {boolean} [opts.danger]   破坏性操作：默认焦点落在「取消」，避免误按回车覆盖
+ * @param {boolean} [opts.alert]    仅提示：隐藏取消按钮
+ * @returns {Promise<boolean>} 确认为 true，取消为 false
+ */
+export function openDialog(opts = {}) {
+  return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
+    const mask = h('div', { id: 'modal-mask', class: 'modal-mask' });
+    const dialog = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
+
+    dialog.appendChild(h('div', { class: 'modal-title' }, opts.title || '提示'));
+    if (opts.message) dialog.appendChild(h('div', { class: 'modal-msg' }, opts.message));
+    if (opts.sections && opts.sections.length) {
+      const body = h('div', { class: 'modal-body' });
+      for (const sec of opts.sections) {
+        body.appendChild(h('div', { class: 'modal-sec' },
+          sec.title ? h('div', { class: 'modal-sec-title' }, sec.title) : null,
+          ...(sec.items || []).map((item) => h('div', { class: 'modal-item' }, item))));
+      }
+      dialog.appendChild(body);
+    }
+    if (opts.footnote) dialog.appendChild(h('div', { class: 'modal-foot' }, opts.footnote));
+
+    let settled = false;
+    const close = (ok) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      mask.remove();
+      if (prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected) prevFocus.focus();
+      resolve(ok);
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // 阻止全局快捷键（Esc = 暂停播放）同时触发
+      close(false);
+    };
+
+    const actions = h('div', { class: 'modal-actions' });
+    let primary = null;
+    let cancel = null;
+    if (!opts.alert) {
+      cancel = button(opts.cancelText || '取消', () => close(false), 'ghost');
+      actions.appendChild(cancel);
+    }
+    primary = button(opts.confirmText || (opts.alert ? '知道了' : '确认'), () => close(true), opts.danger ? 'primary danger' : 'primary');
+    actions.appendChild(primary);
+    dialog.appendChild(actions);
+
+    mask.appendChild(dialog);
+    mask.addEventListener('mousedown', (e) => { if (e.target === mask) close(false); });
+    document.body.appendChild(mask);
+    document.addEventListener('keydown', onKey, true);
+    requestAnimationFrame(() => { if (mask.isConnected) mask.classList.add('show'); });
+    // 破坏性操作默认聚焦「取消」：回车不会误触发覆盖
+    (opts.danger && cancel ? cancel : primary).focus();
+  });
+}
+
+/** 确认对话框（确认 / 取消两个操作） */
+export function confirmDialog(opts) {
+  return openDialog({ ...opts, alert: false });
+}
+
+/** 提示对话框（仅一个关闭按钮） */
+export function alertDialog(opts) {
+  return openDialog({ ...opts, alert: true });
+}

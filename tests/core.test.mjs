@@ -6,7 +6,7 @@ import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
-  normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
+  normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
   buildShareUrl, isBodyEnabled, JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
 } from '../src/core/config.js';
 import {
@@ -21,6 +21,7 @@ import { evaluateClause, describeClause } from '../src/core/conditions.js';
 import { applyAction, ACTION_LABELS } from '../src/core/actions.js';
 import { PRESETS, buildPresetConfig } from '../src/core/presets.js';
 import { computeScore, formatScore, gradeFor } from '../src/core/score.js';
+import { diffConfigs, summarizeConfigChanges, describeConfigValue } from '../src/core/config-diff.js';
 import { crowdingOf, difficultyOf, adaptiveSpeedScale } from '../src/core/difficulty.js';
 import { Renderer, STYLE_DEFAULTS } from '../src/ui/canvas.js';
 
@@ -2191,6 +2192,138 @@ section('边界穿越：穿梭特效与跨缝渲染连续性');
   eq(gapViolations, 0, '本体链在任意插值进度下相邻体节间距均不超过 1.6 格（无视觉断层）');
   eq(shapeViolations, 0, '镜像链与本体链形状一致（不出现孤立单节副本）');
   ok(crossingSamples > 0, '测试确实覆盖了跨缝插值场景');
+}
+
+/* ---------- 配置差异比对（模板载入改动检测） ---------- */
+section('配置差异比对（模板载入改动检测）');
+{
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const base = defaultConfig();
+
+  // 1) 未改动：不应产生任何差异条目
+  eq(diffConfigs(base, clone(base)).length, 0, '完全相同的配置不产生差异条目');
+  eq(diffConfigs(base, clone(base)).length, 0, '重复调用结果稳定（纯函数无副作用）');
+  ok(base.grid.width === 24, '基准配置网格宽度为默认值 24（后续断言依赖）');
+
+  // 2) 标量字段：输出中文化的「字段：旧 → 新」文本
+  {
+    const next = clone(base);
+    next.grid.width = 40;
+    const changes = diffConfigs(base, next);
+    eq(changes.length, 1, '仅改动一个标量字段时只产生一条差异');
+    eq(changes[0].section, 'grid', '差异条目归属配置分组 grid');
+    eq(changes[0].path, 'grid.width', '差异条目带有完整字段路径');
+    eq(changes[0].label, '宽', '字段名中文化为「宽」');
+    eq(changes[0].kind, 'value', '标量差异 kind 为 value');
+    eq(changes[0].text, '宽：24 → 40', '标量差异文本形如「宽：24 → 40」');
+  }
+
+  // 3) 枚举字段：取值中文化，而不是直接暴露英文键名
+  {
+    const next = clone(base);
+    next.grid.boundary = 'wrap';
+    next.collision.obstacle = 'pass';
+    next.caMode.neighborhood = 'vonNeumann';
+    const changes = diffConfigs(base, next);
+    const byPath = new Map(changes.map((c) => [c.path, c]));
+    eq(byPath.size, 3, '三处枚举改动各产生一条差异');
+    eq(byPath.get('grid.boundary').text, '边界行为：停止（撞墙即停） → 穿越到另一侧', '边界行为枚举取中文文案');
+    eq(byPath.get('collision.obstacle').text, '撞障碍物：停止 → 直接穿过', '碰撞处理枚举取中文文案');
+    eq(byPath.get('caMode.neighborhood').text, '邻域：8 邻域（Moore） → 4 邻域（Von Neumann）', '元胞邻域枚举取中文文案');
+  }
+
+  // 4) 布尔字段：以「开 / 关」呈现
+  {
+    const next = clone(base);
+    next.multiSnake.enabled = true;
+    const change = diffConfigs(base, next).find((c) => c.path === 'multiSnake.enabled');
+    ok(!!change, '布尔字段改动会被识别');
+    eq(change.text, '启用：关 → 开', '布尔差异以「开 / 关」呈现');
+  }
+
+  // 5) 数组（规则表 / 状态表）：整体内容变化只报告一条，不递归展开
+  {
+    const next = clone(base);
+    next.environmentRules = [defaultRule({ name: '新规则' })];
+    next.caMode.states = [...next.caMode.states, { name: 'sand', color: '#e8c07d', blocking: false, symbol: 'S', render: 'fill' }];
+    const changes = diffConfigs(base, next);
+    eq(changes.length, 2, '两个数组字段各产生一条差异（不逐元素展开）');
+    const rules = changes.find((c) => c.path === 'environmentRules');
+    const states = changes.find((c) => c.path === 'caMode.states');
+    eq(rules.kind, 'list', '规则表差异 kind 为 list');
+    eq(rules.label, '环境规则表', '顶层规则表字段名中文化');
+    ok(/内容已改动/.test(rules.text) && /0 项 → 1 项/.test(rules.text), '规则表差异文本给出规模变化');
+    eq(states.text, '状态表：内容已改动（3 项 → 4 项）', '状态表差异文本给出规模变化');
+  }
+
+  // 6) 派生 / 内部字段不参与比对，避免产生噪声
+  {
+    const next = clone(base);
+    next.version = '9.9';
+    next.style.smoothTrail = !next.style.smoothTrail;
+    next.style.smoothBody = !next.style.smoothBody;
+    eq(diffConfigs(base, next).length, 0, '版本号与平滑派生字段改动不计入差异');
+  }
+
+  // 7) 值描述：空值 / 数组 / 布尔 / 超长文本
+  eq(describeConfigValue(undefined), '（空）', 'undefined 描述为「（空）」');
+  eq(describeConfigValue(null), '（空）', 'null 描述为「（空）」');
+  eq(describeConfigValue([]), '0 项', '空数组描述为「0 项」');
+  eq(describeConfigValue([1, 2]), '2 项', '数组描述为元素个数');
+  eq(describeConfigValue(true), '开', 'true 描述为「开」');
+  eq(describeConfigValue(false), '关', 'false 描述为「关」');
+  eq(describeConfigValue('x'.repeat(40)).length, 29, '超长文本截断为 28 字 + 省略号');
+  ok(describeConfigValue('x'.repeat(40)).endsWith('…'), '超长文本以省略号结尾');
+
+  // 8) 分组聚合：标题使用中文分组名，且保持首次出现顺序
+  {
+    const next = clone(base);
+    next.meta.name = '我的场景';
+    next.grid.width = 40;
+    next.grid.height = 30;
+    next.style.cellSize = 18;
+    const changes = diffConfigs(base, next);
+    eq(changes.length, 4, '四处改动共产生四条差异');
+    const groups = summarizeConfigChanges(changes);
+    eq(groups.length, 3, '聚合为 3 个分组');
+    eq(groups.map((g) => g.title).join('|'), '场景信息|网格与坐标|展示样式', '分组标题为中文且顺序与配置结构一致');
+    eq(groups[1].items.length, 2, '同一分组的多个改动归入同一节');
+    eq(groups[0].items[0], '名称：默认场景 → 我的场景', '分组条目沿用差异文本');
+
+    // 分组顺序由传入顺序决定（界面按配置结构顺序传入）
+    const reordered = summarizeConfigChanges([...changes].reverse());
+    eq(reordered[0].title, '展示样式', '分组顺序跟随传入的差异顺序');
+  }
+
+  // 9) 容错：空值与缺字段不应抛错
+  {
+    eq(diffConfigs(null, null).length, 0, '两边均为空时不抛错');
+    eq(diffConfigs(base, null).length > 0, true, '一侧为空时按「字段被移除」报告差异');
+    eq(summarizeConfigChanges(null).length, 0, '空差异列表聚合结果为空');
+    ok(diffConfigs(base, clone(base)).every((c) => typeof c.text === 'string'), '差异条目均带可展示文本');
+  }
+
+  // 10) 回归：基准经 JSON 往返后的「空值」不应产生幻影改动
+  //     界面上的空白数字输入曾把 NaN 写进配置，而 snapshotConfig 的 JSON 往返会把 NaN 变成 null，
+  //     导致「（空） → NaN」这类假差异，进而出现「用户什么都没改却提示有改动」。
+  {
+    const next = clone(base);
+    next.body.lengthPolicy.growth.minLength = NaN;
+    next.body.lengthPolicy.shrink.maxLength = NaN;
+    const baseline = clone(next); // JSON 往返：NaN → null
+    eq(diffConfigs(baseline, next).length, 0, 'NaN 与 JSON 往返后的 null 不产生假差异');
+    eq(diffConfigs(next, baseline).length, 0, '反向比对同样不产生假差异');
+    eq(describeConfigValue(NaN), '（空）', 'NaN 描述为「（空）」而非「NaN」');
+    eq(describeConfigValue(Infinity), '（空）', 'Infinity 描述为「（空）」');
+  }
+
+  // 11) 回归：归一化后的长度策略必须是有限数值，且与自身 JSON 快照零差异
+  {
+    const cfg = normalizeConfig(defaultConfig());
+    ok(Number.isFinite(cfg.body.lengthPolicy.growth.minLength), '增长策略的最小长度归一化后为有限数值');
+    ok(Number.isFinite(cfg.body.lengthPolicy.shrink.maxLength), '缩短策略的最大长度归一化后为有限数值');
+    eq(diffConfigs(clone(cfg), cfg).length, 0, '归一化配置与自身 JSON 快照零差异（对模板基准不产生幻影改动）');
+  }
 }
 
 /* ---------- 结果 ---------- */
