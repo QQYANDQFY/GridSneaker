@@ -412,6 +412,76 @@ section('步数上限与安全帧上限');
   ok(re.frameStride === 1 && re.frames.length === re.stats.steps + 1, '极大步数上限下的短跑仍逐步全帧', `步长 ${re.frameStride}，帧 ${re.frames.length} / 步 ${re.stats.steps}`);
 }
 
+/* ---------- 自撞结束规则 ---------- */
+section('自撞计数与「连续自撞上限」归属');
+{
+  // 反向强制转向 1 次，让头在下一步撞上自己的身体
+  const mk = () => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 12, height: 12, boundary: 'wrap' };
+    cfg.start = { col: 6, row: 6, direction: 'up' };
+    cfg.body.initialLength = 4;
+    cfg.body.lengthPolicy.mode = 'fixed';
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.selfCollisionPolicy = { action: 'ignore', n: 2, maxConsecutive: 1 };
+    cfg.endConditions.maxSteps = 200;
+    cfg.endConditions.noMove = false;
+    cfg.environmentRules = [{
+      id: 'reverse',
+      name: '掉头',
+      enabled: true,
+      subject: 'head',
+      trigger: 'afterStep',
+      condition: { logic: 'and', clauses: [{ type: 'random', probability: 1 }] },
+      actions: [{ type: 'forceTurn', turn: 'reverse' }],
+      priority: 1,
+      probability: 1,
+      cooldown: 0,
+      maxTriggers: 1,
+      once: true,
+    }];
+    return cfg;
+  };
+
+  // 勾选「结束规则 → 撞到自身」时，「连续自撞上限」才生效
+  const on = mk();
+  on.endConditions.selfCollision = true;
+  const rOn = new Simulation(on).run();
+  eq(rOn.stats.selfCollisions, 1, '自撞被计入独立的自撞计数');
+  eq(rOn.endReason.code, 'selfCollision', '勾选「撞到自身」时「连续自撞上限」结束运行');
+  ok(rOn.endReason.label.includes('连续撞到自身'), '结束原因说明为连续自撞', `实际 ${rOn.endReason.label}`);
+
+  // 取消勾选后，同一份「连续自撞上限」不再结束运行
+  const off = mk();
+  off.endConditions.selfCollision = false;
+  const rOff = new Simulation(off).run();
+  ok(rOff.stats.selfCollisions > 0, '取消勾选后仍如实记录自撞次数', `实际 ${rOff.stats.selfCollisions}`);
+  eq(rOff.endReason.code, 'maxSteps', '取消勾选后「连续自撞上限」不再结束运行');
+  eq(rOff.stats.steps, 200, '取消勾选后按步数上限运行完', `实际 ${rOff.stats.steps} 步`);
+
+  // 撞墙 / 撞障碍物不是自撞，不应计入自撞统计，也不应触发「累计撞自身 N 次」
+  const wallOnly = defaultConfig();
+  wallOnly.grid = { type: 'square', width: 6, height: 6, boundary: 'stop' };
+  wallOnly.start = { col: 5, row: 3, direction: 'right' };
+  wallOnly.body.initialLength = 1;
+  wallOnly.moveRules = { left: 0, straight: 1, right: 0 };
+  wallOnly.endConditions = {
+    ...wallOnly.endConditions,
+    wall: false,
+    outOfBounds: false,
+    selfCollision: false,
+    selfCollisionTotal: true,
+    selfCollisionTotalN: 1,
+    noMove: false,
+    maxSteps: 20,
+  };
+  const rw = new Simulation(wallOnly).run();
+  eq(rw.stats.selfCollisions, 0, '撞墙不计入自撞次数');
+  ok(rw.stats.collisionsTotal > 0, '撞墙仍计入累计碰撞', `实际 ${rw.stats.collisionsTotal}`);
+  eq(rw.endReason.code, 'maxSteps', '撞墙不会误触发「累计撞自身 N 次」结束规则');
+  eq(rw.frames[rw.frames.length - 1].stats.selfCollisions, 0, '逐帧统计同样只统计自撞');
+}
+
 /* ---------- 结果 ---------- */
 console.log(`\n${'='.repeat(48)}`);
 console.log(`通过 ${pass} 项，失败 ${fail} 项`);

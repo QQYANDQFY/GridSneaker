@@ -104,6 +104,22 @@ let activeLogEls = [];
 /** 结束规则中数值型条件的“上次取值”记忆：取消勾选后仍保留数值，便于再次启用 */
 const endParamMemory = { maxSteps: defaultConfig().endConditions.maxSteps };
 
+/**
+ * 结束规则勾选状态的跨面板联动。
+ * 「碰撞与自撞处理 → 连续自撞上限」是否生效取决于「结束规则 → 撞到自身」，
+ * 这里让后者在勾选变化时实时更新前者的可编辑状态。
+ */
+const endConditionSyncers = new Map();
+
+function bindEndConditionSync(code, fn) {
+  if (!endConditionSyncers.has(code)) endConditionSyncers.set(code, []);
+  endConditionSyncers.get(code).push(fn);
+}
+
+function notifyEndConditionSync(code, on) {
+  for (const fn of endConditionSyncers.get(code) || []) fn(on);
+}
+
 /* ------------------------------------------------------------------ */
 /* 启动                                                                */
 /* ------------------------------------------------------------------ */
@@ -527,7 +543,7 @@ function bindCanvasEvents() {
 /* ------------------------------------------------------------------ */
 
 const STAT_KEYS = [
-  ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['length', '当前长度'],
+  ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['selfCollisions', '自撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
@@ -545,6 +561,7 @@ function renderStageStats() {
     frames: r.frameStride > 1 ? `${r.frames.length}（抽样 1/${r.frameStride}）` : r.frames.length,
     endReason: s.endReason,
     collisions: s.collisions,
+    selfCollisions: s.selfCollisions,
     length: '-',
     finalLength: s.finalLength,
     maxLength: s.maxLength,
@@ -579,6 +596,7 @@ function updateFrameStats() {
   set('length', f.stats.length);
   set('steps', f.stats.steps);
   set('collisions', f.stats.collisions);
+  set('selfCollisions', f.stats.selfCollisions);
   set('coverage', `${formatNumber(f.stats.coverage)}%`);
   set('ruleTriggers', f.stats.ruleTriggers);
   set('caSteps', f.stats.caSteps);
@@ -846,6 +864,7 @@ function rebuildAll() {
 function renderConfigPanel() {
   const root = els.config;
   clear(root);
+  endConditionSyncers.clear(); // 重建面板前清空旧的联动回调，避免重复累积
   const cfg = state.cfg;
   root.appendChild(sceneGroup(cfg));
   root.appendChild(gridGroup(cfg));
@@ -1032,6 +1051,15 @@ function advancedGroup(cfg) {
 function collisionGroup(cfg) {
   const c = cfg.collision;
   const sp = cfg.selfCollisionPolicy;
+  // 「连续自撞上限」只在「结束规则 → 撞到自身」勾选时才参与结束判定，
+  // 因此这里跟随该结束规则的可编辑状态联动置灰。
+  const maxConsecutiveInput = numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 });
+  const syncMaxConsecutive = (on) => {
+    maxConsecutiveInput.disabled = !on;
+    maxConsecutiveInput.title = on ? '' : '需先勾选「结束规则 → 撞到自身」，该项才会生效';
+  };
+  bindEndConditionSync('selfCollision', syncMaxConsecutive);
+  syncMaxConsecutive(!!cfg.endConditions.selfCollision);
   return group('碰撞与自撞处理', [
     field('视为碰撞', h('div', { class: 'chips-line' },
       chkBind(c, 'headIntoBody', () => onSimChange(), '头撞身体'),
@@ -1055,8 +1083,8 @@ function collisionGroup(cfg) {
     ]), '是否结束运行由「结束规则 → 撞到自身」统一控制；未勾选时「立即停止/自定义」退化为「忽略并继续」'),
     field('强制直行次数 n', numBind(sp, 'n', () => onSimChange(), { min: 1, max: 1000 }),
       '连续强制直行带防死循环保护'),
-    field('连续自撞上限', numBind(sp, 'maxConsecutive', () => onSimChange(), { min: 1, max: 100000 }),
-      '连续撞到自身达到该次数后结束'),
+    field('连续自撞上限', maxConsecutiveInput,
+      '连续撞到自身达到该次数后结束（需勾选「结束规则 → 撞到自身」）'),
   ], { open: false });
 }
 
@@ -1692,6 +1720,7 @@ function endGroup(cfg) {
         if (numericKeys.includes('maxSteps')) ec.maxSteps = v ? endParamMemory.maxSteps : false;
         else ec[code] = v;
         syncDisabled.forEach((fn) => fn(v));
+        notifyEndConditionSync(code, v);
         onSimChange();
       }, END_LABELS[code] || code),
       ...paramFields,
@@ -1704,7 +1733,7 @@ function endGroup(cfg) {
     }, rowChildren));
   });
   return group('结束规则（按优先级）', [
-    h('div', { class: 'hint' }, `自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。步数上限最大可设 10^15（远超 10^12）；单次运行超过 ${MAX_STORED_FRAMES} 步时画面帧按步长抽样缓存，步数与各项统计仍为逐步精确累计。`),
+    h('div', { class: 'hint' }, `自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。步数上限最大可设 10^15；单次运行超过 ${MAX_STORED_FRAMES} 步时画面帧按步长抽样缓存，步数与各项统计仍为逐步精确累计。`),
     ...rows,
   ], { open: false });
 }

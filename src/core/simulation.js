@@ -85,6 +85,10 @@ export class Simulation {
       collisions: 0,
       collisionsTotal: 0,
       collisionsConsecutive: 0,
+      // 「自撞」专属计数：只统计头撞到自身身体/尾部的碰撞，
+      // 供「累计/连续撞自身 N 次」结束规则与「连续自撞上限」使用。
+      selfCollisions: 0,
+      selfCollisionsConsecutive: 0,
       turnsLeft: 0,
       turnsStraight: 0,
       turnsRight: 0,
@@ -220,6 +224,7 @@ export class Simulation {
       summary: {
         steps: stats.steps,
         collisions: stats.collisions,
+        selfCollisions: stats.selfCollisions,
         maxLength: stats.maxLength,
         coverage: stats.coverage,
         ruleTriggers: stats.ruleTriggers,
@@ -307,6 +312,7 @@ export class Simulation {
       stats.collisionsTotal++;
       tickEvents.push({ type: 'wall', coord: agent.head, outOfBounds });
       ctx.highlights.push({ col: agent.head.col, row: agent.head.row, type: 'wall', tick: ctx.tick });
+      stats.selfCollisionsConsecutive = 0; // 撞墙不是自撞，打断连续自撞计数
       const cfgEnd = cfg.endConditions;
       const hitCode = cfgEnd.priority.find((c) => (c === 'wall' || c === 'outOfBounds') && cfgEnd[c]);
       if (hitCode) {
@@ -349,6 +355,7 @@ export class Simulation {
         stats.collisions++;
         stats.collisionsTotal++;
         stats.collisionsConsecutive++;
+        stats.selfCollisionsConsecutive = 0; // 撞障碍物不是自撞，打断连续自撞计数
         tickEvents.push({ type: 'obstacle', coord: { ...target } });
         ctx.highlights.push({ col: target.col, row: target.row, type: 'collision', tick: ctx.tick });
         if (cfg.endConditions.obstacle) {
@@ -368,13 +375,16 @@ export class Simulation {
       stats.collisions++;
       stats.collisionsTotal++;
       stats.collisionsConsecutive++;
+      stats.selfCollisions++;
+      stats.selfCollisionsConsecutive++;
       tickEvents.push({ type: 'selfCollision', coord: { ...target }, kind: collision });
       ctx.highlights.push({ col: target.col, row: target.row, type: 'collision', tick: ctx.tick });
       stats.ruleTriggers += engine.run('onCollision', ctx, { sync: cfg.ruleExecution === 'sync' });
 
       const policy = cfg.selfCollisionPolicy;
       // 「自撞是否结束运行」唯一由结束规则「撞到自身」决定：
-      // 未勾选时，停止类策略（立即停止 / 自定义）退化为「忽略并继续」，避免蛇原地卡死。
+      // 未勾选时，停止类策略（立即停止 / 自定义）退化为「忽略并继续」，
+      // 且「连续自撞上限」也不再结束运行，避免蛇原地卡死。
       const endsRun = !!cfg.endConditions.selfCollision;
       const stopReason = { ended: true, reason: { code: 'selfCollision', label: END_LABELS.selfCollision, tick: ctx.tick, coord: { ...target } } };
       if (ctx.pending.forcedTurns.length) {
@@ -418,12 +428,13 @@ export class Simulation {
             break;
           }
         }
-        if (stats.collisionsConsecutive >= policy.maxConsecutive) {
-          return { ended: true, reason: { code: 'selfCollision', label: `连续撞到自身 ${stats.collisionsConsecutive} 次`, tick: ctx.tick, coord: { ...target } } };
+        if (endsRun && stats.selfCollisionsConsecutive >= policy.maxConsecutive) {
+          return { ended: true, reason: { code: 'selfCollision', label: `连续撞到自身 ${stats.selfCollisionsConsecutive} 次`, tick: ctx.tick, coord: { ...target } } };
         }
       }
     } else {
       stats.collisionsConsecutive = 0;
+      stats.selfCollisionsConsecutive = 0;
     }
 
     // 9. 执行移动与长度变化
@@ -623,8 +634,8 @@ export class Simulation {
       wall: () => tickEvents.some((e) => e.type === 'wall'),
       outOfBounds: () => tickEvents.some((e) => e.type === 'wall' && e.outOfBounds),
       selfCollision: () => tickEvents.some((e) => e.type === 'selfCollision'),
-      selfCollisionTotal: () => stats.collisionsTotal >= ec.selfCollisionTotalN,
-      selfCollisionConsecutive: () => stats.collisionsConsecutive >= ec.selfCollisionConsecutiveN,
+      selfCollisionTotal: () => stats.selfCollisions >= ec.selfCollisionTotalN,
+      selfCollisionConsecutive: () => stats.selfCollisionsConsecutive >= ec.selfCollisionConsecutiveN,
       obstacle: () => tickEvents.some((e) => e.type === 'obstacle'),
       maxSteps: () => ctx.tick >= ec.maxSteps,
       lengthReached: () => agent.length >= ec.lengthTarget,
@@ -685,6 +696,7 @@ export class Simulation {
       stats: {
         steps: stats.steps,
         collisions: stats.collisions,
+        selfCollisions: stats.selfCollisions,
         length: agents[0] ? agents[0].length : 0,
         coverage: stats.coverage,
         ruleTriggers: stats.ruleTriggers,

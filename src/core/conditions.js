@@ -272,6 +272,8 @@ export const STAT_LABELS = {
   collisions: '碰撞次数',
   collisionsTotal: '累计碰撞',
   collisionsConsecutive: '连续碰撞',
+  selfCollisions: '自撞次数',
+  selfCollisionsConsecutive: '连续自撞',
   length: '长度',
   turnsLeft: '左转次数',
   turnsStraight: '直行次数',
