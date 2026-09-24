@@ -103,6 +103,8 @@ const body = html
 const out = `<!doctype html>
 <html lang="zh-CN">
 <head>
+  <!-- 让 360 / QQ 等双内核浏览器对本地文件也走极速（Blink）内核，避免兼容模式白屏 -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>

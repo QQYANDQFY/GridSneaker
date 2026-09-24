@@ -9,7 +9,7 @@ import { RNG } from './rng.js';
 import { World, Agent } from './world.js';
 import { CAEngine } from './ca.js';
 import { RuleEngine } from './rules.js';
-import { normalizeConfig, END_LABELS } from './config.js';
+import { normalizeConfig, END_LABELS, centerCoord, gridSizeFor } from './config.js';
 import { resolveTurn } from './actions.js';
 import { evaluateCondition } from './conditions.js';
 
@@ -47,6 +47,71 @@ export class Simulation {
     this.grid = new Grid(this.config.grid);
     this.states = this.config.caMode.states;
     this.frameCap = clampFrameCap(opts.frameCap);
+    /** 运行期诊断（与配置诊断同结构，供界面合并展示） */
+    this.runtimeDiagnostics = [];
+    this.diagCodes = new Set();
+  }
+
+  /** 记录一条运行期诊断：同一 code 只保留首次，避免长跑时重复刷屏 */
+  noteDiagnostic(diag) {
+    if (this.diagCodes.has(diag.code)) return;
+    this.diagCodes.add(diag.code);
+    this.runtimeDiagnostics.push(diag);
+  }
+
+  /** 起点被初始环境（CA 随机/图案填充）占据时的诊断 */
+  checkStartBlocked(world) {
+    const cfg = this.config;
+    const start = { col: cfg.start.col, row: cfg.start.row };
+    if (!world.isBlocking(start)) return;
+    const center = centerCoord(this.grid);
+    this.noteDiagnostic({
+      level: 'error',
+      code: 'startBlocked',
+      title: '起点被阻塞状态占据',
+      message: `起点 (${start.col}, ${start.row}) 在初始环境中是「${world.get(start)}」（阻塞状态），第一步就会判定为撞障碍物。`,
+      suggestions: [
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: '把 CA 初始密度降到 5%', patch: { caMode: { initial: { density: 0.05 } } } },
+      ],
+    });
+  }
+
+  /** 初始身体因越界被截断时的诊断 */
+  checkBodyTruncated(agent) {
+    const cfg = this.config;
+    const requested = cfg.body.initialLength;
+    if (agent.length >= requested) return;
+    const center = centerCoord(this.grid);
+    const fit = gridSizeFor(requested, this.grid.width, this.grid.height);
+    this.noteDiagnostic({
+      level: 'error',
+      code: 'bodyTruncated',
+      title: '初始身体被地图边界截断',
+      message: `请求初始长度 ${requested} 节，但起点 (${cfg.start.col}, ${cfg.start.row}) 处只能容纳 ${agent.length} 节，实际身体被截断为 ${agent.length} 节。`,
+      suggestions: [
+        { label: `初始长度改为 ${agent.length}`, patch: { body: { initialLength: agent.length } } },
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height} 并把起点移到中心`, patch: { grid: fit, start: { ...centerCoord(new Grid({ type: cfg.grid.type, ...fit })) } } },
+      ],
+    });
+  }
+
+  /** 运行中身体长度超过地图总格数（体节必然重叠） */
+  checkLengthOverflow(agent, tick) {
+    const cells = this.grid.size;
+    if (agent.length <= cells || this.diagCodes.has('lengthExceedsGrid')) return;
+    const fit = gridSizeFor(agent.length, this.grid.width, this.grid.height);
+    this.noteDiagnostic({
+      level: 'warning',
+      code: 'lengthExceedsGrid',
+      title: '蛇身长度超过地图总格数',
+      message: `第 ${tick} 步时长度已达 ${agent.length} 节 > 地图总格数 ${cells}，体节将互相重叠。`,
+      suggestions: [
+        { label: `增长上限改为 ${cells}`, patch: { body: { lengthPolicy: { growth: { maxLength: cells } } } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
   }
 
   createInitialAgent(rng, dir) {
@@ -71,6 +136,9 @@ export class Simulation {
     const world = new World(grid, states);
     const ca = cfg.caMode.enabled ? new CAEngine(grid, cfg.caMode, states) : null;
     if (ca) ca.init(world, rng);
+    this.runtimeDiagnostics = [];
+    this.diagCodes.clear();
+    this.checkStartBlocked(world);
 
     const engine = new RuleEngine(cfg);
     // 起始方向为「任意」时，由种子化 RNG 在网格的全部方向中随机挑选
@@ -78,6 +146,7 @@ export class Simulation {
       ? rng.int(grid.dirCount)
       : parseDir(cfg.start.direction, grid.type);
     const mainAgent = this.createInitialAgent(rng, dir);
+    this.checkBodyTruncated(mainAgent);
     const agents = [mainAgent];
 
     const stats = {
@@ -173,6 +242,7 @@ export class Simulation {
       stats.agents = agents.length;
       stats.obstacleCount = world.countState('obstacle');
       stats.markerCount = world.countState('marker');
+      this.checkLengthOverflow(mainAgent, tick);
 
       if (ctx.cellsDirty) {
         storedCells = world.cells.slice();
@@ -218,6 +288,7 @@ export class Simulation {
       logs,
       stats,
       endReason,
+      diagnostics: this.runtimeDiagnostics,
       seed: cfg.seed,
       rngCalls: rng.calls,
       finalFrameIndex: frames.length - 1,

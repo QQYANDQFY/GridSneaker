@@ -3,7 +3,7 @@
  */
 import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
-  validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
+  validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
 } from '../core/config.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
@@ -140,7 +140,11 @@ function init() {
   bindKeyboard();
   renderConfigPanel();
   renderSidePanel();
+  notifyStartupDiagnostics();
   recompute({ immediate: true });
+  // 启动成功后再撤掉兜底提示（init 全同步，不会出现闪烁）
+  const legacyHint = document.getElementById('legacy-hint');
+  if (legacyHint) legacyHint.className = 'hidden';
 }
 
 /** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧 */
@@ -231,6 +235,7 @@ function scheduleRun(delay = 160) {
 
 function onSimChange(delay = 160) {
   state.dirty = true;
+  refreshDiagnostics(); // 静态诊断只依赖配置，改动后立即反馈，无需等待重算
   if (state.autoRun) scheduleRun(delay);
 }
 
@@ -283,6 +288,7 @@ function recompute(opts = {}) {
   renderLog();
   updateControls();
   draw();
+  refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
   if (opts.immediate !== true && performance.now() - t0 > 400) {
     toast(`已重新计算 ${result.frames.length} 帧`, 'info');
   }
@@ -733,6 +739,8 @@ function renderSidePanel() {
   const side = els.side;
   clear(side);
 
+  side.appendChild(diagnosticsGroup());
+
   const currentPreset = PRESETS.find((p) => p.name === state.cfg.meta.name) || PRESETS[0];
   const presetSel = select(currentPreset.id, PRESETS.map((p) => ({ value: p.id, label: p.name })), () => {});
   const presetDesc = h('div', { class: 'hint' }, currentPreset.description);
@@ -830,6 +838,100 @@ function withResult(fn) {
   fn(state.result);
 }
 
+/* ------------------------------------------------------------------ */
+/* 配置诊断                                                            */
+/* ------------------------------------------------------------------ */
+
+const DIAG_LEVEL_TEXT = { error: '严重', warning: '警告', info: '提示' };
+const DIAG_GROUP_KEY = 'diagnostics';
+
+/**
+ * 合并两类诊断：
+ *  - 静态：当前配置与地图尺寸的匹配情况（规范化前的原始配置）
+ *  - 运行期：上一次运行中真实发生的情况（如身体被截断、起点被阻塞）
+ * 同一 code 以运行期结果为准，避免同一条问题重复出现。
+ */
+function collectDiagnostics() {
+  const staticList = diagnoseConfig(state.cfg);
+  // 配置改动后（dirty）上一次运行的运行期诊断已不适用，只展示静态诊断
+  const runtime = state.dirty ? [] : (state.result?.diagnostics || []);
+  const runtimeCodes = new Set(runtime.map((d) => d.code));
+  return [...runtime, ...staticList.filter((d) => !runtimeCodes.has(d.code))];
+}
+
+function diagnosticsGroup() {
+  const list = collectDiagnostics();
+  const errors = list.filter((d) => d.level === 'error').length;
+  const warnings = list.filter((d) => d.level === 'warning').length;
+  const badge = errors ? `${errors} 项严重` : warnings ? `${warnings} 项警告` : '正常';
+  const body = [];
+  if (!list.length) {
+    body.push(h('div', { class: 'diag-ok' }, '未检测到异常：起点、初始身体与地图尺寸相互匹配。'));
+  } else {
+    body.push(h('div', { class: 'hint' }, '以下情况会被静默修正或导致结果不符合预期，可直接套用其中一种解决方案。'));
+    for (const d of list) body.push(diagItem(d));
+    body.push(row(button('复制诊断报告', () => copyText(diagnosticsReport(list), '诊断报告已复制'), 'ghost small')));
+  }
+  return group('配置诊断', body, { open: true, key: DIAG_GROUP_KEY, badge });
+}
+
+/** 只重建「配置诊断」分组，避免整块侧边面板重绘 */
+function refreshDiagnostics() {
+  const old = els.side && els.side.querySelector(`[data-group-key="${DIAG_GROUP_KEY}"]`);
+  if (old && old.parentNode) old.parentNode.replaceChild(diagnosticsGroup(), old);
+}
+
+function diagItem(d) {
+  const item = h('div', { class: `diag-item ${d.level}` },
+    h('div', { class: 'diag-head' },
+      h('span', { class: `diag-level ${d.level}` }, DIAG_LEVEL_TEXT[d.level] || d.level),
+      h('span', { class: 'diag-title' }, d.title)),
+    h('div', { class: 'diag-msg' }, d.message));
+  const fixes = (d.suggestions || []).filter((s) => s.patch);
+  if (fixes.length) {
+    const host = h('div', { class: 'diag-fixes' }, h('span', { class: 'diag-fix-label' }, '可能的解决方案：'));
+    for (const s of fixes) host.appendChild(button(s.label, () => applyDiagFix(s), 'ghost small'));
+    item.appendChild(host);
+  }
+  return item;
+}
+
+/** 套用诊断建议：把补丁深合并进当前配置后重算 */
+function applyDiagFix(suggestion) {
+  deepAssign(state.cfg, suggestion.patch);
+  state.frameIndex = 0;
+  rebuildAll();
+  toast(`已应用：${suggestion.label}`, 'success');
+}
+
+/** 深合并补丁（对象递归合并，数组与标量直接覆盖），保持原有对象引用有效 */
+function deepAssign(target, patch) {
+  for (const [k, v] of Object.entries(patch || {})) {
+    const cur = target[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object' && !Array.isArray(cur)) {
+      deepAssign(cur, v);
+    } else {
+      target[k] = Array.isArray(v) ? [...v] : v;
+    }
+  }
+  return target;
+}
+
+function diagnosticsReport(list) {
+  const lines = [`# GridSneaker 配置诊断 · ${state.cfg.meta.name}`];
+  for (const d of list) {
+    lines.push('', `[${DIAG_LEVEL_TEXT[d.level] || d.level}] ${d.title}`, `  ${d.message}`);
+    for (const s of d.suggestions || []) lines.push(`  · ${s.label}`);
+  }
+  return lines.join('\n');
+}
+
+/** 启动时若存在严重问题，提示用户查看诊断面板（不打断操作） */
+function notifyStartupDiagnostics() {
+  const errors = diagnoseConfig(state.cfg).filter((d) => d.level === 'error');
+  if (errors.length) toast(`检测到 ${errors.length} 项配置异常：${errors[0].title}（见右侧「配置诊断」）`, 'warn');
+}
+
 function copyText(text, okMsg) {
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text).then(() => toast(okMsg, 'success')).catch(() => fallbackCopy(text, okMsg));
@@ -856,6 +958,7 @@ function safeName(name) {
 /* ------------------------------------------------------------------ */
 
 function rebuildAll() {
+  state.dirty = true; // 配置即将变化：隐藏上一轮的运行期诊断，避免渲染顺序造成残留
   renderConfigPanel();
   renderSidePanel();
   recompute({ immediate: true });

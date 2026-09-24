@@ -391,3 +391,53 @@ html, body {
 .toast.success { border-color: #2f6b41; }
 .toast.warn { border-color: #7a5a23; }
 .toast.error { border-color: #7a2d2d; }
+
+/* ---------------- 配置诊断 ---------------- */
+
+.diag-ok { color: var(--accent-2); font-size: 12px; padding: 2px 0; }
+.diag-item {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 7px 9px;
+  margin: 6px 0;
+}
+.diag-item.error { border-left-color: var(--danger); }
+.diag-item.warning { border-left-color: var(--warn); }
+.diag-item.info { border-left-color: var(--accent); }
+.diag-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.diag-level {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+.diag-level.error { color: #ffb3b3; border-color: #7a2d2d; }
+.diag-level.warning { color: #ffd9a8; border-color: #7a5a23; }
+.diag-level.info { color: #bfe0ff; border-color: #2b5675; }
+.diag-title { font-size: 12.5px; font-weight: 600; }
+.diag-msg { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.diag-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; }
+.diag-fix-label { color: #6f7d8c; font-size: 11px; }
+
+/* 兜底提示：不使用 CSS 变量 / flex，确保旧内核也能正常显示；脚本启动成功后由 init() 隐藏 */
+#legacy-hint {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: #f5f7fa;
+  color: #22303c;
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  text-align: center;
+  padding: 16vh 24px 0;
+}
+#legacy-hint h2 { font-size: 20px; margin: 0 0 12px; }
+#legacy-hint p { font-size: 14px; line-height: 1.8; margin: 0 0 6px; }
+#legacy-hint.hidden { display: none; }

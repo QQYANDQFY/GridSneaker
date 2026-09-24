@@ -5,7 +5,7 @@
 import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
-import { normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken } from '../src/core/config.js';
+import { normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig } from '../src/core/config.js';
 
 let pass = 0;
 let fail = 0;
@@ -480,6 +480,127 @@ section('自撞计数与「连续自撞上限」归属');
   ok(rw.stats.collisionsTotal > 0, '撞墙仍计入累计碰撞', `实际 ${rw.stats.collisionsTotal}`);
   eq(rw.endReason.code, 'maxSteps', '撞墙不会误触发「累计撞自身 N 次」结束规则');
   eq(rw.frames[rw.frames.length - 1].stats.selfCollisions, 0, '逐帧统计同样只统计自撞');
+}
+
+/* ---------- 配置诊断 ---------- */
+section('配置诊断：异常检测与修复建议');
+{
+  // 深合并补丁（与界面「一键修复」使用同样的语义）
+  const mergePatch = (target, patch) => {
+    const out = { ...target };
+    for (const [k, v] of Object.entries(patch || {})) {
+      out[k] = v && typeof v === 'object' && !Array.isArray(v) ? mergePatch(target[k] || {}, v) : v;
+    }
+    return out;
+  };
+  const byCode = (list, code) => list.find((d) => d.code === code);
+  const applySuggestion = (raw, diag, pick) => mergePatch(raw, pick(diag).patch);
+
+  /* 1. 起点超出地图边界（规范化会静默收敛，诊断按原始值报告） */
+  const rawStart = { grid: { type: 'square', width: 10, height: 10 }, start: { col: 50, row: 5, direction: 'up' } };
+  const dStart = byCode(diagnoseConfig(rawStart), 'startOutOfBounds');
+  ok(!!dStart, '起点越界被检出');
+  eq(dStart?.level, 'error', '起点越界为严重级别');
+  ok(dStart?.message.includes('50'), '诊断信息包含原始越界坐标', `实际 ${dStart?.message}`);
+  ok(dStart?.suggestions.length >= 2, '起点越界给出多种解决方案', `实际 ${dStart?.suggestions.length} 条`);
+  ok(dStart?.suggestions.every((s) => s.label && s.patch), '每条建议都带可执行补丁');
+  const startFix = diagnoseConfig(applySuggestion(rawStart, dStart, (d) => d.suggestions.find((s) => s.patch.grid)));
+  ok(!byCode(startFix, 'startOutOfBounds'), '扩大地图以包含原起点后不再报起点越界');
+  const startCenter = diagnoseConfig(applySuggestion(rawStart, dStart, (d) => d.suggestions[0]));
+  ok(!byCode(startCenter, 'startOutOfBounds'), '起点移到地图中心后不再报起点越界');
+
+  /* 2. 蛇身长度超过地图尺寸 */
+  const rawBig = {
+    grid: { type: 'square', width: 4, height: 4 },
+    start: { col: 2, row: 2, direction: 'up' },
+    body: { initialLength: 20 },
+  };
+  const dBig = byCode(diagnoseConfig(rawBig), 'bodyExceedsGrid');
+  ok(!!dBig, '蛇身长度超过地图尺寸被检出');
+  eq(dBig?.level, 'error', '蛇长超地图为严重级别');
+  ok(dBig?.suggestions.some((s) => s.patch.grid), '给出扩大地图的方案');
+  const bigFixed = diagnoseConfig(applySuggestion(rawBig, dBig, (d) => d.suggestions.find((s) => s.patch.grid)));
+  ok(!bigFixed.some((d) => d.level === 'error'), '按建议扩大地图后不再有严重诊断', `实际 ${bigFixed.map((d) => d.code).join(',') || '无'}`);
+
+  /* 3. 初始身体被地图边界截断（起点贴着上边界却朝下走） */
+  const rawTrunc = {
+    grid: { type: 'square', width: 10, height: 10, boundary: 'wrap' },
+    start: { col: 0, row: 0, direction: 'down' },
+    body: { initialLength: 5, lengthPolicy: { mode: 'fixed' } },
+  };
+  const dTrunc = byCode(diagnoseConfig(rawTrunc), 'bodyTruncatedByBoundary');
+  ok(!!dTrunc, '初始身体被边界截断被检出');
+  eq(dTrunc?.level, 'error', '身体被截断为严重级别');
+  ok(dTrunc?.message.includes('1 节'), '诊断信息说明实际只能排下 1 节', `实际 ${dTrunc?.message}`);
+  ok(dTrunc?.suggestions.some((s) => s.patch.start?.col === 5), '给出「起点移至地图中心」方案');
+  ok(dTrunc?.suggestions.some((s) => s.patch.grid), '给出「扩大地图以容纳完整身体」方案');
+  ok(dTrunc?.suggestions.some((s) => s.patch.body?.initialLength === 1), '给出「修改初始身体长度」方案');
+  const truncFixed = diagnoseConfig(applySuggestion(rawTrunc, dTrunc, (d) => d.suggestions.find((s) => s.patch.start)));
+  ok(!byCode(truncFixed, 'bodyTruncatedByBoundary'), '起点移到地图中心后身体不再被截断');
+  const truncShort = diagnoseConfig(applySuggestion(rawTrunc, dTrunc, (d) => d.suggestions.find((s) => s.patch.body)));
+  ok(!byCode(truncShort, 'bodyTruncatedByBoundary'), '把初始长度改为可容纳值后不再被截断');
+
+  /* 4. 增长上限 / 目标长度超过地图总格数 */
+  const rawGrow = { grid: { type: 'square', width: 4, height: 4 }, body: { lengthPolicy: { mode: 'variable', growth: { enabled: true, maxLength: 50 } } } };
+  ok(byCode(diagnoseConfig(rawGrow), 'growthExceedsGrid'), '增长上限超过地图尺寸被检出');
+  const rawTarget = { grid: { type: 'square', width: 4, height: 4 }, endConditions: { lengthReached: true, lengthTarget: 100 } };
+  ok(byCode(diagnoseConfig(rawTarget), 'lengthTargetExceedsGrid'), '目标长度超过地图尺寸被检出');
+  eq(byCode(diagnoseConfig(rawGrow), 'growthExceedsGrid').level, 'warning', '增长上限超出为警告级别');
+
+  /* 5. 起点被 CA 初始图案中的阻塞状态占据 */
+  const rawBlocked = {
+    grid: { type: 'square', width: 5, height: 5 },
+    start: { col: 0, row: 2, direction: 'up' },
+    caMode: { enabled: true, states: ['empty', 'obstacle', 'marker'], initial: { mode: 'pattern', pattern: '#####' } },
+  };
+  const dBlocked = byCode(diagnoseConfig(rawBlocked), 'startBlocked');
+  ok(!!dBlocked, '起点被阻塞状态占据被检出');
+  eq(dBlocked?.level, 'error', '起点被阻塞为严重级别');
+  ok(dBlocked?.suggestions.some((s) => typeof s.patch.caMode?.initial?.pattern === 'string'), '给出「清空起点格图案」方案');
+  const blockedFixed = diagnoseConfig(applySuggestion(rawBlocked, dBlocked, (d) => d.suggestions.find((s) => s.patch.caMode)));
+  ok(!byCode(blockedFixed, 'startBlocked'), '清空起点格后不再报起点被阻塞');
+  const rawMaybe = {
+    grid: { type: 'square', width: 8, height: 8 },
+    caMode: { enabled: true, states: ['empty', 'obstacle'], initial: { mode: 'random', density: 0.3, state: 'obstacle' } },
+  };
+  eq(byCode(diagnoseConfig(rawMaybe), 'startMayBeBlocked')?.level, 'warning', '随机填充阻塞状态时给出警告');
+
+  /* 5.5 CA 初始图案大于地图（超出部分会被裁掉） */
+  const rawPattern = {
+    grid: { type: 'square', width: 4, height: 4 },
+    caMode: { enabled: true, states: ['empty', 'obstacle'], initial: { mode: 'pattern', pattern: 'OOOOOO\nOOOOOO' } },
+  };
+  const dPattern = byCode(diagnoseConfig(rawPattern), 'patternExceedsGrid');
+  ok(!!dPattern, 'CA 初始图案大于地图被检出');
+  eq(dPattern?.level, 'warning', '图案超出地图为警告级别');
+  const patternFixed = diagnoseConfig(applySuggestion(rawPattern, dPattern, (d) => d.suggestions[0]));
+  ok(!byCode(patternFixed, 'patternExceedsGrid'), '扩大地图以容纳初始图案后不再警告');
+
+  /* 6. 其它空转警告 */
+  ok(byCode(diagnoseConfig({ moveRules: { left: 0, straight: 0, right: 0 } }), 'zeroMoveWeights'), '权重全 0 被提示');
+  ok(byCode(diagnoseConfig({ caMode: { enabled: true, rules: [], initial: { mode: 'empty' } } }), 'caNoEffect'), 'CA 恒为空被提示');
+  eq(diagnoseConfig({}).length, 0, '默认配置无任何诊断');
+
+  /* 7. 运行期诊断：实际跑起来才暴露的截断 */
+  const rt = defaultConfig();
+  rt.grid = { type: 'square', width: 10, height: 10, boundary: 'wrap' };
+  rt.start = { col: 0, row: 0, direction: 'down' };
+  rt.body.initialLength = 5;
+  rt.body.lengthPolicy.mode = 'fixed';
+  rt.endConditions.maxSteps = 5;
+  const rRun = new Simulation(rt).run();
+  ok(rRun.frames[0].agents[0].segments.length < 5, '运行时身体确实被截断', `实际 ${rRun.frames[0].agents[0].segments.length} 节`);
+  const dRun = byCode(rRun.diagnostics, 'bodyTruncated');
+  ok(!!dRun, '运行期结果携带身体截断诊断');
+  ok(dRun?.suggestions.length >= 2, '运行期诊断同样附带可执行方案', `实际 ${dRun?.suggestions.length} 条`);
+  const rtFixed = mergePatch(rt, dRun.suggestions.find((s) => s.patch.start).patch);
+  eq(new Simulation(rtFixed).run().frames[0].agents[0].segments.length, 5, '按运行期建议修复后身体完整');
+
+  /* 8. 校验入口携带结构化诊断 */
+  const v = validateConfig(rawTrunc);
+  ok(v.ok, '诊断不阻断结构校验通过');
+  ok(v.diagnostics.some((d) => d.code === 'bodyTruncatedByBoundary'), 'validateConfig 返回结构化诊断');
+  ok(v.warnings.some((w) => w.includes('截断')), '诊断同时汇总进 warnings 文本');
 }
 
 /* ---------- 结果 ---------- */

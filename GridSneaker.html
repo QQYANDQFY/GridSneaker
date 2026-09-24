@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+  <!-- 让 360 / QQ 等双内核浏览器对本地文件也走极速（Blink）内核，避免兼容模式白屏 -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
@@ -398,10 +400,67 @@ html, body {
 .toast.success { border-color: #2f6b41; }
 .toast.warn { border-color: #7a5a23; }
 .toast.error { border-color: #7a2d2d; }
+
+/* ---------------- 配置诊断 ---------------- */
+
+.diag-ok { color: var(--accent-2); font-size: 12px; padding: 2px 0; }
+.diag-item {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 7px 9px;
+  margin: 6px 0;
+}
+.diag-item.error { border-left-color: var(--danger); }
+.diag-item.warning { border-left-color: var(--warn); }
+.diag-item.info { border-left-color: var(--accent); }
+.diag-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.diag-level {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+.diag-level.error { color: #ffb3b3; border-color: #7a2d2d; }
+.diag-level.warning { color: #ffd9a8; border-color: #7a5a23; }
+.diag-level.info { color: #bfe0ff; border-color: #2b5675; }
+.diag-title { font-size: 12.5px; font-weight: 600; }
+.diag-msg { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.diag-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; }
+.diag-fix-label { color: #6f7d8c; font-size: 11px; }
+
+/* 兜底提示：不使用 CSS 变量 / flex，确保旧内核也能正常显示；脚本启动成功后由 init() 隐藏 */
+#legacy-hint {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: #f5f7fa;
+  color: #22303c;
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  text-align: center;
+  padding: 16vh 24px 0;
+}
+#legacy-hint h2 { font-size: 20px; margin: 0 0 12px; }
+#legacy-hint p { font-size: 14px; line-height: 1.8; margin: 0 0 6px; }
+#legacy-hint.hidden { display: none; }
   </style>
 </head>
 <body>
-<header id="topbar">
+<!-- 兜底提示：仅当脚本未能启动（兼容模式 / 内核过旧 / 禁用 JS）时可见，正常启动后由 init() 隐藏 -->
+  <div id="legacy-hint">
+    <h2>页面未能启动</h2>
+    <p>当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。</p>
+    <p>请点击地址栏右侧的闪电图标切换到<b>极速模式</b>后刷新，或改用 <b>Chrome / Edge</b> 打开本页面。</p>
+  </div>
+
+  <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
     <div class="topbar-hint">v<span id="app-version">2.0.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
@@ -635,12 +694,678 @@ class Agent {
 return { normalizeStates, Agent, World };
 })();
 
+/* ===== src/core/grid.js ===== */
+__MODULES["src/core/grid.js"] = (function () {
+/**
+ * 统一网格抽象
+ * - 方格：4 方向移动（up/right/down/left，顺时针），支持 4/8 邻域感知
+ * - 六边形：尖顶（pointy-top）轴向坐标，6 方向移动（顺时针）
+ *
+ * 坐标统一使用「偏移坐标」{col, row}，索引 = row * width + col。
+ * 六边形内部在需要时转换为轴向坐标 {q, r}。
+ */
+
+const SQ_DIR_NAMES = ['up', 'right', 'down', 'left'];
+const SQ_DIR_VEC = [
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 0 },
+];
+
+/** 8 邻域方向（顺时针，从上方开始），用于 moore 感知 */
+const SQ_NEIGHBOR8 = [
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: -1 },
+  { dx: 1, dy: 0 },
+  { dx: 1, dy: 1 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 1 },
+  { dx: -1, dy: 0 },
+  { dx: -1, dy: -1 },
+];
+
+const HEX_DIR_NAMES = ['east', 'southEast', 'southWest', 'west', 'northWest', 'northEast'];
+/** 轴向方向向量，顺时针（屏幕 y 向下） */
+const HEX_DIR_VEC = [
+  { q: 1, r: 0 },
+  { q: 0, r: 1 },
+  { q: -1, r: 1 },
+  { q: -1, r: 0 },
+  { q: 0, r: -1 },
+  { q: 1, r: -1 },
+];
+
+function dirNames(type) {
+  return type === 'hex' ? HEX_DIR_NAMES : SQ_DIR_NAMES;
+}
+
+/** 解析方向：支持名称（含中文别名）、索引 */
+function parseDir(value, type) {
+  const names = dirNames(type);
+  if (typeof value === 'number') {
+    const n = names.length;
+    return ((Math.round(value) % n) + n) % n;
+  }
+  const key = String(value ?? '').trim();
+  const idx = names.findIndex((n) => n.toLowerCase() === key.toLowerCase());
+  if (idx >= 0) return idx;
+  const alias = {
+    up: 'up', north: 'up', 上: 'up',
+    right: 'right', east: 'right', 右: 'right',
+    down: 'down', south: 'down', 下: 'down',
+    left: 'left', west: 'left', 左: 'left',
+    东北: 'northEast', northeast: 'northEast', 东南: 'southEast', southeast: 'southEast',
+    西北: 'northWest', northwest: 'northWest', 西南: 'southWest', southwest: 'southWest',
+  };
+  const mapped = alias[key.toLowerCase()] || alias[key];
+  if (mapped) {
+    const i = names.findIndex((n) => n.toLowerCase() === mapped.toLowerCase());
+    if (i >= 0) return i;
+  }
+  return 0;
+}
+
+class Grid {
+  constructor(cfg = {}) {
+    this.type = cfg.type === 'hex' ? 'hex' : 'square';
+    this.width = Math.max(1, Math.floor(cfg.width ?? 20));
+    this.height = Math.max(1, Math.floor(cfg.height ?? 20));
+    this.boundary = cfg.boundary || 'stop';
+    this.dirCount = this.type === 'hex' ? 6 : 4;
+    this.size = this.width * this.height;
+    this.dirNames = dirNames(this.type);
+  }
+
+  /* ---------------- 基本坐标操作 ---------------- */
+
+  idx(col, row) {
+    return row * this.width + col;
+  }
+
+  coord(index) {
+    return { col: index % this.width, row: Math.floor(index / this.width) };
+  }
+
+  inBounds(c) {
+    return !!c && c.col >= 0 && c.col < this.width && c.row >= 0 && c.row < this.height;
+  }
+
+  wrap(c) {
+    const col = ((c.col % this.width) + this.width) % this.width;
+    const row = ((c.row % this.height) + this.height) % this.height;
+    return { col, row };
+  }
+
+  /** 沿方向移动一步，可能越界（返回仍为偏移坐标） */
+  step(c, dir) {
+    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
+    if (this.type === 'square') {
+      const v = SQ_DIR_VEC[d];
+      return { col: c.col + v.dx, row: c.row + v.dy };
+    }
+    const a = this.axial(c);
+    const v = HEX_DIR_VEC[d];
+    return this.offset({ q: a.q + v.q, r: a.r + v.r });
+  }
+
+  /** 越界后按边界策略处理，返回目标坐标；stop/custom 返回 null（表示无法移动） */
+  resolveBoundary(c, dir, mode) {
+    const target = this.step(c, dir);
+    if (this.inBounds(target)) return target;
+    switch (mode) {
+      case 'wrap':
+        return this.wrap(target);
+      case 'bounce': {
+        const back = this.opposite(dir);
+        const t2 = this.step(c, back);
+        return this.inBounds(t2) ? t2 : null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  opposite(dir) {
+    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
+    return this.type === 'hex' ? (d + 3) % 6 : (d + 2) % 4;
+  }
+
+  leftOf(dir) {
+    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
+    return (d - 1 + this.dirCount) % this.dirCount;
+  }
+
+  rightOf(dir) {
+    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
+    return (d + 1) % this.dirCount;
+  }
+
+  /* ---------------- 六边形轴向坐标 ---------------- */
+
+  axial(c) {
+    if (this.type === 'square') return { q: c.col, r: c.row };
+    // odd-r offset -> axial
+    const row = c.row;
+    return { q: c.col - (row - (row & 1)) / 2, r: row };
+  }
+
+  offset(a) {
+    if (this.type === 'square') return { col: a.q, row: a.r };
+    const r = a.r;
+    return { col: a.q + (r - (r & 1)) / 2, row: r };
+  }
+
+  /* ---------------- 邻域 ---------------- */
+
+  /**
+   * 获取邻域坐标（包含越界坐标），按 kind 指定的度量筛选
+   * kind: vonNeumann | moore | hex | radius
+   */
+  neighborsRaw(c, kind = 'moore', radius = 1, includeSelf = false) {
+    const r = Math.max(1, Math.floor(radius || 1));
+    const out = [];
+    if (includeSelf) out.push(c);
+    if (this.type === 'square') {
+      const useManhattan = kind === 'vonNeumann';
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const dist = useManhattan ? Math.abs(dx) + Math.abs(dy) : Math.max(Math.abs(dx), Math.abs(dy));
+          if (dist > r) continue;
+          out.push({ col: c.col + dx, row: c.row + dy });
+        }
+      }
+    } else {
+      const a = this.axial(c);
+      for (let dq = -r; dq <= r; dq++) {
+        for (let dr = -r; dr <= r; dr++) {
+          if (dq === 0 && dr === 0) continue;
+          if (this.hexDistanceAxial({ q: dq, r: dr }, { q: 0, r: 0 }) > r) continue;
+          out.push(this.offset({ q: a.q + dq, r: a.r + dr }));
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 获取邻域内（在界内）的坐标列表
+   * kind: vonNeumann | moore | hex | radius
+   */
+  neighbors(c, kind = 'moore', radius = 1, includeSelf = false) {
+    return this.neighborsRaw(c, kind, radius, includeSelf).filter((n) => this.inBounds(n));
+  }
+
+  /** 邻域中「理论存在」的格子数（含越界与中心，用于比例计算） */
+  neighborhoodCapacity(kind = 'moore', radius = 1, includeSelf = false) {
+    const r = Math.max(1, Math.floor(radius || 1));
+    let count = 0;
+    if (this.type === 'square') {
+      const useManhattan = kind === 'vonNeumann';
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const dist = useManhattan ? Math.abs(dx) + Math.abs(dy) : Math.max(Math.abs(dx), Math.abs(dy));
+          if (dist <= r) count++;
+        }
+      }
+    } else {
+      for (let dq = -r; dq <= r; dq++) {
+        for (let dr = -r; dr <= r; dr++) {
+          if (this.hexDistanceAxial({ q: dq, r: dr }, { q: 0, r: 0 }) <= r) count++;
+        }
+      }
+    }
+    return count + (includeSelf ? 1 : 0);
+  }
+
+  /** 6/8 个「探索方向」的邻居（用于感知方向关系与图案匹配） */
+  ringNeighbors(c) {
+    const out = [];
+    if (this.type === 'square') {
+      for (const v of SQ_NEIGHBOR8) out.push({ col: c.col + v.dx, row: c.row + v.dy });
+    } else {
+      const a = this.axial(c);
+      for (const v of HEX_DIR_VEC) out.push(this.offset({ q: a.q + v.q, r: a.r + v.r }));
+    }
+    return out.filter((n) => this.inBounds(n));
+  }
+
+  /** 相对方向邻居：relDir 为 relNameToOffset */
+  relativeCoord(c, baseDir, relKey, distance = 1) {
+    const n = this.dirCount;
+    const d = ((baseDir % n) + n) % n;
+    const map4 = { front: 0, right: 1, back: 2, left: 3 };
+    const map6 = { front: 0, frontRight: 1, backRight: 2, back: 3, backLeft: 4, frontLeft: 5 };
+    const map = this.type === 'hex' ? map6 : map4;
+    const off = map[relKey];
+    if (off === undefined) return null;
+    let target = c;
+    for (let i = 0; i < Math.max(1, distance); i++) target = this.step(target, (d + off) % n);
+    return target;
+  }
+
+  /* ---------------- 方向关系 ---------------- */
+
+  /** 返回 b 相对 a 的方向索引（不相邻返回 -1） */
+  dirBetween(a, b) {
+    if (this.type === 'square') {
+      const dx = b.col - a.col;
+      const dy = b.row - a.row;
+      return SQ_DIR_VEC.findIndex((v) => v.dx === dx && v.dy === dy);
+    }
+    const aa = this.axial(a);
+    const ab = this.axial(b);
+    const dq = ab.q - aa.q;
+    const dr = ab.r - aa.r;
+    return HEX_DIR_VEC.findIndex((v) => v.q === dq && v.r === dr);
+  }
+
+  /** 相对方位：front / right / back / left（六边形含 frontRight 等） */
+  relative(baseDir, dir) {
+    const n = this.dirCount;
+    const delta = (((dir - baseDir) % n) + n) % n;
+    const names4 = ['front', 'right', 'back', 'left'];
+    const names6 = ['front', 'frontRight', 'backRight', 'back', 'backLeft', 'frontLeft'];
+    return (this.type === 'hex' ? names6 : names4)[delta];
+  }
+
+  /* ---------------- 距离 ---------------- */
+
+  hexDistanceAxial(a, b) {
+    const dq = a.q - b.q;
+    const dr = a.r - b.r;
+    return (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
+  }
+
+  distance(a, b, metric) {
+    if (this.type === 'hex') {
+      return this.hexDistanceAxial(this.axial(a), this.axial(b));
+    }
+    const dx = Math.abs(a.col - b.col);
+    const dy = Math.abs(a.row - b.row);
+    if (metric === 'manhattan') return dx + dy;
+    if (metric === 'euclidean') return Math.hypot(dx, dy);
+    return Math.max(dx, dy);
+  }
+
+  /* ---------------- 渲染辅助 ---------------- */
+
+  /** 单元格中心像素坐标 */
+  toPixel(c, cellSize, gap = 0) {
+    if (this.type === 'square') {
+      const pitch = cellSize + gap;
+      return { x: c.col * pitch + cellSize / 2, y: c.row * pitch + cellSize / 2, radius: cellSize / 2 };
+    }
+    const R = cellSize / 2;
+    const width = Math.sqrt(3) * R;
+    return {
+      x: width * (c.col + 0.5 * (c.row & 1)) + width / 2,
+      y: 1.5 * R * c.row + R,
+      radius: R,
+      width,
+    };
+  }
+
+  canvasSize(cellSize, gap = 0, margin = 12) {
+    if (this.type === 'square') {
+      const pitch = cellSize + gap;
+      return {
+        width: this.width * pitch - gap + margin * 2,
+        height: this.height * pitch - gap + margin * 2,
+        margin,
+      };
+    }
+    const R = cellSize / 2;
+    const width = Math.sqrt(3) * R;
+    return {
+      width: width * (this.width + 0.5) + margin * 2,
+      height: R * (1.5 * (this.height - 1) + 2) + margin * 2,
+      margin,
+    };
+  }
+
+  /** 图案匹配的格子顺序：方格 3x3 行优先，六边形 [中心, 6 方向] */
+  patternSlots(c) {
+    if (this.type === 'square') {
+      const out = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) out.push({ col: c.col + dx, row: c.row + dy });
+      }
+      return out;
+    }
+    return [{ ...c }, ...this.ringNeighbors(c)];
+  }
+
+  /** 图案模板长度 */
+  patternLength() {
+    return this.type === 'square' ? 9 : 7;
+  }
+
+  /** 曼哈顿/六边形半径内的所有格（含中心），用于显示与统计 */
+  allCoords() {
+    const out = [];
+    for (let row = 0; row < this.height; row++) {
+      for (let col = 0; col < this.width; col++) out.push({ col, row });
+    }
+    return out;
+  }
+}
+return { Grid, parseDir, dirNames };
+})();
+
+/* ===== src/core/ca.js ===== */
+__MODULES["src/core/ca.js"] = (function () {
+/**
+ * 元胞自动机引擎
+ * 支持：多状态、Von Neumann / Moore / 六边形邻域、半径、固定/循环/反射边界、
+ *       同步 / 异步 / 随机顺序更新、状态转移规则表、方向性交通流规则、初始图案
+ */
+
+const CA_UPDATE_LABELS = {
+  synchronous: '同步更新',
+  asynchronous: '异步更新',
+  random: '随机顺序更新',
+};
+
+const CA_BOUNDARY_LABELS = {
+  fixed: '固定边界',
+  wrap: '循环边界',
+  reflect: '反射边界',
+};
+
+/**
+ * 图案文本 → { rows, width, height }
+ * 空行被忽略，width 取最长行；仅供 CA 初始图案与配置诊断共用。
+ */
+function parsePatternText(text) {
+  const rows = String(text ?? '').split('\n').map((r) => r.replace(/\r/g, '')).filter((r) => r.length);
+  return { rows, width: rows.length ? Math.max(...rows.map((r) => r.length)) : 0, height: rows.length };
+}
+
+/**
+ * 图案字符 → 状态索引的符号表。
+ * 优先级：状态 symbol → 状态全名 → 非内置状态的首字母 → O/X/#/@ 别名（指向第一个非空状态）。
+ */
+function buildSymbolMap(states) {
+  const index = new Map();
+  states.forEach((s, i) => index.set(s.name, i));
+  const map = new Map();
+  const builtin = new Set(['empty', 'obstacle', 'marker', 'trail']);
+  for (const s of states) {
+    const i = index.get(s.name);
+    map.set(String(s.symbol).toUpperCase(), i);
+    map.set(String(s.name).toUpperCase(), i);
+    if (!builtin.has(s.name)) map.set(String(s.name)[0].toUpperCase(), i);
+  }
+  map.set('.', 0);
+  map.set(' ', 0);
+  const firstSolid = states.findIndex((s) => s.name !== 'empty');
+  if (firstSolid > 0) {
+    for (const alias of ['O', 'X', '#', '@']) {
+      if (!map.has(alias)) map.set(alias, firstSolid);
+    }
+  }
+  return map;
+}
+
+/** 图案文本在网格上的居中偏移 */
+function patternOffset(grid, text) {
+  const { width, height } = parsePatternText(text);
+  return { offCol: Math.floor((grid.width - width) / 2), offRow: Math.floor((grid.height - height) / 2) };
+}
+
+/**
+ * 图案模式下某坐标对应的状态名。
+ * 未被图案覆盖（'.'、空格、越界、未知字符）时返回 null。
+ */
+function patternStateNameAt(grid, states, text, coord) {
+  const { rows, width, height } = parsePatternText(text);
+  if (!rows.length) return null;
+  const { offCol, offRow } = patternOffset(grid, text);
+  const r = coord.row - offRow;
+  const c = coord.col - offCol;
+  if (r < 0 || c < 0 || r >= height || c >= rows[r].length) return null;
+  const ch = rows[r][c];
+  if (ch === '.' || ch === ' ') return null;
+  const si = buildSymbolMap(states).get(ch.toUpperCase());
+  return si === undefined ? null : states[si].name;
+}
+
+/** 把图案中某坐标的字符清空为 '.'；坐标不在图案内时返回 null */
+function clearPatternCell(grid, text, coord) {
+  const { rows, height } = parsePatternText(text);
+  if (!rows.length) return null;
+  const { offCol, offRow } = patternOffset(grid, text);
+  const r = coord.row - offRow;
+  const c = coord.col - offCol;
+  if (r < 0 || c < 0 || r >= height || c >= rows[r].length) return null;
+  rows[r] = rows[r].slice(0, c) + '.' + rows[r].slice(c + 1);
+  return rows.join('\n');
+}
+
+class CAEngine {
+  constructor(grid, caMode, states) {
+    this.grid = grid;
+    this.cfg = caMode;
+    this.states = states;
+    this.index = new Map();
+    states.forEach((s, i) => this.index.set(s.name, i));
+  }
+
+  stateIdx(name) {
+    const i = this.index.get(name);
+    return i === undefined ? 0 : i;
+  }
+
+  /** 映射邻域坐标（按边界策略）→ 返回 null 表示固定边界外的空格 */
+  mapCoord(coord) {
+    const { grid } = this;
+    if (grid.inBounds(coord)) return coord;
+    switch (this.cfg.boundary) {
+      case 'wrap':
+        return grid.wrap(coord);
+      case 'reflect': {
+        let col = coord.col;
+        let row = coord.row;
+        const w = grid.width;
+        const h = grid.height;
+        if (col < 0) col = -col - 1;
+        if (col >= w) col = 2 * w - col - 1;
+        if (row < 0) row = -row - 1;
+        if (row >= h) row = 2 * h - row - 1;
+        col = Math.min(w - 1, Math.max(0, col));
+        row = Math.min(h - 1, Math.max(0, row));
+        return { col, row };
+      }
+      default:
+        return null; // fixed：界外视为 empty
+    }
+  }
+
+  /** 邻域内某状态的数量（同步更新时读 cells 快照） */
+  countInNeighborhood(cells, coord, stateIdx) {
+    const { grid } = this;
+    const raw = grid.neighborsRaw(coord, this.cfg.neighborhood, this.cfg.radius, false);
+    let n = 0;
+    for (const c of raw) {
+      const m = this.mapCoord(c);
+      if (!m) continue; // fixed：界外为 empty，不计入目标状态
+      if (cells[grid.idx(m.col, m.row)] === stateIdx) n++;
+    }
+    return n;
+  }
+
+  /** 规则匹配：返回目标状态索引，或 null 表示保持原状 */
+  matchRule(cells, coord, currentIdx, rng) {
+    const stateName = this.states[currentIdx].name;
+    for (const rule of this.cfg.rules) {
+      if (!rule.enabled) continue;
+      if (rule.kind === 'traffic') continue;
+      if (rule.from !== '*' && !rule.from.includes(stateName)) continue;
+      let ok = true;
+      for (const c of rule.counts) {
+        const si = this.stateIdx(c.state);
+        const n = this.countInNeighborhood(cells, coord, si);
+        if (c.values && c.values.length) {
+          if (!c.values.includes(n)) { ok = false; break; }
+        } else {
+          if (c.min !== null && c.min !== undefined && n < c.min) { ok = false; break; }
+          if (c.max !== null && c.max !== undefined && n > c.max) { ok = false; break; }
+        }
+      }
+      if (!ok) continue;
+      if (rule.probability < 1 && rng.next() >= rule.probability) continue;
+      return this.stateIdx(rule.to);
+    }
+    return null;
+  }
+
+  /** 方向性移动规则（如交通流），返回 { cells, moved } */
+  applyTrafficRules(cells, rng) {
+    const { grid } = this;
+    const traffic = this.cfg.rules.filter((r) => r.enabled && r.kind === 'traffic');
+    if (!traffic.length) return { cells, moved: false };
+    const out = cells.slice();
+    let moved = false;
+    for (const rule of traffic) {
+      const fromIdx = this.stateIdx(rule.from === '*' ? 'empty' : rule.from[0]);
+      const toIdx = this.stateIdx(rule.to);
+      const dir = this.parseDirIndex(rule.direction);
+      const d = grid.step({ col: 0, row: 0 }, dir);
+      const projected = grid.allCoords().sort((a, b) => (b.col * d.col + b.row * d.row) - (a.col * d.col + a.row * d.row));
+      for (const c of projected) {
+        const i = grid.idx(c.col, c.row);
+        if (out[i] !== fromIdx) continue;
+        let target = grid.step(c, dir);
+        target = this.mapCoord(target);
+        if (!target) continue;
+        const ti = grid.idx(target.col, target.row);
+        if (out[ti] !== toIdx) continue;
+        out[ti] = fromIdx;
+        out[i] = toIdx;
+        moved = true;
+      }
+    }
+    return { cells: out, moved };
+  }
+
+  parseDirIndex(name) {
+    const { grid } = this;
+    const keys = ['east', 'southEast', 'southWest', 'west', 'northWest', 'northEast'];
+    if (grid.type === 'hex') {
+      const i = keys.findIndex((k) => k.toLowerCase() === String(name).toLowerCase());
+      return i >= 0 ? i : 0;
+    }
+    const alias = { east: 'right', west: 'left', north: 'up', south: 'down', right: 'right', left: 'left', up: 'up', down: 'down' };
+    const key = alias[String(name).toLowerCase()] || 'right';
+    return grid.dirNames.findIndex((n) => n === key);
+  }
+
+  /** 单次演化 */
+  step(world, rng) {
+    const { grid } = this;
+    const mode = this.cfg.update;
+    if (!this.cfg.rules.length) return false;
+    const hadTraffic = this.cfg.rules.some((r) => r.enabled && r.kind === 'traffic');
+
+    if (mode === 'synchronous') {
+      const snapshot = world.cells.slice();
+      const next = snapshot.slice();
+      let changed = false;
+      for (let i = 0; i < grid.size; i++) {
+        const coord = grid.coord(i);
+        const target = this.matchRule(snapshot, coord, snapshot[i], rng);
+        if (target !== null && target !== snapshot[i]) {
+          next[i] = target;
+          changed = true;
+        }
+      }
+      if (hadTraffic) {
+        const res = this.applyTrafficRules(next, rng);
+        world.cells = res.cells;
+        if (res.moved) changed = true;
+      } else {
+        world.cells = next;
+      }
+      return changed;
+    }
+
+    // 异步 / 随机顺序：就地更新
+    const order = grid.allCoords();
+    if (mode === 'random') rng.shuffle(order);
+    let changed = false;
+    for (const coord of order) {
+      const i = grid.idx(coord.col, coord.row);
+      const target = this.matchRule(world.cells, coord, world.cells[i], rng);
+      if (target !== null && target !== world.cells[i]) {
+        world.cells[i] = target;
+        changed = true;
+      }
+    }
+    if (hadTraffic) {
+      const res = this.applyTrafficRules(world.cells, rng);
+      world.cells = res.cells;
+      if (res.moved) changed = true;
+    }
+    return changed;
+  }
+
+  /** 应用初始图案 */
+  init(world, rng) {
+    const initCfg = this.cfg.initial || {};
+    for (let i = 0; i < world.cells.length; i++) world.cells[i] = 0;
+    if (initCfg.mode === 'random') {
+      const si = this.stateIdx(initCfg.state || 'obstacle');
+      for (let i = 0; i < world.cells.length; i++) {
+        if (rng.next() < initCfg.density) world.cells[i] = si;
+      }
+    } else if (initCfg.mode === 'pattern') {
+      this.applyPatternText(world, initCfg.pattern || '');
+    }
+    return world;
+  }
+
+  /** 图案文本：每行一个字符串，'.' 为空，其它字符按状态符号匹配 */
+  applyPatternText(world, text) {
+    const { grid } = this;
+    const { rows, height: ph } = parsePatternText(text);
+    if (!rows.length) return;
+    const { offCol, offRow } = patternOffset(grid, text);
+    const symbolMap = buildSymbolMap(this.states);
+    for (let r = 0; r < ph; r++) {
+      for (let c = 0; c < rows[r].length; c++) {
+        const ch = rows[r][c];
+        if (ch === '.' || ch === ' ') continue;
+        const si = symbolMap.get(ch.toUpperCase());
+        if (si === undefined) continue;
+        const col = offCol + c;
+        const row = offRow + r;
+        if (col < 0 || row < 0 || col >= grid.width || row >= grid.height) continue;
+        if (si !== 0) world.cells[grid.idx(col, row)] = si;
+      }
+    }
+  }
+
+  /** 状态直方图（用于统计面板） */
+  histogram(world) {
+    const hist = this.states.map(() => 0);
+    for (let i = 0; i < world.cells.length; i++) hist[world.cells[i]]++;
+    return hist;
+  }
+}
+return { patternStateNameAt, clearPatternCell, parsePatternText, CAEngine, CA_UPDATE_LABELS, CA_BOUNDARY_LABELS };
+})();
+
 /* ===== src/core/config.js ===== */
 __MODULES["src/core/config.js"] = (function () {
 /**
  * 配置模型：默认值、规范化、版本迁移、校验、URL 分享
  */
 const { normalizeStates } = __MODULES["src/core/world.js"];
+const { Grid, parseDir } = __MODULES["src/core/grid.js"];
+const { patternStateNameAt, clearPatternCell, parsePatternText } = __MODULES["src/core/ca.js"];
 
 const CONFIG_VERSION = '1.1';
 
@@ -1316,14 +2041,312 @@ function migrate(raw) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 结构化诊断                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 诊断级别：
+ *  - error   严重：当前配置在地图尺寸下不可能正确运行（蛇身放不下、起点被堵死等）
+ *  - warning 警告：能运行，但结果很可能不符合预期
+ *  - info    提示
+ * 每条诊断附带 suggestions：[{ label, patch }]，patch 为可直接深合并回配置的部分配置，
+ * 供界面「一键修复」，也便于脚本化修正。
+ */
+const DIAG_LEVELS = ['error', 'warning', 'info'];
+
+const GRID_MAX = 400;
+
+/** 地图中心坐标 */
+function centerCoord(grid) {
+  return {
+    col: Math.min(grid.width - 1, Math.max(0, Math.floor(grid.width / 2))),
+    row: Math.min(grid.height - 1, Math.max(0, Math.floor(grid.height / 2))),
+  };
+}
+
+/** 容纳 cells 个格子所需的网格尺寸（尽量维持原宽高比，限制在 2..400） */
+function gridSizeFor(cells, width, height) {
+  const w = clamp(Math.ceil(Math.sqrt((cells * Math.max(1, width)) / Math.max(1, height))), 2, GRID_MAX);
+  const size = { width: w, height: clamp(Math.ceil(cells / w), 2, GRID_MAX) };
+  while (size.width * size.height < cells) {
+    if (size.width <= size.height && size.width < GRID_MAX) size.width++;
+    else if (size.height < GRID_MAX) size.height++;
+    else break;
+  }
+  return size;
+}
+
+/**
+ * 方格图上扩大网格并（必要时）挪动起点，使长度 length 的身体能沿 dirs 的反方向完整铺开。
+ * 返回 { width, height, start }，无法容纳（超过 400）时返回 null；六边形不做推算。
+ */
+function expandGridForBody(grid, start, dirs, length) {
+  if (grid.type !== 'square') return null;
+  let width = grid.width;
+  let height = grid.height;
+  let col = start.col;
+  let row = start.row;
+  for (const d of dirs) {
+    const name = grid.dirNames[d];
+    if (name === 'up') height = Math.max(height, row + length);
+    else if (name === 'down') { row = Math.max(row, length - 1); height = Math.max(height, row + 1); }
+    else if (name === 'left') width = Math.max(width, col + length);
+    else if (name === 'right') { col = Math.max(col, length - 1); width = Math.max(width, col + 1); }
+  }
+  if (width > GRID_MAX || height > GRID_MAX) return null;
+  const probe = new Grid({ type: 'square', width, height });
+  const bodyStart = { col, row };
+  for (const d of dirs) {
+    if (fittedBodyLength(probe, bodyStart, d, length) < length) return null;
+  }
+  return { width, height, start: bodyStart };
+}
+
+/** 从起点沿 dir 的反方向铺开 length 节时，实际落在界内的节数（与初始身体铺设方式一致） */
+function fittedBodyLength(grid, start, dir, length) {
+  let cur = { ...start };
+  let n = 1;
+  const back = grid.opposite(dir);
+  for (let i = 1; i < length; i++) {
+    cur = grid.step(cur, back);
+    if (!grid.inBounds(cur)) break;
+    n++;
+  }
+  return n;
+}
+
+const DIR_CN = {
+  up: '上', right: '右', down: '下', left: '左',
+  east: '东', southEast: '东南', southWest: '西南', west: '西', northWest: '西北', northEast: '东北',
+};
+
+function dirsOf(grid, direction) {
+  if (direction === 'random') return Array.from({ length: grid.dirCount }, (_, i) => i);
+  return [parseDir(direction, grid.type)];
+}
+
+function dirsLabel(grid, dirs) {
+  if (dirs.length > 1) return '任意方向的最坏情况';
+  return DIR_CN[grid.dirNames[dirs[0]]] || grid.dirNames[dirs[0]];
+}
+
+/**
+ * 检测「意外情况」并给出可执行的修复建议。
+ * 覆盖：起点越界、蛇身长度超过地图尺寸、初始身体被边界截断、增长上限/目标长度超出总格数、
+ *       起点被阻塞状态占据，以及权重与规则配置层面的常见空转。
+ */
+function diagnoseConfig(rawInput = {}) {
+  if (!rawInput || typeof rawInput !== 'object') {
+    return [{ level: 'error', code: 'invalidConfig', title: '配置无效', message: '配置必须是一个 JSON 对象。', suggestions: [] }];
+  }
+  const raw = rawInput;
+  const cfg = normalizeConfig(raw);
+  const grid = new Grid(cfg.grid);
+  const w = grid.width;
+  const h = grid.height;
+  const cells = grid.size;
+  const center = centerCoord(grid);
+  const out = [];
+
+  /* 1. 起点越界：规范化会把起点收敛进网格，这里按原始值报告 */
+  const startRaw = raw.start || {};
+  const rawCol = Number(startRaw.col ?? startRaw.x);
+  const rawRow = Number(startRaw.row ?? startRaw.y);
+  const badCol = Number.isFinite(rawCol) && (rawCol < 0 || rawCol > w - 1);
+  const badRow = Number.isFinite(rawRow) && (rawRow < 0 || rawRow > h - 1);
+  if (badCol || badRow) {
+    const dispCol = Number.isFinite(rawCol) ? Math.round(rawCol) : '?';
+    const dispRow = Number.isFinite(rawRow) ? Math.round(rawRow) : '?';
+    const fit = {
+      width: clamp(Number.isFinite(rawCol) ? Math.max(w, Math.ceil(rawCol) + 1) : w, 2, GRID_MAX),
+      height: clamp(Number.isFinite(rawRow) ? Math.max(h, Math.ceil(rawRow) + 1) : h, 2, GRID_MAX),
+    };
+    out.push({
+      level: 'error',
+      code: 'startOutOfBounds',
+      title: '起点超出地图边界',
+      message: `起点 (${dispCol}, ${dispRow}) 不在网格范围内（col 0..${w - 1}，row 0..${h - 1}），运行时已自动收敛到 (${cfg.start.col}, ${cfg.start.row})。`,
+      suggestions: [
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: `扩大地图到 ${fit.width}×${fit.height} 以包含原起点`, patch: { grid: fit } },
+      ],
+    });
+  }
+
+  /* 2. 蛇身长度与地图尺寸 */
+  const length = Math.max(1, Math.round(Number(cfg.body.initialLength) || 1));
+  const dirs = dirsOf(grid, cfg.start.direction);
+  if (length > cells) {
+    // 直线上排下 length 节，网格至少要在身体延伸方向上够长；expandGridForBody 会同时给出合适的起点
+    const fitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, cfg.start, d, length)));
+    const expand = expandGridForBody(grid, cfg.start, dirs, length);
+    const fit = expand ? { width: expand.width, height: expand.height } : gridSizeFor(length, w, h);
+    const fitStart = expand ? { ...expand.start } : { ...centerCoord(new Grid({ type: cfg.grid.type, ...fit })) };
+    out.push({
+      level: 'error',
+      code: 'bodyExceedsGrid',
+      title: '蛇身长度超过地图尺寸',
+      message: `初始长度 ${length} 节 > 地图总格数 ${cells}（${w}×${h}），蛇身不可能完整容纳，体节必然重叠。`,
+      suggestions: [
+        { label: `初始长度改为 ${fitted}（当前起点/方向可容纳的最大长度）`, patch: { body: { initialLength: fitted } } },
+        {
+          label: `地图扩大到 ${fit.width}×${fit.height} 并把起点移到 (${fitStart.col}, ${fitStart.row})`,
+          patch: { grid: fit, start: fitStart },
+        },
+      ],
+    });
+  } else if (length > 1) {
+    const fitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, cfg.start, d, length)));
+    if (fitted < length) {
+      const centerFitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, center, d, length)));
+      const expand = expandGridForBody(grid, cfg.start, dirs, length);
+      const suggestions = [];
+      if (centerFitted > fitted) {
+        suggestions.push({ label: `起点移至地图中心 (${center.col}, ${center.row})（可容纳 ${centerFitted} 节）`, patch: { start: { ...center } } });
+      }
+      suggestions.push({ label: `初始长度改为 ${fitted}`, patch: { body: { initialLength: fitted } } });
+      if (expand) {
+        suggestions.push({ label: `地图扩大到 ${expand.width}×${expand.height} 以容纳 ${length} 节`, patch: { grid: { width: expand.width, height: expand.height }, start: { ...expand.start } } });
+      }
+      out.push({
+        level: 'error',
+        code: 'bodyTruncatedByBoundary',
+        title: '蛇的初始身体会被地图边界截断',
+        message: `起点 (${cfg.start.col}, ${cfg.start.row}) 朝${dirsLabel(grid, dirs)}的反方向只能排下 ${fitted} 节，初始长度 ${length} 节会被截断为 ${fitted} 节。`,
+        suggestions,
+      });
+    }
+  }
+
+  /* 3. 增长上限 / 结束条件的目标长度超过地图总格数 */
+  const lp = cfg.body.lengthPolicy;
+  if (lp.mode !== 'fixed' && lp.growth.enabled && lp.growth.maxLength > cells) {
+    const fit = gridSizeFor(lp.growth.maxLength, w, h);
+    out.push({
+      level: 'warning',
+      code: 'growthExceedsGrid',
+      title: '增长上限超过地图尺寸',
+      message: `增长上限 ${lp.growth.maxLength} 节 > 地图总格数 ${cells}，长度永远达不到该上限，超出的部分只会让体节互相重叠。`,
+      suggestions: [
+        { label: `增长上限改为 ${cells}`, patch: { body: { lengthPolicy: { growth: { maxLength: cells } } } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
+  }
+  if (cfg.endConditions.lengthReached && cfg.endConditions.lengthTarget > cells) {
+    const fit = gridSizeFor(cfg.endConditions.lengthTarget, w, h);
+    out.push({
+      level: 'warning',
+      code: 'lengthTargetExceedsGrid',
+      title: '结束条件的目标长度超过地图尺寸',
+      message: `结束条件「达到指定长度 ${cfg.endConditions.lengthTarget}」大于地图总格数 ${cells}，该条件永远不会触发，运行只能靠其它条件收尾。`,
+      suggestions: [
+        { label: `目标长度改为 ${cells}`, patch: { endConditions: { lengthTarget: cells } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
+  }
+
+  /* 4. 起点被阻塞状态占据（CA 初始环境） */
+  if (cfg.caMode.enabled) {
+    const states = cfg.caMode.states;
+    const blocking = new Set(states.filter((s) => s.blocking).map((s) => s.name));
+    const init = cfg.caMode.initial;
+    if (init.mode === 'pattern') {
+      const dim = parsePatternText(init.pattern);
+      if (dim.width > w || dim.height > h) {
+        const fit = { width: Math.max(w, dim.width), height: Math.max(h, dim.height) };
+        out.push({
+          level: 'warning',
+          code: 'patternExceedsGrid',
+          title: 'CA 初始图案大于地图尺寸',
+          message: `初始图案为 ${dim.width}×${dim.height}，大于地图 ${w}×${h}，超出部分会被直接裁掉，图案也无法正常居中。`,
+          suggestions: [
+            { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+            { label: '改用随机填充（密度 30%）', patch: { caMode: { initial: { mode: 'random', density: 0.3 } } } },
+          ],
+        });
+      }
+      const name = patternStateNameAt(grid, states, init.pattern, { col: cfg.start.col, row: cfg.start.row });
+      if (name && blocking.has(name)) {
+        const cleared = clearPatternCell(grid, init.pattern, { col: cfg.start.col, row: cfg.start.row });
+        const suggestions = [];
+        if (cleared !== null) suggestions.push({ label: '把起点格从初始图案中清空', patch: { caMode: { initial: { pattern: cleared } } } });
+        suggestions.push({ label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } });
+        suggestions.push({ label: `初始长度改为 1（避免身体压在阻塞格上）`, patch: { body: { initialLength: 1 } } });
+        out.push({
+          level: 'error',
+          code: 'startBlocked',
+          title: '起点被阻塞状态占据',
+          message: `起点 (${cfg.start.col}, ${cfg.start.row}) 在 CA 初始图案中是「${name}」（阻塞状态），运行时第一步就会判定为撞障碍物。`,
+          suggestions,
+        });
+      }
+    } else if (init.mode === 'random' && init.density > 0 && blocking.has(init.state)) {
+      out.push({
+        level: 'warning',
+        code: 'startMayBeBlocked',
+        title: '起点可能被随机填充的阻塞状态占据',
+        message: `CA 初始以 ${(init.density * 100).toFixed(0)}% 密度随机填充「${init.state}」（阻塞状态），起点被阻塞的概率约为 ${(init.density * 100).toFixed(0)}%（同一种子结果可复现）。`,
+        suggestions: [
+          { label: '把初始密度降到 5%', patch: { caMode: { initial: { density: 0.05 } } } },
+          { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        ],
+      });
+    }
+  }
+
+  /* 5. 常见「空转」配置 */
+  const moves = cfg.moveRules;
+  if (moves.left + moves.straight + moves.right <= 0) {
+    out.push({
+      level: 'warning',
+      code: 'zeroMoveWeights',
+      title: '左/直/右权重全为 0',
+      message: '运行时会退化为均匀分布，实际并非「不转向」。',
+      suggestions: [{ label: '恢复等概率（左 1 : 直 1 : 右 1）', patch: { moveRules: { left: 1, straight: 1, right: 1 } } }],
+    });
+  }
+  for (const r of cfg.environmentRules) {
+    if (!r.actions.length) {
+      out.push({
+        level: 'warning',
+        code: 'ruleWithoutAction',
+        title: `规则「${r.name}」没有后果动作`,
+        message: '条件满足时不会产生任何变化，该规则会被忽略。',
+        suggestions: [],
+      });
+    }
+  }
+  if (cfg.caMode.enabled && cfg.caMode.rules.length === 0 && cfg.caMode.initial.mode === 'empty') {
+    out.push({
+      level: 'warning',
+      code: 'caNoEffect',
+      title: '元胞自动机不会产生变化',
+      message: '已启用 CA 但既没有转移规则，初始状态又全为空，环境将始终保持空白。',
+      suggestions: [
+        { label: '改为随机初始填充（密度 30%）', patch: { caMode: { initial: { mode: 'random', density: 0.3 } } } },
+        { label: '关闭元胞自动机', patch: { caMode: { enabled: false } } },
+      ],
+    });
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* 校验                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 结构校验（ok 仅由结构性错误决定，诊断结果不会阻断导入）+ 诊断汇总。
+ * diagnostics 为结构化诊断；errors/warnings 为供旧调用方直接展示的文本。
+ */
 function validateConfig(raw) {
   const errors = [];
   const warnings = [];
   if (!raw || typeof raw !== 'object') {
-    return { ok: false, errors: ['配置必须是一个 JSON 对象'], warnings };
+    return { ok: false, errors: ['配置必须是一个 JSON 对象'], warnings, diagnostics: [] };
   }
   const v = String(raw.version || '');
   if (v && !v.startsWith('1.')) warnings.push(`未知版本号 "${v}"，将尝试兼容导入`);
@@ -1336,21 +2359,11 @@ function validateConfig(raw) {
     if (raw.grid.width !== undefined && (!Number.isFinite(w) || w < 2)) errors.push('grid.width 必须是不小于 2 的数字');
     if (raw.grid.height !== undefined && (!Number.isFinite(h) || h < 2)) errors.push('grid.height 必须是不小于 2 的数字');
   }
-  const cfg = normalizeConfig(raw);
-  if (cfg.start.col >= cfg.grid.width || cfg.start.row >= cfg.grid.height) {
-    errors.push('起点超出网格范围');
+  const diagnostics = diagnoseConfig(raw);
+  for (const d of diagnostics) {
+    warnings.push(d.level === 'error' ? `${d.title}：${d.message}` : d.message);
   }
-  const moves = cfg.moveRules;
-  if (moves.left + moves.straight + moves.right <= 0) {
-    warnings.push('左/直/右权重全为 0，运行时会退化为均匀分布');
-  }
-  for (const r of cfg.environmentRules) {
-    if (!r.actions.length) warnings.push(`规则「${r.name}」没有配置后果动作，将被忽略`);
-  }
-  if (cfg.caMode.enabled && cfg.caMode.rules.length === 0 && cfg.caMode.initial.mode === 'empty') {
-    warnings.push('已启用元胞自动机但未定义任何转移规则，环境不会变化');
-  }
-  return { ok: errors.length === 0, errors, warnings };
+  return { ok: errors.length === 0, errors, warnings, diagnostics };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1398,7 +2411,7 @@ function readConfigFromLocation() {
     return null;
   }
 }
-return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT };
+return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, centerCoord, gridSizeFor, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT };
 })();
 
 /* ===== src/core/presets.js ===== */
@@ -1823,367 +2836,6 @@ function buildPresetConfig(id) {
 return { PRESETS, buildPresetConfig };
 })();
 
-/* ===== src/core/grid.js ===== */
-__MODULES["src/core/grid.js"] = (function () {
-/**
- * 统一网格抽象
- * - 方格：4 方向移动（up/right/down/left，顺时针），支持 4/8 邻域感知
- * - 六边形：尖顶（pointy-top）轴向坐标，6 方向移动（顺时针）
- *
- * 坐标统一使用「偏移坐标」{col, row}，索引 = row * width + col。
- * 六边形内部在需要时转换为轴向坐标 {q, r}。
- */
-
-const SQ_DIR_NAMES = ['up', 'right', 'down', 'left'];
-const SQ_DIR_VEC = [
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: 0 },
-  { dx: 0, dy: 1 },
-  { dx: -1, dy: 0 },
-];
-
-/** 8 邻域方向（顺时针，从上方开始），用于 moore 感知 */
-const SQ_NEIGHBOR8 = [
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: -1 },
-  { dx: 1, dy: 0 },
-  { dx: 1, dy: 1 },
-  { dx: 0, dy: 1 },
-  { dx: -1, dy: 1 },
-  { dx: -1, dy: 0 },
-  { dx: -1, dy: -1 },
-];
-
-const HEX_DIR_NAMES = ['east', 'southEast', 'southWest', 'west', 'northWest', 'northEast'];
-/** 轴向方向向量，顺时针（屏幕 y 向下） */
-const HEX_DIR_VEC = [
-  { q: 1, r: 0 },
-  { q: 0, r: 1 },
-  { q: -1, r: 1 },
-  { q: -1, r: 0 },
-  { q: 0, r: -1 },
-  { q: 1, r: -1 },
-];
-
-function dirNames(type) {
-  return type === 'hex' ? HEX_DIR_NAMES : SQ_DIR_NAMES;
-}
-
-/** 解析方向：支持名称（含中文别名）、索引 */
-function parseDir(value, type) {
-  const names = dirNames(type);
-  if (typeof value === 'number') {
-    const n = names.length;
-    return ((Math.round(value) % n) + n) % n;
-  }
-  const key = String(value ?? '').trim();
-  const idx = names.findIndex((n) => n.toLowerCase() === key.toLowerCase());
-  if (idx >= 0) return idx;
-  const alias = {
-    up: 'up', north: 'up', 上: 'up',
-    right: 'right', east: 'right', 右: 'right',
-    down: 'down', south: 'down', 下: 'down',
-    left: 'left', west: 'left', 左: 'left',
-    东北: 'northEast', northeast: 'northEast', 东南: 'southEast', southeast: 'southEast',
-    西北: 'northWest', northwest: 'northWest', 西南: 'southWest', southwest: 'southWest',
-  };
-  const mapped = alias[key.toLowerCase()] || alias[key];
-  if (mapped) {
-    const i = names.findIndex((n) => n.toLowerCase() === mapped.toLowerCase());
-    if (i >= 0) return i;
-  }
-  return 0;
-}
-
-class Grid {
-  constructor(cfg = {}) {
-    this.type = cfg.type === 'hex' ? 'hex' : 'square';
-    this.width = Math.max(1, Math.floor(cfg.width ?? 20));
-    this.height = Math.max(1, Math.floor(cfg.height ?? 20));
-    this.boundary = cfg.boundary || 'stop';
-    this.dirCount = this.type === 'hex' ? 6 : 4;
-    this.size = this.width * this.height;
-    this.dirNames = dirNames(this.type);
-  }
-
-  /* ---------------- 基本坐标操作 ---------------- */
-
-  idx(col, row) {
-    return row * this.width + col;
-  }
-
-  coord(index) {
-    return { col: index % this.width, row: Math.floor(index / this.width) };
-  }
-
-  inBounds(c) {
-    return !!c && c.col >= 0 && c.col < this.width && c.row >= 0 && c.row < this.height;
-  }
-
-  wrap(c) {
-    const col = ((c.col % this.width) + this.width) % this.width;
-    const row = ((c.row % this.height) + this.height) % this.height;
-    return { col, row };
-  }
-
-  /** 沿方向移动一步，可能越界（返回仍为偏移坐标） */
-  step(c, dir) {
-    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
-    if (this.type === 'square') {
-      const v = SQ_DIR_VEC[d];
-      return { col: c.col + v.dx, row: c.row + v.dy };
-    }
-    const a = this.axial(c);
-    const v = HEX_DIR_VEC[d];
-    return this.offset({ q: a.q + v.q, r: a.r + v.r });
-  }
-
-  /** 越界后按边界策略处理，返回目标坐标；stop/custom 返回 null（表示无法移动） */
-  resolveBoundary(c, dir, mode) {
-    const target = this.step(c, dir);
-    if (this.inBounds(target)) return target;
-    switch (mode) {
-      case 'wrap':
-        return this.wrap(target);
-      case 'bounce': {
-        const back = this.opposite(dir);
-        const t2 = this.step(c, back);
-        return this.inBounds(t2) ? t2 : null;
-      }
-      default:
-        return null;
-    }
-  }
-
-  opposite(dir) {
-    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
-    return this.type === 'hex' ? (d + 3) % 6 : (d + 2) % 4;
-  }
-
-  leftOf(dir) {
-    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
-    return (d - 1 + this.dirCount) % this.dirCount;
-  }
-
-  rightOf(dir) {
-    const d = ((dir % this.dirCount) + this.dirCount) % this.dirCount;
-    return (d + 1) % this.dirCount;
-  }
-
-  /* ---------------- 六边形轴向坐标 ---------------- */
-
-  axial(c) {
-    if (this.type === 'square') return { q: c.col, r: c.row };
-    // odd-r offset -> axial
-    const row = c.row;
-    return { q: c.col - (row - (row & 1)) / 2, r: row };
-  }
-
-  offset(a) {
-    if (this.type === 'square') return { col: a.q, row: a.r };
-    const r = a.r;
-    return { col: a.q + (r - (r & 1)) / 2, row: r };
-  }
-
-  /* ---------------- 邻域 ---------------- */
-
-  /**
-   * 获取邻域坐标（包含越界坐标），按 kind 指定的度量筛选
-   * kind: vonNeumann | moore | hex | radius
-   */
-  neighborsRaw(c, kind = 'moore', radius = 1, includeSelf = false) {
-    const r = Math.max(1, Math.floor(radius || 1));
-    const out = [];
-    if (includeSelf) out.push(c);
-    if (this.type === 'square') {
-      const useManhattan = kind === 'vonNeumann';
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const dist = useManhattan ? Math.abs(dx) + Math.abs(dy) : Math.max(Math.abs(dx), Math.abs(dy));
-          if (dist > r) continue;
-          out.push({ col: c.col + dx, row: c.row + dy });
-        }
-      }
-    } else {
-      const a = this.axial(c);
-      for (let dq = -r; dq <= r; dq++) {
-        for (let dr = -r; dr <= r; dr++) {
-          if (dq === 0 && dr === 0) continue;
-          if (this.hexDistanceAxial({ q: dq, r: dr }, { q: 0, r: 0 }) > r) continue;
-          out.push(this.offset({ q: a.q + dq, r: a.r + dr }));
-        }
-      }
-    }
-    return out;
-  }
-
-  /**
-   * 获取邻域内（在界内）的坐标列表
-   * kind: vonNeumann | moore | hex | radius
-   */
-  neighbors(c, kind = 'moore', radius = 1, includeSelf = false) {
-    return this.neighborsRaw(c, kind, radius, includeSelf).filter((n) => this.inBounds(n));
-  }
-
-  /** 邻域中「理论存在」的格子数（含越界与中心，用于比例计算） */
-  neighborhoodCapacity(kind = 'moore', radius = 1, includeSelf = false) {
-    const r = Math.max(1, Math.floor(radius || 1));
-    let count = 0;
-    if (this.type === 'square') {
-      const useManhattan = kind === 'vonNeumann';
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const dist = useManhattan ? Math.abs(dx) + Math.abs(dy) : Math.max(Math.abs(dx), Math.abs(dy));
-          if (dist <= r) count++;
-        }
-      }
-    } else {
-      for (let dq = -r; dq <= r; dq++) {
-        for (let dr = -r; dr <= r; dr++) {
-          if (this.hexDistanceAxial({ q: dq, r: dr }, { q: 0, r: 0 }) <= r) count++;
-        }
-      }
-    }
-    return count + (includeSelf ? 1 : 0);
-  }
-
-  /** 6/8 个「探索方向」的邻居（用于感知方向关系与图案匹配） */
-  ringNeighbors(c) {
-    const out = [];
-    if (this.type === 'square') {
-      for (const v of SQ_NEIGHBOR8) out.push({ col: c.col + v.dx, row: c.row + v.dy });
-    } else {
-      const a = this.axial(c);
-      for (const v of HEX_DIR_VEC) out.push(this.offset({ q: a.q + v.q, r: a.r + v.r }));
-    }
-    return out.filter((n) => this.inBounds(n));
-  }
-
-  /** 相对方向邻居：relDir 为 relNameToOffset */
-  relativeCoord(c, baseDir, relKey, distance = 1) {
-    const n = this.dirCount;
-    const d = ((baseDir % n) + n) % n;
-    const map4 = { front: 0, right: 1, back: 2, left: 3 };
-    const map6 = { front: 0, frontRight: 1, backRight: 2, back: 3, backLeft: 4, frontLeft: 5 };
-    const map = this.type === 'hex' ? map6 : map4;
-    const off = map[relKey];
-    if (off === undefined) return null;
-    let target = c;
-    for (let i = 0; i < Math.max(1, distance); i++) target = this.step(target, (d + off) % n);
-    return target;
-  }
-
-  /* ---------------- 方向关系 ---------------- */
-
-  /** 返回 b 相对 a 的方向索引（不相邻返回 -1） */
-  dirBetween(a, b) {
-    if (this.type === 'square') {
-      const dx = b.col - a.col;
-      const dy = b.row - a.row;
-      return SQ_DIR_VEC.findIndex((v) => v.dx === dx && v.dy === dy);
-    }
-    const aa = this.axial(a);
-    const ab = this.axial(b);
-    const dq = ab.q - aa.q;
-    const dr = ab.r - aa.r;
-    return HEX_DIR_VEC.findIndex((v) => v.q === dq && v.r === dr);
-  }
-
-  /** 相对方位：front / right / back / left（六边形含 frontRight 等） */
-  relative(baseDir, dir) {
-    const n = this.dirCount;
-    const delta = (((dir - baseDir) % n) + n) % n;
-    const names4 = ['front', 'right', 'back', 'left'];
-    const names6 = ['front', 'frontRight', 'backRight', 'back', 'backLeft', 'frontLeft'];
-    return (this.type === 'hex' ? names6 : names4)[delta];
-  }
-
-  /* ---------------- 距离 ---------------- */
-
-  hexDistanceAxial(a, b) {
-    const dq = a.q - b.q;
-    const dr = a.r - b.r;
-    return (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
-  }
-
-  distance(a, b, metric) {
-    if (this.type === 'hex') {
-      return this.hexDistanceAxial(this.axial(a), this.axial(b));
-    }
-    const dx = Math.abs(a.col - b.col);
-    const dy = Math.abs(a.row - b.row);
-    if (metric === 'manhattan') return dx + dy;
-    if (metric === 'euclidean') return Math.hypot(dx, dy);
-    return Math.max(dx, dy);
-  }
-
-  /* ---------------- 渲染辅助 ---------------- */
-
-  /** 单元格中心像素坐标 */
-  toPixel(c, cellSize, gap = 0) {
-    if (this.type === 'square') {
-      const pitch = cellSize + gap;
-      return { x: c.col * pitch + cellSize / 2, y: c.row * pitch + cellSize / 2, radius: cellSize / 2 };
-    }
-    const R = cellSize / 2;
-    const width = Math.sqrt(3) * R;
-    return {
-      x: width * (c.col + 0.5 * (c.row & 1)) + width / 2,
-      y: 1.5 * R * c.row + R,
-      radius: R,
-      width,
-    };
-  }
-
-  canvasSize(cellSize, gap = 0, margin = 12) {
-    if (this.type === 'square') {
-      const pitch = cellSize + gap;
-      return {
-        width: this.width * pitch - gap + margin * 2,
-        height: this.height * pitch - gap + margin * 2,
-        margin,
-      };
-    }
-    const R = cellSize / 2;
-    const width = Math.sqrt(3) * R;
-    return {
-      width: width * (this.width + 0.5) + margin * 2,
-      height: R * (1.5 * (this.height - 1) + 2) + margin * 2,
-      margin,
-    };
-  }
-
-  /** 图案匹配的格子顺序：方格 3x3 行优先，六边形 [中心, 6 方向] */
-  patternSlots(c) {
-    if (this.type === 'square') {
-      const out = [];
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) out.push({ col: c.col + dx, row: c.row + dy });
-      }
-      return out;
-    }
-    return [{ ...c }, ...this.ringNeighbors(c)];
-  }
-
-  /** 图案模板长度 */
-  patternLength() {
-    return this.type === 'square' ? 9 : 7;
-  }
-
-  /** 曼哈顿/六边形半径内的所有格（含中心），用于显示与统计 */
-  allCoords() {
-    const out = [];
-    for (let row = 0; row < this.height; row++) {
-      for (let col = 0; col < this.width; col++) out.push({ col, row });
-    }
-    return out;
-  }
-}
-return { parseDir, Grid, dirNames };
-})();
-
 /* ===== src/core/rng.js ===== */
 __MODULES["src/core/rng.js"] = (function () {
 /**
@@ -2303,258 +2955,6 @@ function normalizeWeights(weights) {
   return ws.map((w) => w / total);
 }
 return { RNG };
-})();
-
-/* ===== src/core/ca.js ===== */
-__MODULES["src/core/ca.js"] = (function () {
-/**
- * 元胞自动机引擎
- * 支持：多状态、Von Neumann / Moore / 六边形邻域、半径、固定/循环/反射边界、
- *       同步 / 异步 / 随机顺序更新、状态转移规则表、方向性交通流规则、初始图案
- */
-
-const CA_UPDATE_LABELS = {
-  synchronous: '同步更新',
-  asynchronous: '异步更新',
-  random: '随机顺序更新',
-};
-
-const CA_BOUNDARY_LABELS = {
-  fixed: '固定边界',
-  wrap: '循环边界',
-  reflect: '反射边界',
-};
-
-class CAEngine {
-  constructor(grid, caMode, states) {
-    this.grid = grid;
-    this.cfg = caMode;
-    this.states = states;
-    this.index = new Map();
-    states.forEach((s, i) => this.index.set(s.name, i));
-  }
-
-  stateIdx(name) {
-    const i = this.index.get(name);
-    return i === undefined ? 0 : i;
-  }
-
-  /** 映射邻域坐标（按边界策略）→ 返回 null 表示固定边界外的空格 */
-  mapCoord(coord) {
-    const { grid } = this;
-    if (grid.inBounds(coord)) return coord;
-    switch (this.cfg.boundary) {
-      case 'wrap':
-        return grid.wrap(coord);
-      case 'reflect': {
-        let col = coord.col;
-        let row = coord.row;
-        const w = grid.width;
-        const h = grid.height;
-        if (col < 0) col = -col - 1;
-        if (col >= w) col = 2 * w - col - 1;
-        if (row < 0) row = -row - 1;
-        if (row >= h) row = 2 * h - row - 1;
-        col = Math.min(w - 1, Math.max(0, col));
-        row = Math.min(h - 1, Math.max(0, row));
-        return { col, row };
-      }
-      default:
-        return null; // fixed：界外视为 empty
-    }
-  }
-
-  /** 邻域内某状态的数量（同步更新时读 cells 快照） */
-  countInNeighborhood(cells, coord, stateIdx) {
-    const { grid } = this;
-    const raw = grid.neighborsRaw(coord, this.cfg.neighborhood, this.cfg.radius, false);
-    let n = 0;
-    for (const c of raw) {
-      const m = this.mapCoord(c);
-      if (!m) continue; // fixed：界外为 empty，不计入目标状态
-      if (cells[grid.idx(m.col, m.row)] === stateIdx) n++;
-    }
-    return n;
-  }
-
-  /** 规则匹配：返回目标状态索引，或 null 表示保持原状 */
-  matchRule(cells, coord, currentIdx, rng) {
-    const stateName = this.states[currentIdx].name;
-    for (const rule of this.cfg.rules) {
-      if (!rule.enabled) continue;
-      if (rule.kind === 'traffic') continue;
-      if (rule.from !== '*' && !rule.from.includes(stateName)) continue;
-      let ok = true;
-      for (const c of rule.counts) {
-        const si = this.stateIdx(c.state);
-        const n = this.countInNeighborhood(cells, coord, si);
-        if (c.values && c.values.length) {
-          if (!c.values.includes(n)) { ok = false; break; }
-        } else {
-          if (c.min !== null && c.min !== undefined && n < c.min) { ok = false; break; }
-          if (c.max !== null && c.max !== undefined && n > c.max) { ok = false; break; }
-        }
-      }
-      if (!ok) continue;
-      if (rule.probability < 1 && rng.next() >= rule.probability) continue;
-      return this.stateIdx(rule.to);
-    }
-    return null;
-  }
-
-  /** 方向性移动规则（如交通流），返回 { cells, moved } */
-  applyTrafficRules(cells, rng) {
-    const { grid } = this;
-    const traffic = this.cfg.rules.filter((r) => r.enabled && r.kind === 'traffic');
-    if (!traffic.length) return { cells, moved: false };
-    const out = cells.slice();
-    let moved = false;
-    for (const rule of traffic) {
-      const fromIdx = this.stateIdx(rule.from === '*' ? 'empty' : rule.from[0]);
-      const toIdx = this.stateIdx(rule.to);
-      const dir = this.parseDirIndex(rule.direction);
-      const d = grid.step({ col: 0, row: 0 }, dir);
-      const projected = grid.allCoords().sort((a, b) => (b.col * d.col + b.row * d.row) - (a.col * d.col + a.row * d.row));
-      for (const c of projected) {
-        const i = grid.idx(c.col, c.row);
-        if (out[i] !== fromIdx) continue;
-        let target = grid.step(c, dir);
-        target = this.mapCoord(target);
-        if (!target) continue;
-        const ti = grid.idx(target.col, target.row);
-        if (out[ti] !== toIdx) continue;
-        out[ti] = fromIdx;
-        out[i] = toIdx;
-        moved = true;
-      }
-    }
-    return { cells: out, moved };
-  }
-
-  parseDirIndex(name) {
-    const { grid } = this;
-    const keys = ['east', 'southEast', 'southWest', 'west', 'northWest', 'northEast'];
-    if (grid.type === 'hex') {
-      const i = keys.findIndex((k) => k.toLowerCase() === String(name).toLowerCase());
-      return i >= 0 ? i : 0;
-    }
-    const alias = { east: 'right', west: 'left', north: 'up', south: 'down', right: 'right', left: 'left', up: 'up', down: 'down' };
-    const key = alias[String(name).toLowerCase()] || 'right';
-    return grid.dirNames.findIndex((n) => n === key);
-  }
-
-  /** 单次演化 */
-  step(world, rng) {
-    const { grid } = this;
-    const mode = this.cfg.update;
-    if (!this.cfg.rules.length) return false;
-    const hadTraffic = this.cfg.rules.some((r) => r.enabled && r.kind === 'traffic');
-
-    if (mode === 'synchronous') {
-      const snapshot = world.cells.slice();
-      const next = snapshot.slice();
-      let changed = false;
-      for (let i = 0; i < grid.size; i++) {
-        const coord = grid.coord(i);
-        const target = this.matchRule(snapshot, coord, snapshot[i], rng);
-        if (target !== null && target !== snapshot[i]) {
-          next[i] = target;
-          changed = true;
-        }
-      }
-      if (hadTraffic) {
-        const res = this.applyTrafficRules(next, rng);
-        world.cells = res.cells;
-        if (res.moved) changed = true;
-      } else {
-        world.cells = next;
-      }
-      return changed;
-    }
-
-    // 异步 / 随机顺序：就地更新
-    const order = grid.allCoords();
-    if (mode === 'random') rng.shuffle(order);
-    let changed = false;
-    for (const coord of order) {
-      const i = grid.idx(coord.col, coord.row);
-      const target = this.matchRule(world.cells, coord, world.cells[i], rng);
-      if (target !== null && target !== world.cells[i]) {
-        world.cells[i] = target;
-        changed = true;
-      }
-    }
-    if (hadTraffic) {
-      const res = this.applyTrafficRules(world.cells, rng);
-      world.cells = res.cells;
-      if (res.moved) changed = true;
-    }
-    return changed;
-  }
-
-  /** 应用初始图案 */
-  init(world, rng) {
-    const initCfg = this.cfg.initial || {};
-    for (let i = 0; i < world.cells.length; i++) world.cells[i] = 0;
-    if (initCfg.mode === 'random') {
-      const si = this.stateIdx(initCfg.state || 'obstacle');
-      for (let i = 0; i < world.cells.length; i++) {
-        if (rng.next() < initCfg.density) world.cells[i] = si;
-      }
-    } else if (initCfg.mode === 'pattern') {
-      this.applyPatternText(world, initCfg.pattern || '');
-    }
-    return world;
-  }
-
-  /** 图案文本：每行一个字符串，'.' 为空，其它字符按状态符号匹配 */
-  applyPatternText(world, text) {
-    const { grid } = this;
-    const rows = String(text).split('\n').map((r) => r.replace(/\r/g, '')).filter((r) => r.length);
-    if (!rows.length) return;
-    const pw = Math.max(...rows.map((r) => r.length));
-    const ph = rows.length;
-    const offCol = Math.floor((grid.width - pw) / 2);
-    const offRow = Math.floor((grid.height - ph) / 2);
-    const symbolMap = new Map();
-    const builtin = new Set(['empty', 'obstacle', 'marker', 'trail']);
-    for (const s of this.states) {
-      const idx = this.stateIdx(s.name);
-      symbolMap.set(String(s.symbol).toUpperCase(), idx);
-      symbolMap.set(String(s.name).toUpperCase(), idx);
-      if (!builtin.has(s.name)) symbolMap.set(String(s.name)[0].toUpperCase(), idx);
-    }
-    symbolMap.set('.', 0);
-    symbolMap.set(' ', 0);
-    // 常见别名：O / X / # 指向第一个非空状态
-    const firstSolid = this.states.findIndex((s) => s.name !== 'empty');
-    if (firstSolid > 0) {
-      for (const alias of ['O', 'X', '#', '@']) {
-        if (!symbolMap.has(alias)) symbolMap.set(alias, firstSolid);
-      }
-    }
-    for (let r = 0; r < ph; r++) {
-      for (let c = 0; c < rows[r].length; c++) {
-        const ch = rows[r][c];
-        if (ch === '.' || ch === ' ') continue;
-        const si = symbolMap.get(ch.toUpperCase());
-        if (si === undefined) continue;
-        const col = offCol + c;
-        const row = offRow + r;
-        if (col < 0 || row < 0 || col >= grid.width || row >= grid.height) continue;
-        if (si !== 0) world.cells[grid.idx(col, row)] = si;
-      }
-    }
-  }
-
-  /** 状态直方图（用于统计面板） */
-  histogram(world) {
-    const hist = this.states.map(() => 0);
-    for (let i = 0; i < world.cells.length; i++) hist[world.cells[i]]++;
-    return hist;
-  }
-}
-return { CAEngine, CA_UPDATE_LABELS, CA_BOUNDARY_LABELS };
 })();
 
 /* ===== src/core/conditions.js ===== */
@@ -3480,7 +3880,7 @@ const { RNG } = __MODULES["src/core/rng.js"];
 const { World, Agent } = __MODULES["src/core/world.js"];
 const { CAEngine } = __MODULES["src/core/ca.js"];
 const { RuleEngine } = __MODULES["src/core/rules.js"];
-const { normalizeConfig, END_LABELS } = __MODULES["src/core/config.js"];
+const { normalizeConfig, END_LABELS, centerCoord, gridSizeFor } = __MODULES["src/core/config.js"];
 const { resolveTurn } = __MODULES["src/core/actions.js"];
 const { evaluateCondition } = __MODULES["src/core/conditions.js"];
 
@@ -3518,6 +3918,71 @@ class Simulation {
     this.grid = new Grid(this.config.grid);
     this.states = this.config.caMode.states;
     this.frameCap = clampFrameCap(opts.frameCap);
+    /** 运行期诊断（与配置诊断同结构，供界面合并展示） */
+    this.runtimeDiagnostics = [];
+    this.diagCodes = new Set();
+  }
+
+  /** 记录一条运行期诊断：同一 code 只保留首次，避免长跑时重复刷屏 */
+  noteDiagnostic(diag) {
+    if (this.diagCodes.has(diag.code)) return;
+    this.diagCodes.add(diag.code);
+    this.runtimeDiagnostics.push(diag);
+  }
+
+  /** 起点被初始环境（CA 随机/图案填充）占据时的诊断 */
+  checkStartBlocked(world) {
+    const cfg = this.config;
+    const start = { col: cfg.start.col, row: cfg.start.row };
+    if (!world.isBlocking(start)) return;
+    const center = centerCoord(this.grid);
+    this.noteDiagnostic({
+      level: 'error',
+      code: 'startBlocked',
+      title: '起点被阻塞状态占据',
+      message: `起点 (${start.col}, ${start.row}) 在初始环境中是「${world.get(start)}」（阻塞状态），第一步就会判定为撞障碍物。`,
+      suggestions: [
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: '把 CA 初始密度降到 5%', patch: { caMode: { initial: { density: 0.05 } } } },
+      ],
+    });
+  }
+
+  /** 初始身体因越界被截断时的诊断 */
+  checkBodyTruncated(agent) {
+    const cfg = this.config;
+    const requested = cfg.body.initialLength;
+    if (agent.length >= requested) return;
+    const center = centerCoord(this.grid);
+    const fit = gridSizeFor(requested, this.grid.width, this.grid.height);
+    this.noteDiagnostic({
+      level: 'error',
+      code: 'bodyTruncated',
+      title: '初始身体被地图边界截断',
+      message: `请求初始长度 ${requested} 节，但起点 (${cfg.start.col}, ${cfg.start.row}) 处只能容纳 ${agent.length} 节，实际身体被截断为 ${agent.length} 节。`,
+      suggestions: [
+        { label: `初始长度改为 ${agent.length}`, patch: { body: { initialLength: agent.length } } },
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height} 并把起点移到中心`, patch: { grid: fit, start: { ...centerCoord(new Grid({ type: cfg.grid.type, ...fit })) } } },
+      ],
+    });
+  }
+
+  /** 运行中身体长度超过地图总格数（体节必然重叠） */
+  checkLengthOverflow(agent, tick) {
+    const cells = this.grid.size;
+    if (agent.length <= cells || this.diagCodes.has('lengthExceedsGrid')) return;
+    const fit = gridSizeFor(agent.length, this.grid.width, this.grid.height);
+    this.noteDiagnostic({
+      level: 'warning',
+      code: 'lengthExceedsGrid',
+      title: '蛇身长度超过地图总格数',
+      message: `第 ${tick} 步时长度已达 ${agent.length} 节 > 地图总格数 ${cells}，体节将互相重叠。`,
+      suggestions: [
+        { label: `增长上限改为 ${cells}`, patch: { body: { lengthPolicy: { growth: { maxLength: cells } } } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
   }
 
   createInitialAgent(rng, dir) {
@@ -3542,6 +4007,9 @@ class Simulation {
     const world = new World(grid, states);
     const ca = cfg.caMode.enabled ? new CAEngine(grid, cfg.caMode, states) : null;
     if (ca) ca.init(world, rng);
+    this.runtimeDiagnostics = [];
+    this.diagCodes.clear();
+    this.checkStartBlocked(world);
 
     const engine = new RuleEngine(cfg);
     // 起始方向为「任意」时，由种子化 RNG 在网格的全部方向中随机挑选
@@ -3549,6 +4017,7 @@ class Simulation {
       ? rng.int(grid.dirCount)
       : parseDir(cfg.start.direction, grid.type);
     const mainAgent = this.createInitialAgent(rng, dir);
+    this.checkBodyTruncated(mainAgent);
     const agents = [mainAgent];
 
     const stats = {
@@ -3644,6 +4113,7 @@ class Simulation {
       stats.agents = agents.length;
       stats.obstacleCount = world.countState('obstacle');
       stats.markerCount = world.countState('marker');
+      this.checkLengthOverflow(mainAgent, tick);
 
       if (ctx.cellsDirty) {
         storedCells = world.cells.slice();
@@ -3689,6 +4159,7 @@ class Simulation {
       logs,
       stats,
       endReason,
+      diagnostics: this.runtimeDiagnostics,
       seed: cfg.seed,
       rngCalls: rng.calls,
       finalFrameIndex: frames.length - 1,
@@ -5223,7 +5694,7 @@ __MODULES["src/ui/app.js"] = (function () {
 /**
  * 应用主体：配置面板、规则编辑器、播放控制、统计与日志、导入导出
  */
-const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT } = __MODULES["src/core/config.js"];
+const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT } = __MODULES["src/core/config.js"];
 const { PRESETS, buildPresetConfig } = __MODULES["src/core/presets.js"];
 const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } = __MODULES["src/core/simulation.js"];
 const { Renderer } = __MODULES["src/ui/canvas.js"];
@@ -5352,7 +5823,11 @@ function init() {
   bindKeyboard();
   renderConfigPanel();
   renderSidePanel();
+  notifyStartupDiagnostics();
   recompute({ immediate: true });
+  // 启动成功后再撤掉兜底提示（init 全同步，不会出现闪烁）
+  const legacyHint = document.getElementById('legacy-hint');
+  if (legacyHint) legacyHint.className = 'hidden';
 }
 
 /** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧 */
@@ -5443,6 +5918,7 @@ function scheduleRun(delay = 160) {
 
 function onSimChange(delay = 160) {
   state.dirty = true;
+  refreshDiagnostics(); // 静态诊断只依赖配置，改动后立即反馈，无需等待重算
   if (state.autoRun) scheduleRun(delay);
 }
 
@@ -5495,6 +5971,7 @@ function recompute(opts = {}) {
   renderLog();
   updateControls();
   draw();
+  refreshDiagnostics(); // 用本次运行的真实结果替换上一轮的运行期诊断
   if (opts.immediate !== true && performance.now() - t0 > 400) {
     toast(`已重新计算 ${result.frames.length} 帧`, 'info');
   }
@@ -5945,6 +6422,8 @@ function renderSidePanel() {
   const side = els.side;
   clear(side);
 
+  side.appendChild(diagnosticsGroup());
+
   const currentPreset = PRESETS.find((p) => p.name === state.cfg.meta.name) || PRESETS[0];
   const presetSel = select(currentPreset.id, PRESETS.map((p) => ({ value: p.id, label: p.name })), () => {});
   const presetDesc = h('div', { class: 'hint' }, currentPreset.description);
@@ -6042,6 +6521,100 @@ function withResult(fn) {
   fn(state.result);
 }
 
+/* ------------------------------------------------------------------ */
+/* 配置诊断                                                            */
+/* ------------------------------------------------------------------ */
+
+const DIAG_LEVEL_TEXT = { error: '严重', warning: '警告', info: '提示' };
+const DIAG_GROUP_KEY = 'diagnostics';
+
+/**
+ * 合并两类诊断：
+ *  - 静态：当前配置与地图尺寸的匹配情况（规范化前的原始配置）
+ *  - 运行期：上一次运行中真实发生的情况（如身体被截断、起点被阻塞）
+ * 同一 code 以运行期结果为准，避免同一条问题重复出现。
+ */
+function collectDiagnostics() {
+  const staticList = diagnoseConfig(state.cfg);
+  // 配置改动后（dirty）上一次运行的运行期诊断已不适用，只展示静态诊断
+  const runtime = state.dirty ? [] : (state.result?.diagnostics || []);
+  const runtimeCodes = new Set(runtime.map((d) => d.code));
+  return [...runtime, ...staticList.filter((d) => !runtimeCodes.has(d.code))];
+}
+
+function diagnosticsGroup() {
+  const list = collectDiagnostics();
+  const errors = list.filter((d) => d.level === 'error').length;
+  const warnings = list.filter((d) => d.level === 'warning').length;
+  const badge = errors ? `${errors} 项严重` : warnings ? `${warnings} 项警告` : '正常';
+  const body = [];
+  if (!list.length) {
+    body.push(h('div', { class: 'diag-ok' }, '未检测到异常：起点、初始身体与地图尺寸相互匹配。'));
+  } else {
+    body.push(h('div', { class: 'hint' }, '以下情况会被静默修正或导致结果不符合预期，可直接套用其中一种解决方案。'));
+    for (const d of list) body.push(diagItem(d));
+    body.push(row(button('复制诊断报告', () => copyText(diagnosticsReport(list), '诊断报告已复制'), 'ghost small')));
+  }
+  return group('配置诊断', body, { open: true, key: DIAG_GROUP_KEY, badge });
+}
+
+/** 只重建「配置诊断」分组，避免整块侧边面板重绘 */
+function refreshDiagnostics() {
+  const old = els.side && els.side.querySelector(`[data-group-key="${DIAG_GROUP_KEY}"]`);
+  if (old && old.parentNode) old.parentNode.replaceChild(diagnosticsGroup(), old);
+}
+
+function diagItem(d) {
+  const item = h('div', { class: `diag-item ${d.level}` },
+    h('div', { class: 'diag-head' },
+      h('span', { class: `diag-level ${d.level}` }, DIAG_LEVEL_TEXT[d.level] || d.level),
+      h('span', { class: 'diag-title' }, d.title)),
+    h('div', { class: 'diag-msg' }, d.message));
+  const fixes = (d.suggestions || []).filter((s) => s.patch);
+  if (fixes.length) {
+    const host = h('div', { class: 'diag-fixes' }, h('span', { class: 'diag-fix-label' }, '可能的解决方案：'));
+    for (const s of fixes) host.appendChild(button(s.label, () => applyDiagFix(s), 'ghost small'));
+    item.appendChild(host);
+  }
+  return item;
+}
+
+/** 套用诊断建议：把补丁深合并进当前配置后重算 */
+function applyDiagFix(suggestion) {
+  deepAssign(state.cfg, suggestion.patch);
+  state.frameIndex = 0;
+  rebuildAll();
+  toast(`已应用：${suggestion.label}`, 'success');
+}
+
+/** 深合并补丁（对象递归合并，数组与标量直接覆盖），保持原有对象引用有效 */
+function deepAssign(target, patch) {
+  for (const [k, v] of Object.entries(patch || {})) {
+    const cur = target[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object' && !Array.isArray(cur)) {
+      deepAssign(cur, v);
+    } else {
+      target[k] = Array.isArray(v) ? [...v] : v;
+    }
+  }
+  return target;
+}
+
+function diagnosticsReport(list) {
+  const lines = [`# GridSneaker 配置诊断 · ${state.cfg.meta.name}`];
+  for (const d of list) {
+    lines.push('', `[${DIAG_LEVEL_TEXT[d.level] || d.level}] ${d.title}`, `  ${d.message}`);
+    for (const s of d.suggestions || []) lines.push(`  · ${s.label}`);
+  }
+  return lines.join('\n');
+}
+
+/** 启动时若存在严重问题，提示用户查看诊断面板（不打断操作） */
+function notifyStartupDiagnostics() {
+  const errors = diagnoseConfig(state.cfg).filter((d) => d.level === 'error');
+  if (errors.length) toast(`检测到 ${errors.length} 项配置异常：${errors[0].title}（见右侧「配置诊断」）`, 'warn');
+}
+
 function copyText(text, okMsg) {
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text).then(() => toast(okMsg, 'success')).catch(() => fallbackCopy(text, okMsg));
@@ -6068,6 +6641,7 @@ function safeName(name) {
 /* ------------------------------------------------------------------ */
 
 function rebuildAll() {
+  state.dirty = true; // 配置即将变化：隐藏上一轮的运行期诊断，避免渲染顺序造成残留
   renderConfigPanel();
   renderSidePanel();
   recompute({ immediate: true });

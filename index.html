@@ -1,12 +1,20 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <!-- 兜底提示：仅当脚本未能启动（兼容模式 / 内核过旧 / 禁用 JS）时可见，正常启动后由 init() 隐藏 -->
+  <div id="legacy-hint">
+    <h2>页面未能启动</h2>
+    <p>当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。</p>
+    <p>请点击地址栏右侧的闪电图标切换到<b>极速模式</b>后刷新，或改用 <b>Chrome / Edge</b> 打开本页面。</p>
+  </div>
+
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
     <div class="topbar-hint">v<span id="app-version">2.0.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>

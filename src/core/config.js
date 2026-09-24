@@ -2,6 +2,8 @@
  * 配置模型：默认值、规范化、版本迁移、校验、URL 分享
  */
 import { normalizeStates } from './world.js';
+import { Grid, parseDir } from './grid.js';
+import { patternStateNameAt, clearPatternCell, parsePatternText } from './ca.js';
 
 export const CONFIG_VERSION = '1.1';
 
@@ -677,14 +679,312 @@ export function migrate(raw) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 结构化诊断                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 诊断级别：
+ *  - error   严重：当前配置在地图尺寸下不可能正确运行（蛇身放不下、起点被堵死等）
+ *  - warning 警告：能运行，但结果很可能不符合预期
+ *  - info    提示
+ * 每条诊断附带 suggestions：[{ label, patch }]，patch 为可直接深合并回配置的部分配置，
+ * 供界面「一键修复」，也便于脚本化修正。
+ */
+export const DIAG_LEVELS = ['error', 'warning', 'info'];
+
+const GRID_MAX = 400;
+
+/** 地图中心坐标 */
+export function centerCoord(grid) {
+  return {
+    col: Math.min(grid.width - 1, Math.max(0, Math.floor(grid.width / 2))),
+    row: Math.min(grid.height - 1, Math.max(0, Math.floor(grid.height / 2))),
+  };
+}
+
+/** 容纳 cells 个格子所需的网格尺寸（尽量维持原宽高比，限制在 2..400） */
+export function gridSizeFor(cells, width, height) {
+  const w = clamp(Math.ceil(Math.sqrt((cells * Math.max(1, width)) / Math.max(1, height))), 2, GRID_MAX);
+  const size = { width: w, height: clamp(Math.ceil(cells / w), 2, GRID_MAX) };
+  while (size.width * size.height < cells) {
+    if (size.width <= size.height && size.width < GRID_MAX) size.width++;
+    else if (size.height < GRID_MAX) size.height++;
+    else break;
+  }
+  return size;
+}
+
+/**
+ * 方格图上扩大网格并（必要时）挪动起点，使长度 length 的身体能沿 dirs 的反方向完整铺开。
+ * 返回 { width, height, start }，无法容纳（超过 400）时返回 null；六边形不做推算。
+ */
+export function expandGridForBody(grid, start, dirs, length) {
+  if (grid.type !== 'square') return null;
+  let width = grid.width;
+  let height = grid.height;
+  let col = start.col;
+  let row = start.row;
+  for (const d of dirs) {
+    const name = grid.dirNames[d];
+    if (name === 'up') height = Math.max(height, row + length);
+    else if (name === 'down') { row = Math.max(row, length - 1); height = Math.max(height, row + 1); }
+    else if (name === 'left') width = Math.max(width, col + length);
+    else if (name === 'right') { col = Math.max(col, length - 1); width = Math.max(width, col + 1); }
+  }
+  if (width > GRID_MAX || height > GRID_MAX) return null;
+  const probe = new Grid({ type: 'square', width, height });
+  const bodyStart = { col, row };
+  for (const d of dirs) {
+    if (fittedBodyLength(probe, bodyStart, d, length) < length) return null;
+  }
+  return { width, height, start: bodyStart };
+}
+
+/** 从起点沿 dir 的反方向铺开 length 节时，实际落在界内的节数（与初始身体铺设方式一致） */
+export function fittedBodyLength(grid, start, dir, length) {
+  let cur = { ...start };
+  let n = 1;
+  const back = grid.opposite(dir);
+  for (let i = 1; i < length; i++) {
+    cur = grid.step(cur, back);
+    if (!grid.inBounds(cur)) break;
+    n++;
+  }
+  return n;
+}
+
+const DIR_CN = {
+  up: '上', right: '右', down: '下', left: '左',
+  east: '东', southEast: '东南', southWest: '西南', west: '西', northWest: '西北', northEast: '东北',
+};
+
+function dirsOf(grid, direction) {
+  if (direction === 'random') return Array.from({ length: grid.dirCount }, (_, i) => i);
+  return [parseDir(direction, grid.type)];
+}
+
+function dirsLabel(grid, dirs) {
+  if (dirs.length > 1) return '任意方向的最坏情况';
+  return DIR_CN[grid.dirNames[dirs[0]]] || grid.dirNames[dirs[0]];
+}
+
+/**
+ * 检测「意外情况」并给出可执行的修复建议。
+ * 覆盖：起点越界、蛇身长度超过地图尺寸、初始身体被边界截断、增长上限/目标长度超出总格数、
+ *       起点被阻塞状态占据，以及权重与规则配置层面的常见空转。
+ */
+export function diagnoseConfig(rawInput = {}) {
+  if (!rawInput || typeof rawInput !== 'object') {
+    return [{ level: 'error', code: 'invalidConfig', title: '配置无效', message: '配置必须是一个 JSON 对象。', suggestions: [] }];
+  }
+  const raw = rawInput;
+  const cfg = normalizeConfig(raw);
+  const grid = new Grid(cfg.grid);
+  const w = grid.width;
+  const h = grid.height;
+  const cells = grid.size;
+  const center = centerCoord(grid);
+  const out = [];
+
+  /* 1. 起点越界：规范化会把起点收敛进网格，这里按原始值报告 */
+  const startRaw = raw.start || {};
+  const rawCol = Number(startRaw.col ?? startRaw.x);
+  const rawRow = Number(startRaw.row ?? startRaw.y);
+  const badCol = Number.isFinite(rawCol) && (rawCol < 0 || rawCol > w - 1);
+  const badRow = Number.isFinite(rawRow) && (rawRow < 0 || rawRow > h - 1);
+  if (badCol || badRow) {
+    const dispCol = Number.isFinite(rawCol) ? Math.round(rawCol) : '?';
+    const dispRow = Number.isFinite(rawRow) ? Math.round(rawRow) : '?';
+    const fit = {
+      width: clamp(Number.isFinite(rawCol) ? Math.max(w, Math.ceil(rawCol) + 1) : w, 2, GRID_MAX),
+      height: clamp(Number.isFinite(rawRow) ? Math.max(h, Math.ceil(rawRow) + 1) : h, 2, GRID_MAX),
+    };
+    out.push({
+      level: 'error',
+      code: 'startOutOfBounds',
+      title: '起点超出地图边界',
+      message: `起点 (${dispCol}, ${dispRow}) 不在网格范围内（col 0..${w - 1}，row 0..${h - 1}），运行时已自动收敛到 (${cfg.start.col}, ${cfg.start.row})。`,
+      suggestions: [
+        { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        { label: `扩大地图到 ${fit.width}×${fit.height} 以包含原起点`, patch: { grid: fit } },
+      ],
+    });
+  }
+
+  /* 2. 蛇身长度与地图尺寸 */
+  const length = Math.max(1, Math.round(Number(cfg.body.initialLength) || 1));
+  const dirs = dirsOf(grid, cfg.start.direction);
+  if (length > cells) {
+    // 直线上排下 length 节，网格至少要在身体延伸方向上够长；expandGridForBody 会同时给出合适的起点
+    const fitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, cfg.start, d, length)));
+    const expand = expandGridForBody(grid, cfg.start, dirs, length);
+    const fit = expand ? { width: expand.width, height: expand.height } : gridSizeFor(length, w, h);
+    const fitStart = expand ? { ...expand.start } : { ...centerCoord(new Grid({ type: cfg.grid.type, ...fit })) };
+    out.push({
+      level: 'error',
+      code: 'bodyExceedsGrid',
+      title: '蛇身长度超过地图尺寸',
+      message: `初始长度 ${length} 节 > 地图总格数 ${cells}（${w}×${h}），蛇身不可能完整容纳，体节必然重叠。`,
+      suggestions: [
+        { label: `初始长度改为 ${fitted}（当前起点/方向可容纳的最大长度）`, patch: { body: { initialLength: fitted } } },
+        {
+          label: `地图扩大到 ${fit.width}×${fit.height} 并把起点移到 (${fitStart.col}, ${fitStart.row})`,
+          patch: { grid: fit, start: fitStart },
+        },
+      ],
+    });
+  } else if (length > 1) {
+    const fitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, cfg.start, d, length)));
+    if (fitted < length) {
+      const centerFitted = Math.min(...dirs.map((d) => fittedBodyLength(grid, center, d, length)));
+      const expand = expandGridForBody(grid, cfg.start, dirs, length);
+      const suggestions = [];
+      if (centerFitted > fitted) {
+        suggestions.push({ label: `起点移至地图中心 (${center.col}, ${center.row})（可容纳 ${centerFitted} 节）`, patch: { start: { ...center } } });
+      }
+      suggestions.push({ label: `初始长度改为 ${fitted}`, patch: { body: { initialLength: fitted } } });
+      if (expand) {
+        suggestions.push({ label: `地图扩大到 ${expand.width}×${expand.height} 以容纳 ${length} 节`, patch: { grid: { width: expand.width, height: expand.height }, start: { ...expand.start } } });
+      }
+      out.push({
+        level: 'error',
+        code: 'bodyTruncatedByBoundary',
+        title: '蛇的初始身体会被地图边界截断',
+        message: `起点 (${cfg.start.col}, ${cfg.start.row}) 朝${dirsLabel(grid, dirs)}的反方向只能排下 ${fitted} 节，初始长度 ${length} 节会被截断为 ${fitted} 节。`,
+        suggestions,
+      });
+    }
+  }
+
+  /* 3. 增长上限 / 结束条件的目标长度超过地图总格数 */
+  const lp = cfg.body.lengthPolicy;
+  if (lp.mode !== 'fixed' && lp.growth.enabled && lp.growth.maxLength > cells) {
+    const fit = gridSizeFor(lp.growth.maxLength, w, h);
+    out.push({
+      level: 'warning',
+      code: 'growthExceedsGrid',
+      title: '增长上限超过地图尺寸',
+      message: `增长上限 ${lp.growth.maxLength} 节 > 地图总格数 ${cells}，长度永远达不到该上限，超出的部分只会让体节互相重叠。`,
+      suggestions: [
+        { label: `增长上限改为 ${cells}`, patch: { body: { lengthPolicy: { growth: { maxLength: cells } } } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
+  }
+  if (cfg.endConditions.lengthReached && cfg.endConditions.lengthTarget > cells) {
+    const fit = gridSizeFor(cfg.endConditions.lengthTarget, w, h);
+    out.push({
+      level: 'warning',
+      code: 'lengthTargetExceedsGrid',
+      title: '结束条件的目标长度超过地图尺寸',
+      message: `结束条件「达到指定长度 ${cfg.endConditions.lengthTarget}」大于地图总格数 ${cells}，该条件永远不会触发，运行只能靠其它条件收尾。`,
+      suggestions: [
+        { label: `目标长度改为 ${cells}`, patch: { endConditions: { lengthTarget: cells } } },
+        { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+      ],
+    });
+  }
+
+  /* 4. 起点被阻塞状态占据（CA 初始环境） */
+  if (cfg.caMode.enabled) {
+    const states = cfg.caMode.states;
+    const blocking = new Set(states.filter((s) => s.blocking).map((s) => s.name));
+    const init = cfg.caMode.initial;
+    if (init.mode === 'pattern') {
+      const dim = parsePatternText(init.pattern);
+      if (dim.width > w || dim.height > h) {
+        const fit = { width: Math.max(w, dim.width), height: Math.max(h, dim.height) };
+        out.push({
+          level: 'warning',
+          code: 'patternExceedsGrid',
+          title: 'CA 初始图案大于地图尺寸',
+          message: `初始图案为 ${dim.width}×${dim.height}，大于地图 ${w}×${h}，超出部分会被直接裁掉，图案也无法正常居中。`,
+          suggestions: [
+            { label: `地图扩大到 ${fit.width}×${fit.height}`, patch: { grid: fit } },
+            { label: '改用随机填充（密度 30%）', patch: { caMode: { initial: { mode: 'random', density: 0.3 } } } },
+          ],
+        });
+      }
+      const name = patternStateNameAt(grid, states, init.pattern, { col: cfg.start.col, row: cfg.start.row });
+      if (name && blocking.has(name)) {
+        const cleared = clearPatternCell(grid, init.pattern, { col: cfg.start.col, row: cfg.start.row });
+        const suggestions = [];
+        if (cleared !== null) suggestions.push({ label: '把起点格从初始图案中清空', patch: { caMode: { initial: { pattern: cleared } } } });
+        suggestions.push({ label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } });
+        suggestions.push({ label: `初始长度改为 1（避免身体压在阻塞格上）`, patch: { body: { initialLength: 1 } } });
+        out.push({
+          level: 'error',
+          code: 'startBlocked',
+          title: '起点被阻塞状态占据',
+          message: `起点 (${cfg.start.col}, ${cfg.start.row}) 在 CA 初始图案中是「${name}」（阻塞状态），运行时第一步就会判定为撞障碍物。`,
+          suggestions,
+        });
+      }
+    } else if (init.mode === 'random' && init.density > 0 && blocking.has(init.state)) {
+      out.push({
+        level: 'warning',
+        code: 'startMayBeBlocked',
+        title: '起点可能被随机填充的阻塞状态占据',
+        message: `CA 初始以 ${(init.density * 100).toFixed(0)}% 密度随机填充「${init.state}」（阻塞状态），起点被阻塞的概率约为 ${(init.density * 100).toFixed(0)}%（同一种子结果可复现）。`,
+        suggestions: [
+          { label: '把初始密度降到 5%', patch: { caMode: { initial: { density: 0.05 } } } },
+          { label: `起点移至地图中心 (${center.col}, ${center.row})`, patch: { start: { ...center } } },
+        ],
+      });
+    }
+  }
+
+  /* 5. 常见「空转」配置 */
+  const moves = cfg.moveRules;
+  if (moves.left + moves.straight + moves.right <= 0) {
+    out.push({
+      level: 'warning',
+      code: 'zeroMoveWeights',
+      title: '左/直/右权重全为 0',
+      message: '运行时会退化为均匀分布，实际并非「不转向」。',
+      suggestions: [{ label: '恢复等概率（左 1 : 直 1 : 右 1）', patch: { moveRules: { left: 1, straight: 1, right: 1 } } }],
+    });
+  }
+  for (const r of cfg.environmentRules) {
+    if (!r.actions.length) {
+      out.push({
+        level: 'warning',
+        code: 'ruleWithoutAction',
+        title: `规则「${r.name}」没有后果动作`,
+        message: '条件满足时不会产生任何变化，该规则会被忽略。',
+        suggestions: [],
+      });
+    }
+  }
+  if (cfg.caMode.enabled && cfg.caMode.rules.length === 0 && cfg.caMode.initial.mode === 'empty') {
+    out.push({
+      level: 'warning',
+      code: 'caNoEffect',
+      title: '元胞自动机不会产生变化',
+      message: '已启用 CA 但既没有转移规则，初始状态又全为空，环境将始终保持空白。',
+      suggestions: [
+        { label: '改为随机初始填充（密度 30%）', patch: { caMode: { initial: { mode: 'random', density: 0.3 } } } },
+        { label: '关闭元胞自动机', patch: { caMode: { enabled: false } } },
+      ],
+    });
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* 校验                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 结构校验（ok 仅由结构性错误决定，诊断结果不会阻断导入）+ 诊断汇总。
+ * diagnostics 为结构化诊断；errors/warnings 为供旧调用方直接展示的文本。
+ */
 export function validateConfig(raw) {
   const errors = [];
   const warnings = [];
   if (!raw || typeof raw !== 'object') {
-    return { ok: false, errors: ['配置必须是一个 JSON 对象'], warnings };
+    return { ok: false, errors: ['配置必须是一个 JSON 对象'], warnings, diagnostics: [] };
   }
   const v = String(raw.version || '');
   if (v && !v.startsWith('1.')) warnings.push(`未知版本号 "${v}"，将尝试兼容导入`);
@@ -697,21 +997,11 @@ export function validateConfig(raw) {
     if (raw.grid.width !== undefined && (!Number.isFinite(w) || w < 2)) errors.push('grid.width 必须是不小于 2 的数字');
     if (raw.grid.height !== undefined && (!Number.isFinite(h) || h < 2)) errors.push('grid.height 必须是不小于 2 的数字');
   }
-  const cfg = normalizeConfig(raw);
-  if (cfg.start.col >= cfg.grid.width || cfg.start.row >= cfg.grid.height) {
-    errors.push('起点超出网格范围');
+  const diagnostics = diagnoseConfig(raw);
+  for (const d of diagnostics) {
+    warnings.push(d.level === 'error' ? `${d.title}：${d.message}` : d.message);
   }
-  const moves = cfg.moveRules;
-  if (moves.left + moves.straight + moves.right <= 0) {
-    warnings.push('左/直/右权重全为 0，运行时会退化为均匀分布');
-  }
-  for (const r of cfg.environmentRules) {
-    if (!r.actions.length) warnings.push(`规则「${r.name}」没有配置后果动作，将被忽略`);
-  }
-  if (cfg.caMode.enabled && cfg.caMode.rules.length === 0 && cfg.caMode.initial.mode === 'empty') {
-    warnings.push('已启用元胞自动机但未定义任何转移规则，环境不会变化');
-  }
-  return { ok: errors.length === 0, errors, warnings };
+  return { ok: errors.length === 0, errors, warnings, diagnostics };
 }
 
 /* ------------------------------------------------------------------ */

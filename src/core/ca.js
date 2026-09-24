@@ -16,6 +16,76 @@ export const CA_BOUNDARY_LABELS = {
   reflect: '反射边界',
 };
 
+/**
+ * 图案文本 → { rows, width, height }
+ * 空行被忽略，width 取最长行；仅供 CA 初始图案与配置诊断共用。
+ */
+export function parsePatternText(text) {
+  const rows = String(text ?? '').split('\n').map((r) => r.replace(/\r/g, '')).filter((r) => r.length);
+  return { rows, width: rows.length ? Math.max(...rows.map((r) => r.length)) : 0, height: rows.length };
+}
+
+/**
+ * 图案字符 → 状态索引的符号表。
+ * 优先级：状态 symbol → 状态全名 → 非内置状态的首字母 → O/X/#/@ 别名（指向第一个非空状态）。
+ */
+export function buildSymbolMap(states) {
+  const index = new Map();
+  states.forEach((s, i) => index.set(s.name, i));
+  const map = new Map();
+  const builtin = new Set(['empty', 'obstacle', 'marker', 'trail']);
+  for (const s of states) {
+    const i = index.get(s.name);
+    map.set(String(s.symbol).toUpperCase(), i);
+    map.set(String(s.name).toUpperCase(), i);
+    if (!builtin.has(s.name)) map.set(String(s.name)[0].toUpperCase(), i);
+  }
+  map.set('.', 0);
+  map.set(' ', 0);
+  const firstSolid = states.findIndex((s) => s.name !== 'empty');
+  if (firstSolid > 0) {
+    for (const alias of ['O', 'X', '#', '@']) {
+      if (!map.has(alias)) map.set(alias, firstSolid);
+    }
+  }
+  return map;
+}
+
+/** 图案文本在网格上的居中偏移 */
+export function patternOffset(grid, text) {
+  const { width, height } = parsePatternText(text);
+  return { offCol: Math.floor((grid.width - width) / 2), offRow: Math.floor((grid.height - height) / 2) };
+}
+
+/**
+ * 图案模式下某坐标对应的状态名。
+ * 未被图案覆盖（'.'、空格、越界、未知字符）时返回 null。
+ */
+export function patternStateNameAt(grid, states, text, coord) {
+  const { rows, width, height } = parsePatternText(text);
+  if (!rows.length) return null;
+  const { offCol, offRow } = patternOffset(grid, text);
+  const r = coord.row - offRow;
+  const c = coord.col - offCol;
+  if (r < 0 || c < 0 || r >= height || c >= rows[r].length) return null;
+  const ch = rows[r][c];
+  if (ch === '.' || ch === ' ') return null;
+  const si = buildSymbolMap(states).get(ch.toUpperCase());
+  return si === undefined ? null : states[si].name;
+}
+
+/** 把图案中某坐标的字符清空为 '.'；坐标不在图案内时返回 null */
+export function clearPatternCell(grid, text, coord) {
+  const { rows, height } = parsePatternText(text);
+  if (!rows.length) return null;
+  const { offCol, offRow } = patternOffset(grid, text);
+  const r = coord.row - offRow;
+  const c = coord.col - offCol;
+  if (r < 0 || c < 0 || r >= height || c >= rows[r].length) return null;
+  rows[r] = rows[r].slice(0, c) + '.' + rows[r].slice(c + 1);
+  return rows.join('\n');
+}
+
 export class CAEngine {
   constructor(grid, caMode, states) {
     this.grid = grid;
@@ -201,29 +271,10 @@ export class CAEngine {
   /** 图案文本：每行一个字符串，'.' 为空，其它字符按状态符号匹配 */
   applyPatternText(world, text) {
     const { grid } = this;
-    const rows = String(text).split('\n').map((r) => r.replace(/\r/g, '')).filter((r) => r.length);
+    const { rows, height: ph } = parsePatternText(text);
     if (!rows.length) return;
-    const pw = Math.max(...rows.map((r) => r.length));
-    const ph = rows.length;
-    const offCol = Math.floor((grid.width - pw) / 2);
-    const offRow = Math.floor((grid.height - ph) / 2);
-    const symbolMap = new Map();
-    const builtin = new Set(['empty', 'obstacle', 'marker', 'trail']);
-    for (const s of this.states) {
-      const idx = this.stateIdx(s.name);
-      symbolMap.set(String(s.symbol).toUpperCase(), idx);
-      symbolMap.set(String(s.name).toUpperCase(), idx);
-      if (!builtin.has(s.name)) symbolMap.set(String(s.name)[0].toUpperCase(), idx);
-    }
-    symbolMap.set('.', 0);
-    symbolMap.set(' ', 0);
-    // 常见别名：O / X / # 指向第一个非空状态
-    const firstSolid = this.states.findIndex((s) => s.name !== 'empty');
-    if (firstSolid > 0) {
-      for (const alias of ['O', 'X', '#', '@']) {
-        if (!symbolMap.has(alias)) symbolMap.set(alias, firstSolid);
-      }
-    }
+    const { offCol, offRow } = patternOffset(grid, text);
+    const symbolMap = buildSymbolMap(this.states);
     for (let r = 0; r < ph; r++) {
       for (let c = 0; c < rows[r].length; c++) {
         const ch = rows[r][c];
