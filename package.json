@@ -1,0 +1,18 @@
+{
+  "name": "gridsneaker",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GridSneaker：可高度自定义的网格移动动画模拟平台（移动体 + 环境规则 + 元胞自动机）",
+  "scripts": {
+    "start": "python -m http.server 8080",
+    "test": "node tests/core.test.mjs",
+    "build": "node tools/build-single-file.mjs"
+  },
+  "keywords": [
+    "grid",
+    "cellular-automata",
+    "simulation",
+    "snake"
+  ]
+}

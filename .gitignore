@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# Python 本地服务器缓存
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

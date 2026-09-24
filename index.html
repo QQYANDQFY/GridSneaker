@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GridSneaker · 网格移动动画模拟平台</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
+    <div class="topbar-hint">v<span id="app-version">2.0.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+  </header>
+
+  <main id="layout">
+    <aside id="config-panel" class="panel scroll" aria-label="配置面板"></aside>
+
+    <section id="stage">
+      <div id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+        <div id="tooltip" class="tooltip"></div>
+      </div>
+      <div id="controls" class="controls"></div>
+      <div id="stage-stats" class="stage-stats"></div>
+    </section>
+
+    <aside id="side-panel" class="panel scroll" aria-label="统计与日志"></aside>
+  </main>
+
+  <div id="toast-box" class="toast-box"></div>
+  <script type="module" src="./src/ui/app.js"></script>
+</body>
+</html>
