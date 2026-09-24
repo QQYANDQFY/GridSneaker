@@ -6,6 +6,7 @@ import {
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
   SKIN_MIME_TYPES, stripSkinAssets, LIFE_MIN, LIFE_MAX,
+  DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -33,7 +34,7 @@ import {
 import {
   h, clear, group, field, row, button, numberInput, textInput, textArea, select,
   checkbox, range, colorInput, numBind, selBind, chkBind, textBind, rangeBind,
-  colorBind, toast, formatNumber, confirmDialog, alertDialog, dialogOpen,
+  colorBind, toast, formatNumber, confirmDialog, alertDialog, dialogOpen, switchField,
 } from './forms.js';
 
 /* ------------------------------------------------------------------ */
@@ -156,6 +157,8 @@ const state = {
   cfgSearch: '',
   /** 配置面板当前选项卡（四大类之一）：面板重建后保持用户所选类别 */
   cfgTab: 'core',
+  /** 各主选项卡内的子选项卡选择（键为子选项卡组名，如 visual） */
+  cfgSubTab: {},
 };
 
 const els = {};
@@ -229,6 +232,7 @@ function init() {
   els.side = document.getElementById('side-panel');
   els.config = document.getElementById('config-panel');
 
+  applyTabTheme(); // 首屏即应用选项卡配色与紧凑排版（配置可能来自本地存档或分享链接）
   renderer = new Renderer(els.canvas);
   // 皮肤图片是异步解码的，解码完成后重绘一次，让上传的皮肤立即出现在画布上
   renderer.onSkinLoad = () => draw();
@@ -914,7 +918,51 @@ function applyScoreVisibility() {
 
 /** 当前需要展示的统计项：运行评价读数隐藏时不生成对应统计格与摘要行 */
 function activeStatKeys() {
-  return state.showScore ? STAT_KEYS : STAT_KEYS.filter(([key]) => !SCORE_STAT_KEYS.has(key));
+  return STAT_KEYS.filter(([key]) => {
+    if (!state.showScore && SCORE_STAT_KEYS.has(key)) return false;
+    return !isStatHidden(key);
+  });
+}
+
+/**
+ * 统计项是否被用户隐藏。
+ * 生成新蛇 / 移动体消失 / 融合次数 / 排斥次数 / 生命机制等低频项默认隐藏
+ * （默认值见 config.js 的 DEFAULT_HIDDEN_STATS），可在「统计模块 → 统计项显示配置」逐项开启。
+ */
+function isStatHidden(key) {
+  const hidden = state.cfg && state.cfg.style ? state.cfg.style.hiddenStats : null;
+  return Array.isArray(hidden) && hidden.includes(key);
+}
+
+/** 写入隐藏统计项集合并刷新统计面板（配置随场景保存 / 导出，故走 onSimChange 之外的轻量重绘） */
+function setStatHidden(key, hidden) {
+  const s = state.cfg.style;
+  const set = new Set(Array.isArray(s.hiddenStats) ? s.hiddenStats : []);
+  if (hidden) set.add(key);
+  else set.delete(key);
+  s.hiddenStats = STAT_KEYS.map(([k]) => k).filter((k) => set.has(k));
+  state.dirty = true;
+  renderStageStats();
+  syncStatVisibilityCount();
+}
+
+/** 批量设置隐藏统计项（预设按钮：仅核心 / 全部显示 / 全部隐藏 / 恢复默认） */
+function setHiddenStats(keys, message) {
+  const set = new Set(keys);
+  state.cfg.style.hiddenStats = STAT_KEYS.map(([k]) => k).filter((k) => set.has(k));
+  state.dirty = true;
+  renderStageStats();
+  renderSidePanel();
+  if (message) toast(message, 'info');
+}
+
+/** 刷新「统计项显示配置」上的当前可见 / 隐藏计数提示 */
+function syncStatVisibilityCount() {
+  const el = els.statVisibilityHint;
+  if (!el) return;
+  const total = STAT_KEYS.filter(([k]) => !SCORE_STAT_KEYS.has(k)).length;
+  const visible = activeStatKeys().filter(([k]) => !SCORE_STAT_KEYS.has(k)).length;
+  el.textContent = `当前显示 ${visible} / ${total} 项（得分与评级由上方「界面配置」的开关控制）`;
 }
 
 /* ---------------- 配置基准 / 改动检测 / 撤销栈 ---------------- */
@@ -1082,6 +1130,7 @@ function onSimChange(delay = 160) {
 }
 
 function onStyleChange() {
+  applyTabTheme(); // 选项卡配色 / 紧凑排版属于界面偏好，即使尚未运行模拟也要立即生效
   if (!state.result) return;
   // 同时传入移动体外观配置，使形状 / 尺寸 / 配色模式的修改即时生效（无需重新计算）
   renderer.setStyle(state.cfg.style, state.cfg.body);
@@ -1610,6 +1659,34 @@ const STAT_KEYS = [
   ['respawns', '重生次数'], ['lifeWarnings', '低生命预警'], ['finalDeaths', '最终死亡'],
 ];
 
+/**
+ * 统计项的功能归类。
+ * 「统计项显示配置」按此分组逐项列出可开关的统计项，
+ * 与 STAT_KEYS 的顺序保持一一对应（得分 / 评级不在其中：由「界面配置」统一控制）。
+ */
+const STAT_GROUPS = [
+  {
+    title: '运行与场景',
+    keys: ['steps', 'framePos', 'frames', 'elapsed', 'endReason', 'ruleTriggers', 'seed', 'rngCalls'],
+  },
+  {
+    title: '长度与碰撞',
+    keys: ['length', 'finalLength', 'maxLength', 'collisions', 'selfCollisions', 'coverage'],
+  },
+  {
+    title: '移动体与交互',
+    keys: ['agents', 'peakAgents', 'spawns', 'agentDeaths', 'merges', 'repels', 'markerInteractions'],
+  },
+  {
+    title: '环境与转化',
+    keys: ['obstacleCount', 'markerCount', 'caSteps', 'transformDeaths', 'transformedCells', 'collisionWarnings'],
+  },
+  {
+    title: '生命机制（多生命）',
+    keys: ['lives', 'maxLives', 'lifeGains', 'lifeLosses', 'respawns', 'lifeWarnings', 'finalDeaths'],
+  },
+];
+
 /** 运行耗时的展示格式：不足 1 秒按毫秒，超过按秒保留两位小数 */
 function formatDuration(ms) {
   const v = Number(ms);
@@ -1943,6 +2020,11 @@ function renderSidePanel() {
   const side = els.side;
   clear(side);
 
+  // 一键展开 / 收起：侧边面板同样有十余个折叠分组，逐个点开较为繁琐
+  side.appendChild(h('div', { class: 'panel-tools' },
+    button('展开全部', () => setAllGroupsOpen(side, true), 'ghost small'),
+    button('收起全部', () => setAllGroupsOpen(side, false), 'ghost small')));
+
   side.appendChild(diagnosticsGroup());
 
   const currentPreset = matchPreset(state.cfg) || PRESETS[0];
@@ -2075,10 +2157,57 @@ function statsModeGroup() {
     }, 'ghost small')),
     // 本地得分排行榜并入统计模块：成绩本身就是统计结论的留档，与统计口径同属一处更易查找。
     scoreboardGroup(),
+    // 统计项显示配置：低频项默认隐藏，逐项开关满足个性化查看
+    statVisibilityGroup(),
     // 坐标筛选查询并入统计模块：与统计口径共用同一轨迹数据源，
     // 切换口径或改变播放位置时查询结果会实时同步到统计面板与画面高亮。
     trailQueryGroup(),
   ], { key: 'stat-mode', open: false });
+}
+
+/* ------------------------------------------------------------------ */
+/* 统计项显示配置                                                      */
+/* ------------------------------------------------------------------ */
+
+/** 「仅核心指标」预设保留的统计项：日常观察最常用的读数 */
+const CORE_STAT_KEYS = ['steps', 'framePos', 'elapsed', 'endReason', 'length', 'coverage', 'collisions', 'agents', 'ruleTriggers'];
+
+/** 可开关的统计项键名（得分 / 评级由「界面配置」控制，不在此列表内） */
+function toggleableStatKeys() {
+  return STAT_KEYS.map(([k]) => k).filter((k) => !SCORE_STAT_KEYS.has(k));
+}
+
+/** 统计项中文标签（缺失时回退为键名） */
+function statLabel(key) {
+  const hit = STAT_KEYS.find(([k]) => k === key);
+  return hit ? hit[1] : key;
+}
+
+/**
+ * 统计项显示配置面板。
+ * 生成新蛇 / 移动体消失 / 融合次数 / 排斥次数 / 生命机制等低频项默认隐藏
+ * （默认集合见 config.js 的 DEFAULT_HIDDEN_STATS），此处提供逐项开关与整组预设；
+ * 隐藏只影响统计格与摘要行的生成，统计本身照常计算与导出。
+ */
+function statVisibilityGroup() {
+  els.statVisibilityHint = h('div', { class: 'hint' }, '');
+  syncStatVisibilityCount();
+  const body = [
+    h('div', { class: 'hint' }, '低频统计项（生成新蛇 / 移动体消失 / 融合次数 / 排斥次数 / 生命机制等）默认隐藏，仅保留高频核心指标，避免统计面板拥挤。勾选即可逐项开启；隐藏项不生成统计格与摘要行，统计与导出数据不受影响。'),
+    els.statVisibilityHint,
+    row(
+      button('仅核心指标', () => setHiddenStats(toggleableStatKeys().filter((k) => !CORE_STAT_KEYS.includes(k)), '已切换为「仅核心指标」'), 'ghost small'),
+      button('全部显示', () => setHiddenStats([], '已显示全部统计项'), 'ghost small'),
+      button('全部隐藏', () => setHiddenStats(toggleableStatKeys(), '已隐藏全部统计项'), 'ghost small'),
+      button('恢复默认', () => setHiddenStats(DEFAULT_HIDDEN_STATS, '已恢复默认统计项显示'), 'ghost small'),
+    ),
+  ];
+  for (const g of STAT_GROUPS) {
+    body.push(h('div', { class: 'sub-title' }, g.title));
+    body.push(h('div', { class: 'chips-line' },
+      ...g.keys.map((key) => checkbox(!isStatHidden(key), (on) => setStatHidden(key, !on), statLabel(key)))));
+  }
+  return group('统计项显示配置', body, { key: 'stat-visibility', open: false });
 }
 
 /** 切换统计口径：更新控件高亮、状态提示、统计数值与轨迹筛选数据源 */
@@ -2090,8 +2219,9 @@ function setStatMode(mode) {
   } catch (e) {
     /* 隐私模式静默忽略 */
   }
-  // 口径切换时给统计面板一次淡入过渡，数值在原节点上更新，避免整块重绘造成的闪烁
-  if (els.stageStats) {
+  // 口径切换时给统计面板一次淡入过渡，数值在原节点上更新，避免整块重绘造成的闪烁；
+  // 低性能设备可在「色彩主题与界面」中关闭该动画（style.statFlash）
+  if (els.stageStats && state.cfg.style.statFlash) {
     els.stageStats.classList.add('stat-switch');
     setTimeout(() => els.stageStats && els.stageStats.classList.remove('stat-switch'), 240);
   }
@@ -2793,6 +2923,7 @@ function rebuildAll() {
   // 这里在渲染前统一收敛，保证面板显示的勾选状态与实际运行语义一致。
   syncSelfCollisionExclusive('enable');
   syncControlBar();   // 载入模板 / 恢复配置后，控制条上的速度与「跟随移动体」同步为新配置
+  applyTabTheme();    // 载入模板 / 导入配置后，选项卡配色与紧凑排版同步为新配置
   renderConfigPanel();
   renderSidePanel();
   recompute({ immediate: true });
@@ -2930,7 +3061,19 @@ function configSearchBar() {
   return h('div', { class: 'cfg-search' },
     input,
     button('清除', () => { state.cfgSearch = ''; input.value = ''; applyConfigSearch(''); }, 'ghost small'),
+    button('展开全部', () => setAllGroupsOpen(els.config, true), 'ghost small'),
+    button('收起全部', () => setAllGroupsOpen(els.config, false), 'ghost small'),
     els.cfgSearchHint);
+}
+
+/**
+ * 一键展开 / 收起容器内所有折叠分组。
+ * 直接改写 <details>.open，group() 注册的 toggle 监听会把状态写回记忆表，
+ * 因此面板重建（调整优先级 / 增删规则等）后仍保持一致。
+ */
+function setAllGroupsOpen(root, open) {
+  if (!root) return;
+  for (const g of root.querySelectorAll('details.group')) g.open = !!open;
 }
 
 /**
@@ -3052,10 +3195,9 @@ function bodyGroup(cfg) {
       ...dirNames(cfg.grid.type).map((n) => ({ value: n, label: DIR_LABELS[n] || n })),
       { value: 'random', label: '任意（每次运行随机）' },
     ]), '选择「任意」时由随机种子决定，同一种子结果可复现'),
-    field('蛇形实体开关', row(
+    switchField('蛇形实体开关',
       chkBind(b, 'enabled', () => { syncBodyState(); onSimChange(0); }, '生成蛇形实体'),
-      bodyStateLabel,
-    )),
+      bodyStateLabel),
     row(
       field('初始长度', numBind(b, 'initialLength', () => { syncBodyState(); onSimChange(); }, { min: 0, max: 100000 })),
       field('体节尺寸', row(
@@ -3327,7 +3469,8 @@ function multiSnakeGroup(cfg) {
   }, { placeholder: '#ff5d5d, #ffd166, #51cf66' });
 
   const bodies = [
-    field('启用多蛇系统', chkBind(m, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用'),
+    switchField('启用多蛇系统',
+      chkBind(m, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用'),
       '主移动体终止时整场结束，其它蛇终止只计入「移动体消失」'),
     row(
       field('生成方式', selBind(sp, 'mode', () => { onSimChange(); rebuildAll(); }, Object.entries(SPAWN_LABELS).map(([value, label]) => ({ value, label })))),
@@ -3426,7 +3569,7 @@ function lengthSection(cfg) {
   const lp = cfg.body.lengthPolicy;
   const subEditor = (sub, title) => [
     h('div', { class: 'sub-title' }, title),
-    field('启用', chkBind(sub, 'enabled', () => onSimChange(), '启用'), '仅在长度策略为「可变」时生效'),
+    switchField('启用', chkBind(sub, 'enabled', () => onSimChange(), '启用'), '仅在长度策略为「可变」时生效'),
     row(
       field('触发时机', selBind(sub, 'trigger', () => onSimChange(), [
         { value: 'step', label: '每步' }, { value: 'eat', label: '吃到标记物' },
@@ -4394,11 +4537,74 @@ function endGroup(cfg) {
   ], { open: false, badge: `已启用 ${enabledCount} 项` });
 }
 
-/* ---------------- 展示样式 ---------------- */
+/* ---------------- 展示样式（视觉显示主选项卡 → 子选项卡） ---------------- */
 
+/**
+ * 「视觉显示」主选项卡的子选项卡划分。
+ * 原先所有样式开关集中在一个分组里，单页滚动很长、视觉负担重；
+ * 这里按「基础绘制 / 动态特效 / 悬停与提示 / 色彩与界面」四类收敛，
+ * 每个子选项卡内再按功能细分为折叠分组，选项数量与分类逻辑都保持清晰。
+ * 分组本身与其中所有控件原样保留，只是换了归属，功能可访问性不变。
+ */
+const VISUAL_SUBTABS = [
+  { key: 'basic', label: '基础视觉设置', hint: '格子绘制、显示内容、环境显示、连接方式' },
+  { key: 'effects', label: '高级视觉特效', hint: '轨迹渐隐与配色、尖端平滑、交互特效、发光' },
+  { key: 'overlay', label: '悬停与提示', hint: '重访高亮、行列准线、悬浮提示内容、穿越日志' },
+  { key: 'theme', label: '色彩主题配置', hint: '选项卡配色、紧凑排版、统计动画、界面读数' },
+];
+
+/** 视觉子选项卡的当前选择（面板重建后保持用户所选子选项卡） */
+const VISUAL_SUBTAB_HOST = 'visual';
+
+/**
+ * 视觉显示主面板：子选项卡导航 + 各子面板。
+ * 结构与主选项卡一致（导航 + 面板容器 + 显隐切换），
+ * 因此「搜索设置项」时可通过 .cfg-tabs.searching 一次性展开全部子面板。
+ */
 function styleGroup(cfg) {
+  const wrap = h('div', { class: 'cfg-subtabs' });
+  const nav = h('div', { class: 'cfg-sub-nav', role: 'tablist' });
+  const panels = new Map();
+  const buttons = new Map();
+  const activate = (key) => {
+    const target = VISUAL_SUBTABS.some((t) => t.key === key) ? key : VISUAL_SUBTABS[0].key;
+    state.cfgSubTab[VISUAL_SUBTAB_HOST] = target;
+    for (const t of VISUAL_SUBTABS) {
+      buttons.get(t.key).classList.toggle('on', t.key === target);
+      buttons.get(t.key).setAttribute('aria-selected', t.key === target ? 'true' : 'false');
+      panels.get(t.key).classList.toggle('hidden', t.key !== target);
+    }
+  };
+  for (const t of VISUAL_SUBTABS) {
+    const b = button(t.label, () => activate(t.key), 'tab-btn');
+    b.title = t.hint;
+    b.setAttribute('role', 'tab');
+    b.dataset.subTabKey = t.key;
+    buttons.set(t.key, b);
+    nav.appendChild(b);
+    const panel = h('div', {
+      class: 'cfg-sub-panel',
+      role: 'tabpanel',
+      dataset: { subTabKey: t.key, subTabLabel: t.label },
+    });
+    panels.set(t.key, panel);
+  }
+
+  panels.get('basic').append(visualBasicGroup(cfg));
+  panels.get('effects').append(visualEffectsGroup(cfg));
+  panels.get('overlay').append(visualOverlayGroup(cfg));
+  panels.get('theme').append(visualThemeGroup(cfg));
+
+  wrap.appendChild(nav);
+  for (const t of VISUAL_SUBTABS) wrap.appendChild(panels.get(t.key));
+  activate(state.cfgSubTab[VISUAL_SUBTAB_HOST]);
+  return wrap;
+}
+
+/** 子选项卡一：基础视觉设置（格子绘制 · 显示内容 · 环境显示 · 连接方式） */
+function visualBasicGroup(cfg) {
   const s = cfg.style;
-  return group('展示样式', [
+  return group('基础视觉设置', [
     row(
       field('格子大小', rangeBind(s, 'cellSize', () => onStyleChange(), { min: 6, max: 120, step: 1 })),
       field('格子间距', rangeBind(s, 'gap', () => onStyleChange(), { min: 0, max: 20, step: 1 })),
@@ -4427,6 +4633,13 @@ function styleGroup(cfg) {
       selBind(s, 'bodyJoin', () => onStyleChange(), JOIN_OPTIONS),
     ), '曲线：贝塞尔平滑 · 直线：直线段折线 · 预设角度：按指定夹角切角连接的直线型折线'),
     field('切角角度', rangeBind(s, 'trailAngle', () => onStyleChange(), { min: 5, max: 85, step: 1 }), '仅「预设角度」连接方式生效：连接线与进入方向的夹角（度）'),
+  ], { key: 'visual-basic', open: false });
+}
+
+/** 子选项卡二：高级视觉特效（轨迹衰减与配色 · 渲染效果 · 进出点标记） */
+function visualEffectsGroup(cfg) {
+  const s = cfg.style;
+  return group('高级视觉特效', [
     field('轨迹衰减模式', selBind(s, 'fadeMode', () => onStyleChange(), [
       { value: 'linear', label: '线性（等速变暗）' },
       { value: 'exponential', label: '指数（先急后缓）' },
@@ -4445,35 +4658,150 @@ function styleGroup(cfg) {
     ), '「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；蛇头眼睛默认隐藏，勾选后显示'),
     field('进出点标记尺寸', rangeBind(s, 'crossingScale', () => onStyleChange(), { min: 0.4, max: 3, step: 0.1 }),
       '边界进出点标记（滑出空心环 / 滑入实心点）的尺寸倍数；仅在开启「边界进出点」时可见'),
-    field('重访格高亮', row(
+  ], { key: 'visual-effects', open: false });
+}
+
+/** 子选项卡三：悬停与提示（重访高亮 · 行列准线 · 悬浮提示内容 · 穿越日志） */
+function visualOverlayGroup(cfg) {
+  const s = cfg.style;
+  return group('悬停与提示', [
+    switchField('重访格高亮',
       checkbox(s.showRevisit, (v) => { s.showRevisit = v; onStyleChange(); }, '开启'),
-    ), '把「截至当前步数已被经过达到阈值」的格子标出来（与播放进度同步，不提前泄露后面的轨迹）'),
+      '把「截至当前步数已被经过达到阈值」的格子标出来（与播放进度同步，不提前泄露后面的轨迹）'),
     field('重访判定次数', rangeBind(s, 'revisitMin', () => onStyleChange(), { min: 2, max: 20, step: 1, number: true }),
       '经过次数达到该值的格子视为重访；数值越大，只保留反复踩踏的热点格'),
     field('重访高亮不透明度', rangeBind(s, 'revisitAlpha', () => onStyleChange(), { min: 0.05, max: 0.6, step: 0.01 }),
       '重访格高亮的填充不透明度；调低可与轨迹叠加观察'),
-    field('悬停行列准线', row(
+    switchField('悬停行列准线',
       checkbox(s.hoverCrosshair, (v) => { s.hoverCrosshair = v; onStyleChange(); }, '开启'),
-    ), '鼠标悬浮时高亮所在整行 / 整列并在格心画出十字导线，便于在大网格上定位坐标'),
+      '鼠标悬浮时高亮所在整行 / 整列并在格心画出十字导线，便于在大网格上定位坐标'),
     field('准线宽度', rangeBind(s, 'hoverCrosshairWidth', () => onStyleChange(), { min: 0.5, max: 4, step: 0.5 }),
       '行列准线中心导线的线宽；仅在开启「悬停行列准线」时可感知'),
-    field('悬浮提示', row(
+    switchField('悬浮提示',
       checkbox(s.hoverTip, (v) => { s.hoverTip = v; onStyleChange(); }, '总开关'),
-    ), '关闭后鼠标悬浮只保留画布高亮，不再弹出信息浮层'),
+      '关闭后鼠标悬浮只保留画布高亮，不再弹出信息浮层'),
     field('提示内容', row(
       checkbox(s.hoverTipState, (v) => { s.hoverTipState = v; onStyleChange(); }, '环境状态'),
       checkbox(s.hoverTipAgent, (v) => { s.hoverTipAgent = v; onStyleChange(); }, '移动体'),
       checkbox(s.hoverTipTrail, (v) => { s.hoverTipTrail = v; onStyleChange(); }, '轨迹回溯'),
       checkbox(s.hoverTipMarkers, (v) => { s.hoverTipMarkers = v; onStyleChange(); }, '标记信息'),
     ), '提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次 / 本次 / 上一次经过步数'),
-    field('穿越事件日志', row(
+    switchField('穿越事件日志',
       checkbox(cfg.events.logCrossings, (v) => { cfg.events.logCrossings = v; onSimChange(); }, '记录边界穿越到规则日志'),
-    ), '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
+      '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
+  ], { key: 'visual-overlay', open: false });
+}
+
+/* ---------------- 色彩主题配置：选项卡配色 / 排版 / 界面读数 ---------------- */
+
+/** 色值合法性：与 config.js 的 HEX_COLOR 保持一致 */
+const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+/**
+ * 选项卡配色的六个色槽（已激活 / 未激活 × 背景 / 文字 / 边框）。
+ * tabColors 为纯界面配置，改动只需重绘样式变量并本地落盘，不触发模拟重算。
+ */
+const TAB_COLOR_FIELDS = [
+  { key: 'activeBg', label: '激活 · 背景' },
+  { key: 'activeText', label: '激活 · 文字' },
+  { key: 'activeBorder', label: '激活 · 边框' },
+  { key: 'inactiveBg', label: '未激活 · 背景' },
+  { key: 'inactiveText', label: '未激活 · 文字' },
+  { key: 'inactiveBorder', label: '未激活 · 边框' },
+];
+
+/** 单个色槽：取色器 + 十六进制文本框双向同步（文本框支持直接粘贴精确色值） */
+function tabColorField(label, key) {
+  const obj = state.cfg.style.tabColors;
+  const picker = colorInput(obj[key], (v) => {
+    obj[key] = v;
+    text.value = v;
+    commitUiPref();
+    applyTabTheme();
+  });
+  const text = textInput(obj[key], (v) => {
+    const val = String(v).trim();
+    if (!HEX_COLOR_RE.test(val)) {
+      toast('请输入合法的十六进制色值，如 #2f6da8', 'warn');
+      text.value = obj[key];
+      return;
+    }
+    obj[key] = val;
+    picker.value = val;
+    commitUiPref();
+    applyTabTheme();
+  }, { placeholder: '#2f6da8' });
+  text.classList.add('tiny');
+  return field(label, row(picker, text));
+}
+
+/** 子选项卡四：色彩主题配置（选项卡配色 · 排版 · 界面读数） */
+function visualThemeGroup(cfg) {
+  const s = cfg.style;
+  return group('色彩主题配置', [
+    h('div', { class: 'hint' }, '选项卡配色分为「已激活 / 未激活」两种状态，各含背景色、文字色、边框色三个色槽，可逐项自定义；未激活项默认压暗降饱和、激活项高亮配纯白文字，两态色差明显。'),
+    h('div', { class: 'tab-preview' },
+      h('span', { class: 'tab-demo on' }, '已激活'),
+      h('span', { class: 'tab-demo' }, '未激活')),
+    row(
+      tabColorField(TAB_COLOR_FIELDS[0].label, 'activeBg'),
+      tabColorField(TAB_COLOR_FIELDS[1].label, 'activeText'),
+    ),
+    row(
+      tabColorField(TAB_COLOR_FIELDS[2].label, 'activeBorder'),
+      tabColorField(TAB_COLOR_FIELDS[3].label, 'inactiveBg'),
+    ),
+    row(
+      tabColorField(TAB_COLOR_FIELDS[4].label, 'inactiveText'),
+      tabColorField(TAB_COLOR_FIELDS[5].label, 'inactiveBorder'),
+    ),
+    row(
+      button('重置为默认配色', () => {
+        Object.assign(s.tabColors, TAB_COLORS_DEFAULT);
+        applyTabTheme();
+        commitUiPref();
+        renderConfigPanel();
+        toast('已恢复默认选项卡配色', 'info');
+      }, 'ghost small'),
+    ),
+    h('div', { class: 'divider' }),
+    switchField('紧凑排版',
+      checkbox(s.compact, (v) => { s.compact = v; applyTabTheme(); commitUiPref(); }, '开启'),
+      '压缩分组、字段与统计格的间距，适合小屏或希望一屏看到更多设置项时'),
+    switchField('统计切换淡入',
+      checkbox(s.statFlash, (v) => { s.statFlash = v; commitUiPref(); }, '开启'),
+      '切换实时 / 总计统计口径时数值做一次淡入过渡；低性能设备可关闭以减少重绘'),
     field('界面配置', row(
       checkbox(state.showScore, (v) => setShowScore(v), '得分 / 评级 / 难度 / 拥挤度'),
       checkbox(state.showRankToast, (v) => setShowRankToast(v), '排行榜第 1 名提示'),
     ), '均默认关闭；前者控制得分 / 评级 / 难度 / 拥挤度读数（地图最高分记录始终照常保存），后者控制本轮成绩进入本地排行榜第 1 名时的提示条（榜单本身照常记录）'),
-  ], { open: false });
+  ], { key: 'visual-theme', open: false });
+}
+
+/**
+ * 把选项卡配色与紧凑排版应用到界面。
+ * 配色以 CSS 自定义属性写入根元素，由 styles.css 的选项卡规则消费；
+ * 紧凑模式在 body 上挂 .compact 类，由样式表统一压缩间距。
+ * 纯界面偏好，不影响画布渲染与模拟结果。
+ */
+function applyTabTheme() {
+  const style = state.cfg && state.cfg.style ? state.cfg.style : {};
+  const t = style.tabColors || TAB_COLORS_DEFAULT;
+  const root = document.documentElement;
+  root.style.setProperty('--tab-on-bg', t.activeBg);
+  root.style.setProperty('--tab-on-text', t.activeText);
+  root.style.setProperty('--tab-on-border', t.activeBorder);
+  root.style.setProperty('--tab-off-bg', t.inactiveBg);
+  root.style.setProperty('--tab-off-text', t.inactiveText);
+  root.style.setProperty('--tab-off-border', t.inactiveBorder);
+  if (document.body) document.body.classList.toggle('compact', !!style.compact);
+}
+
+/** 仅影响界面呈现的配置改动（选项卡配色 / 紧凑模式 / 统计项显隐）：本地落盘但不触发重算 */
+function commitUiPref() {
+  state.dirty = true;
+  saveLocalConfig(state.cfg);
+  writeAutoSave();
 }
 
 /* ------------------------------------------------------------------ */

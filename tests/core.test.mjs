@@ -11,6 +11,7 @@ import {
   buildShareUrl, isBodyEnabled, isSkinImage, stripSkinAssets,
   JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
   LIFE_MIN, LIFE_MAX, TRAIL_COLOR_MODES,
+  DEFAULT_HIDDEN_STATS, TAB_COLOR_KEYS, TAB_COLORS_DEFAULT,
 } from '../src/core/config.js';
 import {
   buildTrail, unwrapTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -3400,6 +3401,141 @@ section('边界进出点独立显示与悬浮提示同步（源码级回归）')
   ok(/checkbox\(s\.hoverCrosshair/.test(app) && /rangeBind\(s, 'hoverCrosshairWidth'/.test(app),
     '设置面板提供悬停行列准线的开关与宽度参数');
   ok(!/'边界穿越标记'/.test(app), '旧的「边界穿越标记」措辞已统一为「边界进出点」');
+}
+
+/* ---------- 本轮：界面优化与功能扩展（源码级回归） ---------- */
+
+section('视觉子选项卡 / 统计项显示配置 / 开关行排版 / 选项卡配色（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const cfgSrc = readFileSync(new URL('../src/core/config.js', import.meta.url), 'utf8');
+  const formsSrc = readFileSync(new URL('../src/ui/forms.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const d = defaultConfig();
+  const s0 = d.style;
+
+  /* 1) 统计项显示配置：低频项默认隐藏 */
+  ok(DEFAULT_HIDDEN_STATS.includes('spawns') && DEFAULT_HIDDEN_STATS.includes('agentDeaths')
+    && DEFAULT_HIDDEN_STATS.includes('merges') && DEFAULT_HIDDEN_STATS.includes('repels'),
+    '生成新蛇 / 移动体消失 / 融合次数 / 排斥次数默认隐藏');
+  ok(DEFAULT_HIDDEN_STATS.includes('lives') && DEFAULT_HIDDEN_STATS.includes('maxLives')
+    && DEFAULT_HIDDEN_STATS.includes('lifeGains') && DEFAULT_HIDDEN_STATS.includes('lifeLosses')
+    && DEFAULT_HIDDEN_STATS.includes('respawns') && DEFAULT_HIDDEN_STATS.includes('finalDeaths'),
+    '生命机制相关统计项默认隐藏');
+  for (const key of ['steps', 'framePos', 'elapsed', 'length', 'collisions', 'coverage', 'agents', 'ruleTriggers']) {
+    ok(!DEFAULT_HIDDEN_STATS.includes(key), `高频核心统计项「${key}」默认显示`);
+  }
+  eq(DEFAULT_HIDDEN_STATS.length, new Set(DEFAULT_HIDDEN_STATS).size, '默认隐藏集合无重复项');
+  eq(s0.hiddenStats.join(','), DEFAULT_HIDDEN_STATS.join(','), '默认配置采用默认隐藏集合');
+  eq(normalizeConfig({ ...d, style: { ...s0, hiddenStats: undefined } }).style.hiddenStats.join(','),
+    DEFAULT_HIDDEN_STATS.join(','), '旧存档（无该字段）载入后同样得到默认隐藏集合（统计面板不会重新拥挤）');
+  eq(normalizeConfig({ ...d, style: { ...s0, hiddenStats: [' steps ', 'steps', '', 'merges', null] } }).style.hiddenStats.join(','),
+    'steps,merges', '自定义隐藏集合按顺序去重并剔除空白项');
+  eq(normalizeConfig({ ...d, style: { ...s0, hiddenStats: 'spawns' } }).style.hiddenStats.join(','),
+    DEFAULT_HIDDEN_STATS.join(','), '非法形态回退为默认隐藏集合');
+  eq(decodeConfigFromToken(encodeConfigToToken(normalizeConfig({ ...d, style: { ...s0, hiddenStats: [] } }))).style.hiddenStats.length,
+    0, '「全部显示」（隐藏集合为空）可通过分享链接原样传递');
+
+  ok(/function statVisibilityGroup\(\)/.test(app), '提供「统计项显示配置」面板');
+  ok(/group\('统计项显示配置'/.test(app), '统计项显示配置以折叠分组呈现（默认可收起）');
+  ok(/const STAT_GROUPS = \[/.test(app) && /生命机制（多生命）/.test(app), '可开关统计项按功能分组列出');
+  ok(/checkbox\(!isStatHidden\(key\), \(on\) => setStatHidden\(key, !on\)/.test(app),
+    '每个统计项都保留独立的手动开启 / 隐藏开关（满足个性化查看）');
+  ok(/'仅核心指标'/.test(app) && /'全部显示'/.test(app) && /'全部隐藏'/.test(app) && /'恢复默认'/.test(app),
+    '提供整组预设按钮（仅核心指标 / 全部显示 / 全部隐藏 / 恢复默认）');
+  ok(/const CORE_STAT_KEYS = \[/.test(app) && /'steps', 'framePos'/.test(app), '「仅核心指标」预设保留高频读数');
+  ok(/return !isStatHidden\(key\);/.test(app), '生成统计格与摘要行时按隐藏集合过滤');
+  ok(/s\.hiddenStats = STAT_KEYS\.map\(\(\[k\]\) => k\)\.filter\(\(k\) => set\.has\(k\)\);/.test(app),
+    '隐藏集合按统计项固定顺序重写（配置差异稳定，不随勾选次序抖动）');
+  ok(/function syncStatVisibilityCount\(\)/.test(app) && /当前显示 \$\{visible\} \/ \$\{total\} 项/.test(app),
+    '面板上给出「当前显示 / 总数」计数提示');
+  ok(/state\.cfg\.style\.statFlash/.test(app), '统计口径切换的淡入动画受开关控制');
+
+  /* 2) 视觉显示模块重构为子选项卡 */
+  ok(/const VISUAL_SUBTABS = \[/.test(app), '视觉显示主类别下建立子选项卡表');
+  for (const label of ['基础视觉设置', '高级视觉特效', '悬停与提示', '色彩主题配置']) {
+    ok(new RegExp(`label: '${label}'`).test(app), `子选项卡「${label}」存在`);
+  }
+  ok(/class: 'cfg-subtabs'/.test(app) && /class: 'cfg-sub-nav'/.test(app) && /class: 'cfg-sub-panel'/.test(app),
+    '子选项卡由「导航 + 子面板」结构承载');
+  ok(/panels\.get\('basic'\)\.append\(visualBasicGroup\(cfg\)\)/.test(app)
+    && /panels\.get\('effects'\)\.append\(visualEffectsGroup\(cfg\)\)/.test(app)
+    && /panels\.get\('overlay'\)\.append\(visualOverlayGroup\(cfg\)\)/.test(app)
+    && /panels\.get\('theme'\)\.append\(visualThemeGroup\(cfg\)\)/.test(app),
+    '四类视觉配置项分别归入对应子选项卡');
+  ok(/state\.cfgSubTab\[VISUAL_SUBTAB_HOST\]/.test(app), '子选项卡选择被记忆（面板重建后保持用户所选）');
+  ok(/\.cfg-tabs\.searching \.cfg-sub-panel \{ display: block !important; \}/.test(css),
+    '搜索设置项时展开全部子面板（命中项不会藏在未选中的子选项卡里）');
+  ok(/\.cfg-subtabs/.test(css) && /\.cfg-sub-nav/.test(css) && /attr\(data-sub-tab-label\)/.test(css),
+    '子选项卡样式与搜索态标题接入样式表');
+
+  /* 3) 核心规则排版统一（开关行） */
+  ok(/export function switchField\(label, control, hint\)/.test(formsSrc), '新增统一的开关行组件 switchField');
+  ok(/switchField\('蛇形实体开关'/.test(app), '核心规则中的「蛇形实体开关」改用统一开关行');
+  ok((app.match(/\bswitchField\(/g) || []).length >= 3, '长度策略、多蛇系统、悬停提示等相邻开关一并统一排版');
+  ok(/\.switch-field \{/.test(css) && /grid-template-columns: minmax\(0, 1fr\) auto;/.test(css),
+    '开关行采用两列网格对齐（标签左 / 控件右，均为垂直居中）');
+  ok(/\.switch-field > \.switch-hint \{[^}]*grid-column: 1 \/ -1;/.test(css),
+    '说明文本独占整行，与标签左边缘对齐');
+  ok(/\.switch-field > \.switch-label/.test(css) && /\.switch-field > \.switch-control/.test(css),
+    '标签与控件分别定位，行高与间距统一（像素级一致）');
+  ok(/min-height: 30px;/.test(css) && /align-items: center;/.test(css), '固定行高保证所有开关行落在同一基线上');
+
+  /* 4) 选项卡视觉区分度与自定义配色 */
+  ok(TAB_COLOR_KEYS.length === 6 && Object.keys(TAB_COLORS_DEFAULT).length === 6,
+    '选项卡配色提供 6 个色槽（激活 / 未激活 × 背景 / 文字 / 边框）');
+  eq(TAB_COLOR_KEYS.join(','), 'activeBg,activeText,activeBorder,inactiveBg,inactiveText,inactiveBorder',
+    '色槽顺序与配置字段一致');
+  eq(s0.tabColors.activeBg, TAB_COLORS_DEFAULT.activeBg, '默认配置采用默认选项卡配色');
+  const bad = normalizeConfig({ ...d, style: { ...s0, tabColors: { activeBg: '#0a0', activeText: 'red', inactiveBorder: null } } });
+  eq(bad.style.tabColors.activeBg, '#0a0', '合法的三位简写色值被保留');
+  eq(bad.style.tabColors.activeText, TAB_COLORS_DEFAULT.activeText, '非法色值回退为默认值');
+  eq(bad.style.tabColors.inactiveBorder, TAB_COLORS_DEFAULT.inactiveBorder, '缺失色槽回退为默认值');
+  eq(decodeConfigFromToken(encodeConfigToToken(bad)).style.tabColors.activeBg, '#0a0', '分享链接保留自定义选项卡配色');
+
+  ok(/--tab-on-bg:/.test(css) && /--tab-off-bg:/.test(css), '选项卡配色抽取为 CSS 自定义属性');
+  ok(/root\.style\.setProperty\('--tab-on-bg', t\.activeBg\)/.test(app)
+    && /root\.style\.setProperty\('--tab-off-text', t\.inactiveText\)/.test(app),
+    '自定义配色运行时写入根元素变量');
+  ok(/\.cfg-tab-nav \.btn\.tab-btn\.on/.test(css) && /background: var\(--tab-on-bg\)/.test(css),
+    '主选项卡激活态使用可配置变量（两态色差更明显）');
+  ok(/\.cfg-sub-nav \.btn\.tab-btn\.on/.test(css) && /\.mode-switch \.btn\.mode-btn\.on/.test(css),
+    '子选项卡与统计口径切换共用同一套配色变量');
+  ok(/function applyTabTheme\(\)/.test(app), '存在统一的配色应用函数 applyTabTheme');
+  ok(/syncControlBar\(\);[^\n]*\n\s*applyTabTheme\(\);/.test(app),
+    '重建面板时（载入模板 / 导入配置）刷新配色与紧凑排版');
+  ok(/TAB_COLOR_FIELDS/.test(app) && /tabColorField\(TAB_COLOR_FIELDS\[0\]\.label/.test(app),
+    '色彩主题配置面板提供逐色槽编辑');
+  ok(/HEX_COLOR_RE/.test(app) && /colorInput\(/.test(app) && /textInput\(/.test(app),
+    '每个色槽同时提供取色器与十六进制文本输入（可粘贴精确色值）');
+  ok(/重置为默认配色/.test(app) && /Object\.assign\(s\.tabColors, TAB_COLORS_DEFAULT\)/.test(app),
+    '提供一键恢复默认配色');
+  ok(/class: 'tab-preview'/.test(app) && /\.tab-preview \.tab-demo\.on/.test(css),
+    '配色面板给出「已激活 / 未激活」实时预览');
+  ok(/function commitUiPref\(\)/.test(app) && /saveLocalConfig\(state\.cfg\)/.test(app),
+    '配色 / 排版偏好即时写入本地存档，刷新后保持');
+
+  /* 5) 细节与体验优化 */
+  eq(s0.compact, false, '紧凑排版默认关闭（保持既有观感）');
+  eq(normalizeConfig({ ...d, style: { ...s0, compact: true } }).style.compact, true, '可开启紧凑排版');
+  eq(normalizeConfig({ ...d, style: { ...s0, compact: undefined } }).style.compact, false, '缺省时紧凑排版回退为关闭');
+  eq(s0.statFlash, true, '统计口径切换淡入默认开启');
+  eq(normalizeConfig({ ...d, style: { ...s0, statFlash: false } }).style.statFlash, false, '可关闭统计切换淡入动画');
+  ok(/switchField\('紧凑排版'/.test(app) && /switchField\('统计切换淡入'/.test(app),
+    '紧凑排版与统计淡入均提供可配置开关');
+  ok(/body\.compact \.switch-field/.test(css) && /body\.compact \.stat \{/.test(css),
+    '紧凑模式统一压缩分组、字段、开关行与统计格的间距');
+  ok(/class: 'panel-tools'/.test(app) && /function setAllGroupsOpen\(root, open\)/.test(app),
+    '设置面板与控制条提供「展开全部 / 收起全部」');
+  ok(/\.panel-tools \{/.test(css), '工具条样式接入样式表');
+  ok(/hiddenStats: '隐藏的统计项'/.test(diffSrc) && /tabColors: '选项卡配色'/.test(diffSrc)
+    && /compact: '紧凑排版'/.test(diffSrc) && /statFlash: '统计切换淡入'/.test(diffSrc),
+    '配置差异比对可读地展示新增样式字段');
+  ok(/activeBg: '激活 · 背景'/.test(diffSrc) && /inactiveBorder: '未激活 · 边框'/.test(diffSrc),
+    '选项卡配色色槽也有中文标签（载入模板前的改动提示可读）');
+  ok(/DEFAULT_HIDDEN_STATS/.test(cfgSrc) && /TAB_COLORS_DEFAULT/.test(cfgSrc),
+    '新增常量集中在 config.js 导出（供界面与差异比对共用）');
 }
 
 /* ---------- 结果 ---------- */

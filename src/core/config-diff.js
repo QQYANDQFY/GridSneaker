@@ -75,6 +75,9 @@ export const CONFIG_FIELD_LABELS = {
   hoverTipTrail: '提示：轨迹信息', hoverTipMarkers: '提示：标记信息',
   trailJoin: '轨迹连接方式', bodyJoin: '蛇身连接方式', trailAngle: '切角角度',
   followAgent: '跟随移动体', axisLabels: '坐标轴',
+  hiddenStats: '隐藏的统计项', tabColors: '选项卡配色', compact: '紧凑排版', statFlash: '统计切换淡入',
+  activeBg: '激活 · 背景', activeText: '激活 · 文字', activeBorder: '激活 · 边框',
+  inactiveBg: '未激活 · 背景', inactiveText: '未激活 · 文字', inactiveBorder: '未激活 · 边框',
 };
 
 /** 按「完整路径」覆盖的枚举文案（优先于按字段名匹配） */

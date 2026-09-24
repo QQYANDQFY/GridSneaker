@@ -10,6 +10,18 @@
   --accent-2: #51cf66;
   --danger: #ff6b6b;
   --warn: #ffc078;
+
+  /*
+   * 选项卡配色（可由「视觉显示 → 色彩主题配置」逐项自定义，
+   * 默认值在 config.js 的 TAB_COLORS_DEFAULT，运行时由 applyTabTheme() 写入根元素）。
+   * 未激活态压暗降饱和、激活态高亮配纯白文字，两态色差明显。
+   */
+  --tab-off-bg: #10141b;
+  --tab-off-text: #8394a8;
+  --tab-off-border: #232c3a;
+  --tab-on-bg: #2f6da8;
+  --tab-on-text: #ffffff;
+  --tab-on-border: #7cc0ff;
 }
 
 * { box-sizing: border-box; }
@@ -218,6 +230,50 @@ html, body {
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .row > .field { flex: 1 1 96px; min-width: 0; }
 .row > .check-wrap { padding-bottom: 4px; min-width: 0; }
+
+/*
+ * 开关型字段（单复选框 + 说明）。
+ * 两列网格：左标签、右控件，均为垂直居中对齐；说明文本独占整行。
+ * 固定行高（min-height）保证复选框、标签、说明始终落在同一基线上——
+ * 无论开关文字长短、说明多少行，所有开关行的元素位置完全一致。
+ */
+.switch-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  min-height: 30px;
+  margin: 7px 0;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.switch-field:last-child { border-bottom: none; }
+.switch-field > .switch-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 20px;
+  min-width: 0;
+}
+.switch-field > .switch-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  line-height: 20px;
+}
+.switch-field > .switch-control .check-wrap { padding: 0; line-height: 20px; }
+.switch-field > .switch-control .checkbox { margin: 0; }
+.switch-field > .switch-hint {
+  grid-column: 1 / -1;
+  color: #6f7d8c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.switch-field > .switch-hint .mini-label { display: block; }
+
+/* 面板顶部工具条（展开全部 / 收起全部） */
+.panel-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 
 /* ---------------- 自定义皮肤上传 ---------------- */
 
@@ -464,9 +520,86 @@ details.group.target {
   padding: 6px 8px;
   font-size: 11.5px;
   white-space: nowrap;
+  /* 未激活态：压暗降饱和，与激活态形成明显色差（色值均可在色彩主题配置中自定义） */
+  background: var(--tab-off-bg);
+  color: var(--tab-off-text);
+  border-color: var(--tab-off-border);
 }
-.cfg-tab-nav .btn.tab-btn.on { background: #1c3b5a; color: #d7ecff; border-color: var(--accent); }
+.cfg-tab-nav .btn.tab-btn:hover {
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+}
+.cfg-tab-nav .btn.tab-btn.on {
+  background: var(--tab-on-bg);
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--tab-on-border), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
 .cfg-tab-panel { padding-top: 2px; }
+
+/* ---------------- 主选项卡内的子选项卡（视觉显示 → 基础 / 特效 / 悬停 / 主题） ---------------- */
+.cfg-subtabs { margin-top: 2px; }
+.cfg-sub-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px 0 4px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 4px;
+}
+.cfg-sub-nav .btn.tab-btn {
+  flex: 1 1 auto;
+  padding: 4px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+  background: var(--tab-off-bg);
+  color: var(--tab-off-text);
+  border-color: var(--tab-off-border);
+}
+.cfg-sub-nav .btn.tab-btn:hover {
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+}
+.cfg-sub-nav .btn.tab-btn.on {
+  background: var(--tab-on-bg);
+  color: var(--tab-on-text);
+  border-color: var(--tab-on-border);
+  font-weight: 600;
+}
+/* 搜索时同时展开全部子面板，命中项不会藏在未选中的子选项卡里 */
+.cfg-tabs.searching .cfg-sub-nav { display: none; }
+.cfg-tabs.searching .cfg-sub-panel { display: block !important; }
+.cfg-tabs.searching .cfg-sub-panel + .cfg-sub-panel {
+  border-top: 1px dashed var(--line);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.cfg-tabs.searching .cfg-sub-panel::before {
+  content: attr(data-sub-tab-label);
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 2px 0 2px;
+}
+
+/* 选项卡配色实时预览：与真实选项卡共用同一套 CSS 变量 */
+.tab-preview { display: flex; gap: 6px; margin: 6px 0 8px; }
+.tab-preview .tab-demo {
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--tab-off-border);
+  background: var(--tab-off-bg);
+  color: var(--tab-off-text);
+  font-size: 11.5px;
+}
+.tab-preview .tab-demo.on {
+  border-color: var(--tab-on-border);
+  background: var(--tab-on-bg);
+  color: var(--tab-on-text);
+  font-weight: 600;
+}
 /* 搜索时同时展开全部分类，命中项不会藏在别的选项卡里 */
 .cfg-tabs.searching .cfg-tab-panel { display: block !important; }
 .cfg-tabs.searching .cfg-tab-panel + .cfg-tab-panel {
@@ -503,13 +636,13 @@ details.group.target {
 .mode-switch .btn.mode-btn {
   border: none;
   border-radius: 0;
-  background: transparent;
-  color: var(--muted);
+  background: var(--tab-off-bg);
+  color: var(--tab-off-text);
   padding: 5px 12px;
   font-size: 12px;
 }
 .mode-switch .btn.mode-btn + .btn.mode-btn { border-left: 1px solid var(--line); }
-.mode-switch .btn.mode-btn.on { background: #1c3b5a; color: #d7ecff; }
+.mode-switch .btn.mode-btn.on { background: var(--tab-on-bg); color: var(--tab-on-text); font-weight: 600; }
 .spark { display: block; width: 100%; max-width: 260px; height: 44px; }
 
 .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
@@ -832,3 +965,28 @@ details.group.target {
   .cfg-tab-nav .btn.tab-btn { font-size: 12px; padding: 8px 10px; }
   .save-row { padding: 6px 8px; }
 }
+
+/* ---------------- 紧凑排版模式（视觉显示 → 色彩主题配置 → 紧凑排版） ---------------- */
+
+/*
+ * 在 body 上挂 .compact 时压缩分组、字段与统计格的间距，
+ * 使小屏或长配置列表能在一屏内看到更多设置项。
+ * 仅改变间距与圆角，不隐藏任何控件，功能可访问性完全不变。
+ */
+body.compact .panel { padding: 5px; }
+body.compact .group { margin: 5px 0; border-radius: 7px; }
+body.compact .group > summary { padding: 5px 8px; font-size: 12px; }
+body.compact .group-body { padding: 2px 8px 6px; }
+body.compact .field { margin: 4px 0; }
+body.compact .field-label { margin-bottom: 2px; font-size: 11px; }
+body.compact .field-hint { margin-top: 2px; font-size: 10.5px; }
+body.compact .switch-field { margin: 4px 0; padding: 1px 0; min-height: 26px; }
+body.compact .row { gap: 6px; }
+body.compact .hint { margin: 2px 0; font-size: 10.5px; }
+body.compact .sub-title { margin: 6px 0 1px; font-size: 11.5px; }
+body.compact .divider { margin: 6px 0 0; }
+body.compact .stage-stats { gap: 5px; }
+body.compact .stat { padding: 4px 6px; }
+body.compact .stat-value { font-size: 12px; }
+body.compact .mode-switch { margin: 2px 0; }
+body.compact .panel-tools { margin-bottom: 5px; }

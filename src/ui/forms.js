@@ -96,6 +96,29 @@ export function field(label, control, hint) {
     hint ? h('span', { class: 'field-hint' }, hint) : null);
 }
 
+/**
+ * 开关型字段（单个复选框 + 说明文本）。
+ *
+ * 与 field() 的区别：field 的控件在标签下方，适合输入框 / 下拉框；
+ * 开关型字段的正文通常只有一个复选框，若沿用同样的「标签在上、控件在下」结构，
+ * 复选框会与说明文本、状态文字挤在一起，各行的水平对齐也随文字长短漂移。
+ * 这里用两列网格统一收敛：
+ *   - 左侧标签、右侧控件，两者垂直居中对齐（align-items: center）；
+ *   - 说明 / 状态文本独占整行（grid-column: 1 / -1），始终从同一左边缘起排；
+ *   - 行高由 CSS 固定（min-height），因此无论开关前后有多少文本，
+ *     每一行的复选框、标签、说明都落在完全一致的位置上。
+ *
+ * @param {string} label   左侧标题
+ * @param {Node} control   右侧控件（通常是 checkbox(value, onChange, '标签') 的返回值）
+ * @param {string|Node} [hint] 说明或状态文本，可传节点以支持动态刷新
+ */
+export function switchField(label, control, hint) {
+  return h('div', { class: 'switch-field' },
+    h('span', { class: 'switch-label' }, label),
+    h('div', { class: 'switch-control' }, control),
+    hint ? h('div', { class: 'switch-hint' }, hint) : null);
+}
+
 export function row(...children) {
   return h('div', { class: 'row' }, children);
 }

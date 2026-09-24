@@ -454,6 +454,17 @@ export function defaultConfig() {
       smoothBody: true,
       /** 播放时自动滚动视图跟随首个移动体，默认关闭 */
       followAgent: false,
+      /**
+       * 统计面板中默认隐藏的统计项键名（低频项）。
+       * 仅影响「是否生成该统计格与摘要行」，统计本身照常计算与导出。
+       */
+      hiddenStats: [...DEFAULT_HIDDEN_STATS],
+      /** 选项卡配色（已激活 / 未激活 × 背景 / 文字 / 边框），默认值刻意拉大两态色差 */
+      tabColors: { ...TAB_COLORS_DEFAULT },
+      /** 紧凑排版模式：压缩分组、字段与统计格的间距，适合小屏或希望一屏看更多设置时 */
+      compact: false,
+      /** 统计口径切换时的数值淡入动画（关闭可减少低性能设备上的重绘） */
+      statFlash: true,
       background: null,
       gridLine: null,
       axisLabels: true,
@@ -752,6 +763,45 @@ export const TRAIL_COLOR_MODES = ['fade', 'visit', 'order'];
 export const FADE_LENGTH_LIMIT = { min: 2, max: 2000 };
 
 /**
+ * 默认隐藏的统计项。
+ * 统计面板原有 30 余项读数全部平铺，界面拥挤且大部分是低频项；
+ * 这里把「生成新蛇 / 移动体消失 / 融合次数 / 排斥次数 / 生命机制」等
+ * 仅在多蛇、交互或生命机制启用时才有意义的低频统计项默认隐藏，
+ * 仅保留高频核心指标默认显示。
+ * 用户可在「统计模块 → 统计项显示配置」中逐项开启（配置随场景保存 / 导出）。
+ */
+export const DEFAULT_HIDDEN_STATS = [
+  'frames', 'rngCalls',
+  'spawns', 'agentDeaths', 'merges', 'repels',
+  'transformDeaths', 'transformedCells', 'collisionWarnings',
+  'lives', 'maxLives', 'lifeGains', 'lifeLosses', 'respawns', 'lifeWarnings', 'finalDeaths',
+];
+
+/**
+ * 选项卡配色的六个可自定义色槽：
+ * 已激活 / 未激活两种状态 × 背景 / 文字 / 边框三种色值。
+ */
+export const TAB_COLOR_KEYS = [
+  'activeBg', 'activeText', 'activeBorder',
+  'inactiveBg', 'inactiveText', 'inactiveBorder',
+];
+
+/**
+ * 选项卡配色默认值。
+ * 相比旧版（激活 #1c3b5a / 未激活 #171c25，文字同为浅色）刻意拉大色差：
+ * 未激活项压暗降饱和，激活项提高亮度与饱和度并配纯白文字，
+ * 两种状态一眼可辨；全部色值均可在「色彩主题配置」中自定义。
+ */
+export const TAB_COLORS_DEFAULT = {
+  activeBg: '#2f6da8',
+  activeText: '#ffffff',
+  activeBorder: '#7cc0ff',
+  inactiveBg: '#10141b',
+  inactiveText: '#8394a8',
+  inactiveBorder: '#232c3a',
+};
+
+/**
  * 连接方式规范化：
  * 优先读取 trailJoin / bodyJoin；旧配置只有 smoothTrail / smoothBody 布尔值时按
  * 「开 = 曲线，关 = 直线」换算，保证历史配置与分享链接的表现不变。
@@ -808,7 +858,33 @@ function normalizeStyle(raw = {}) {
     smoothTrail: trailJoin === 'curve',
     smoothBody: bodyJoin === 'curve',
     followAgent: bool(raw.followAgent, d.followAgent),
+    hiddenStats: normHiddenStats(raw.hiddenStats),
+    tabColors: normTabColors(raw.tabColors),
+    compact: bool(raw.compact, d.compact),
+    statFlash: bool(raw.statFlash, d.statFlash),
   };
+}
+
+/** 隐藏统计项规范化：仅保留非空字符串并去重（非法 / 缺失一律回退为默认隐藏集合） */
+function normHiddenStats(raw) {
+  if (!Array.isArray(raw)) return [...DEFAULT_HIDDEN_STATS];
+  const out = [];
+  for (const k of raw) {
+    const key = String(k ?? '').trim();
+    if (key && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/** 选项卡配色规范化：六个色槽逐个校验十六进制色值，非法值回退为默认配色 */
+function normTabColors(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const key of TAB_COLOR_KEYS) {
+    const v = String(src[key] ?? '').trim();
+    out[key] = HEX_COLOR.test(v) ? v : TAB_COLORS_DEFAULT[key];
+  }
+  return out;
 }
 
 /** 安全避撞预设 */
