@@ -157,8 +157,6 @@ const state = {
   cfgSearch: '',
   /** 配置面板当前选项卡（四大类之一）：面板重建后保持用户所选类别 */
   cfgTab: 'core',
-  /** 各主选项卡内的子选项卡选择（键为子选项卡组名，如 visual） */
-  cfgSubTab: {},
 };
 
 const els = {};
@@ -167,6 +165,8 @@ let rafId = null;
 let acc = 0;
 let lastTs = 0;
 let runTimer = null;
+/** 运行序号：长跑异步启动期间又发起新计算时，旧的一次作废 */
+let runSeq = 0;
 let activeLogEls = [];
 
 /** 结束规则中数值型条件的“上次取值”记忆：取消勾选后仍保留数值，便于再次启用 */
@@ -1123,6 +1123,14 @@ function scheduleRun(delay = 160) {
   runTimer = setTimeout(() => recompute(), delay);
 }
 
+/** 长跑运行提示：长跑会同步占满主线程，先让浏览器把提示画出来再开始计算 */
+function setRunBusy(busy, text) {
+  const el = els.runLoading;
+  if (!el) return;
+  el.textContent = busy ? text || '正在运行模拟…' : '';
+  el.classList.toggle('hidden', !busy);
+}
+
 function onSimChange(delay = 160) {
   state.dirty = true;
   refreshDiagnostics(); // 静态诊断只依赖配置，改动后立即反馈，无需等待重算
@@ -1160,6 +1168,25 @@ function recompute(opts = {}) {
   if (est > 4e8) {
     toast('当前网格与步数组合数据量较大，可能占用较多内存与时间', 'warn');
   }
+  // 预估计算量：每步都要推进移动体（常数开销），开启元胞自动机时还要遍历全网格。
+  // 计算量大时先让浏览器画出「正在运行」提示，再把计算推到下一个事件循环，
+  // 避免长跑期间界面完全无反馈、看起来像卡死。
+  const caCells = cfg.caMode.enabled ? cfg.grid.width * cfg.grid.height : 0;
+  const heavy = effCap * (8 + caCells) > 2e7;
+  if (heavy && !opts.deferred) {
+    const seq = ++runSeq;
+    setRunBusy(true, `正在运行模拟（最多 ${effCap} 步）…`);
+    setTimeout(() => {
+      if (seq !== runSeq) return; // 期间已发起新的计算，本次作废
+      try {
+        recompute({ ...opts, deferred: true });
+      } finally {
+        setRunBusy(false);
+      }
+    }, 24);
+    return;
+  }
+  if (!opts.deferred) setRunBusy(false); // 同步路径兜底：清掉可能残留的提示
   let result;
   try {
     result = new Simulation(cfg, { frameCap }).run();
@@ -1280,11 +1307,15 @@ function loopTick(ts) {
   // 自适应速度：拥挤度升高时按倍率放慢播放（倍率 0.3~1），给观察留出余量
   const stepMs = state.adaptive ? baseMs / Math.max(0.05, currentDifficulty().speedScale) : baseMs;
   let guard = 0;
+  let advanced = false;
+  // 一个动画帧内可能推进多步（高倍速 / 掉帧后追帧）：中间帧不必逐个刷新 DOM，
+  // 只记录是否发生过推进，循环结束后统一刷新一次，省下大量被立即覆盖的重复渲染。
   while (acc >= stepMs && guard++ < 400) {
     acc -= stepMs;
     if (!advance()) break;
-    frameChanged(); // 跨帧时才做帧统计 / 控件 / 日志高亮等 DOM 更新
+    advanced = true;
   }
+  if (advanced) frameChanged(); // 跨帧时才做帧统计 / 控件 / 日志高亮等 DOM 更新
   // 剩余时间比例即帧间进度：每个动画帧都按该进度重绘一次，
   // 低速度下也能得到逐帧连续的位移，而不会长时间静止后突然跳格。
   state.frameAlpha = Math.max(0, Math.min(1, acc / stepMs));
@@ -1337,6 +1368,7 @@ function buildControls() {
   els.resetBtn = button('⟲ 重置', () => { pause(); gotoFrame(0); });
   els.endBtn = button('⏭ 跳到末尾', () => { pause(); gotoFrame(state.result ? state.result.frames.length - 1 : 0); });
   els.runBtn = button('重新计算', () => recompute(), 'ghost');
+  els.runLoading = h('span', { class: 'run-loading hidden' }, '');
 
   els.loopChk = checkbox(state.loop, (v) => { state.loop = v; }, '循环');
   els.autoChk = checkbox(state.autoRun, (v) => { state.autoRun = v; }, '自动运行');
@@ -1394,7 +1426,7 @@ function buildControls() {
   });
 
   c.appendChild(h('div', { class: 'controls-line' },
-    els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn));
+    els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn, els.runLoading));
   c.appendChild(h('div', { class: 'controls-line' },
     els.loopChk, els.autoChk, els.followChk, els.adaptiveChk,
     h('span', { class: 'mini-label' }, '速度'), els.speedRange, els.speedLabel));
@@ -1528,9 +1560,9 @@ function showScoreDetail() {
   });
 }
 
-/** 隐藏悬浮提示 */
+/** 隐藏悬浮提示（同时清掉术语浮层的加宽态，避免影响下一次画布提示的宽度测量） */
 function hideTooltip() {
-  if (els.tooltip) els.tooltip.classList.remove('show');
+  if (els.tooltip) els.tooltip.classList.remove('show', 'term-tip');
 }
 
 /**
@@ -1555,6 +1587,29 @@ function placeTooltip(clientX, clientY) {
   top = Math.max(pad, Math.min(top, Math.max(pad, window.innerHeight - pad - h)));
   tip.style.left = `${Math.round(left)}px`;
   tip.style.top = `${Math.round(top)}px`;
+}
+
+/**
+ * 给元素绑定「专业术语说明」浮层。
+ *
+ * 复用画布悬浮提示的同一个浮层节点（#tooltip）：定位、边界翻转、滚动 / 缩放时自动隐藏
+ * 等行为全部一致，既不必新增节点，也不会出现两个提示同时可见的情况。
+ * 术语浮层只在鼠标进入 / 移动时显示，移出即隐藏。
+ */
+function bindTermTip(el, term) {
+  if (!el || !term) return el;
+  const show = (e) => {
+    if (!els.tooltip) return;
+    els.tooltip.innerHTML = termTipHtml(term);
+    // 术语说明比坐标提示长，单独放宽浮层最大宽度（hideTooltip 会清掉该状态）
+    els.tooltip.classList.add('show', 'term-tip');
+    placeTooltip(e.clientX, e.clientY);
+  };
+  el.addEventListener('mouseenter', show);
+  el.addEventListener('mousemove', show);
+  el.addEventListener('mouseleave', hideTooltip);
+  el.classList.add('has-term');
+  return el;
 }
 
 /** 点按某个格子 → 跳到该格首次经过的步数（鼠标点击与移动端点按共用） */
@@ -1687,6 +1742,58 @@ const STAT_GROUPS = [
   },
 ];
 
+/**
+ * 统计术语说明表。
+ * 统计面板里的读数（如「覆盖率」「CA 演进次数」）多是本平台特有的专业概念，
+ * 只给一个短标签很难判断口径。这里为每个统计项补一份「是什么 / 怎么统计 / 何时有意义」的说明，
+ * 悬浮统计格时以浮层呈现，帮助用户快速理解概念含义（说明文案与核心层的统计口径一一对应）。
+ */
+const STAT_TERMS = {
+  steps: { name: '步数', desc: '已执行的模拟步数。每执行一步，全部存活的移动体各移动一格。' },
+  framePos: { name: '当前帧 / 总帧数', desc: '当前播放位置对应的帧序号与本次回放缓存的总帧数。跳帧或拖动进度条时该读数会变化。' },
+  frames: { name: '缓存帧数', desc: '本次运行实际保存的帧数量。长跑时会按固定间隔抽样（读数后附「抽样 1/N」），因此帧数可能少于步数。' },
+  elapsed: { name: '运行耗时', desc: '从开始计算到得出结果的真实耗时（毫秒），不含播放动画的时间。可用于对比不同配置的运算开销。' },
+  endReason: { name: '结束原因 / 本步事件', desc: '总计口径下显示本轮运行终止的判定原因；实时口径下显示当前帧发生的碰撞、增长等事件。' },
+  score: { name: '得分', desc: '整轮运行的结算总分，由生存步数、覆盖率、长度等分项加权得出（点击统计格可查看分项明细）。' },
+  scoreGrade: { name: '评分等级', desc: '由总分映射出的等级标签（如 S / A / B），用于快速判断本轮表现。' },
+  collisions: { name: '碰撞次数', desc: '移动体与边界、障碍物或其它移动体发生碰撞的累计次数（含自撞）。' },
+  selfCollisions: { name: '自撞次数', desc: '移动体撞到自身身体的累计次数。是否计入取决于「撞尾是否算碰撞」等碰撞设置。' },
+  length: { name: '当前长度', desc: '当前帧移动体的体节数（含头部）。实时口径下随播放进度变化。' },
+  finalLength: { name: '最终长度', desc: '本轮运行结束时的体节数，整轮量，两种统计口径下取值相同。' },
+  maxLength: { name: '最大长度', desc: '整轮运行中出现过的最大体节数，反映增长机制的峰值效果。' },
+  coverage: { name: '覆盖率', desc: '轨迹访问过的不重复格子数占网格总格数的百分比（去重统计）。数值越高说明探索越充分，100% 表示所有格子都至少经过一次。' },
+  ruleTriggers: { name: '规则触发', desc: '环境感知规则（含每步移动前 / 移动后 / 进入新格 / 碰撞 / 撞墙 / 定时等阶段）的累计触发次数。条件为假的规则不会计入。' },
+  agents: { name: '存活移动体', desc: '当前仍然存活的移动体数量。单蛇场景恒为 1（禁用蛇形实体时为 0）。' },
+  peakAgents: { name: '峰值移动体', desc: '整轮运行中同时存活的移动体数量的最大值，用于观察多蛇生成与消亡的规模。' },
+  spawns: { name: '生成新蛇', desc: '多蛇系统按时间或条件新增移动体的累计次数。' },
+  agentDeaths: { name: '移动体消失', desc: '移动体因碰撞、生命耗尽或转化等原因从网格上消失的累计次数。' },
+  merges: { name: '融合次数', desc: '多蛇系统中两条移动体相撞并按规则融合为一条的次数。' },
+  repels: { name: '排斥次数', desc: '多蛇系统中两条移动体相撞并按规则相互弹开（而非融合或同归于尽）的次数。' },
+  markerInteractions: { name: '标记物交互', desc: '移动体踏入交互标记物格、触发标记物效果（增长 / 缩短 / 转向等）的累计次数。' },
+  transformDeaths: { name: '自撞死亡', desc: '开启「自撞即判定死亡」后，因撞到自身而直接死亡的累计次数（此时不再结束整轮运行）。' },
+  transformedCells: { name: '转化节点', desc: '移动体死亡后，其身体体节就地写入环境（转为障碍物等状态）的格子总数。' },
+  collisionWarnings: { name: '碰撞预警', desc: '开启「碰撞预警提示」后，被标记为「下一步会撞到自身身体」的危险落点累计数量。' },
+  caSteps: { name: 'CA 演进次数', desc: '元胞自动机执行的更新代数。每步移动结束后 CA 按设定规则推进一代，因此它与步数通常同步增长（含初始代）。' },
+  obstacleCount: { name: '障碍物', desc: '当前环境中处于障碍物状态的格子数量（含 CA 演化与身体转化产生的障碍物）。' },
+  markerCount: { name: '标记物', desc: '当前环境中处于标记物状态的格子数量，移动体踩到后会被消耗或触发效果。' },
+  seed: { name: '随机种子', desc: '本次运行使用的随机种子。相同种子 + 相同配置必然得到完全相同的结果，便于复现与对比。' },
+  rngCalls: { name: '随机调用次数', desc: '本次运行取用随机数的累计次数，可用于判断配置的随机性开销。' },
+  lives: { name: '剩余生命', desc: '生命机制下当前剩余的生命条数；归零即触发最终死亡。' },
+  maxLives: { name: '峰值生命', desc: '整轮运行中出现过的最大生命条数，用于观察获得生命的效果。' },
+  lifeGains: { name: '获得生命', desc: '通过规则或标记物获得生命的累计次数。' },
+  lifeLosses: { name: '失去生命', desc: '因碰撞、陷阱等原因失去生命的累计次数（不含最终死亡时的清空）。' },
+  respawns: { name: '重生次数', desc: '失去一条生命后原地重生的累计次数（重生会重置身体长度与轨迹）。' },
+  lifeWarnings: { name: '低生命预警', desc: '生命剩余量降到预警阈值时触发提示的累计次数。' },
+  finalDeaths: { name: '最终死亡', desc: '生命耗尽或触发「死亡即停」导致移动体彻底退出的累计次数。' },
+  lengthCurve: { name: '长度曲线', desc: '体节数随步数变化的迷你折线图。实时口径只画到当前播放位置，总计口径画完整条曲线。' },
+  turnBars: { name: '转向分布', desc: '左转 / 直行 / 右转各自出现的次数占比。实时口径统计到当前帧，总计口径统计整轮运行。' },
+};
+
+/** 术语浮层文案（术语名加粗、说明换行），供统计格悬浮提示使用 */
+function termTipHtml(term) {
+  return `<b class="tip-term">${term.name}</b><span class="tip-desc">${term.desc}</span>`;
+}
+
 /** 运行耗时的展示格式：不足 1 秒按毫秒，超过按秒保留两位小数 */
 function formatDuration(ms) {
   const v = Number(ms);
@@ -1799,18 +1906,21 @@ function renderStageStats() {
     const span = h('span', { class: 'stat-value' }, '-');
     els.statSpans[key] = span;
     const clickable = key === 'score';
-    host.appendChild(h('div', {
+    const cell = h('div', {
       class: `stat ${key === 'endReason' ? 'wide' : ''}${clickable ? ' clickable' : ''}`,
       title: clickable ? '点击查看得分分项明细' : null,
       onclick: clickable ? showScoreDetail : null,
-    }, h('span', { class: 'stat-label' }, label), span));
+    }, h('span', { class: 'stat-label' }, label), span);
+    // 专业术语说明：悬浮统计格显示「术语 + 口径说明」（覆盖率 / CA 演进次数等）
+    bindTermTip(cell, STAT_TERMS[key]);
+    host.appendChild(cell);
   }
   els.spark = h('canvas', { class: 'spark', width: 220, height: 44 });
   els.turnBars = h('div', { class: 'bars' });
-  host.appendChild(h('div', { class: 'stat wide' },
-    h('span', { class: 'stat-label' }, '长度曲线'), els.spark));
-  host.appendChild(h('div', { class: 'stat wide' },
-    h('span', { class: 'stat-label' }, '转向分布'), els.turnBars));
+  host.appendChild(bindTermTip(h('div', { class: 'stat wide' },
+    h('span', { class: 'stat-label' }, '长度曲线'), els.spark), STAT_TERMS.lengthCurve));
+  host.appendChild(bindTermTip(h('div', { class: 'stat wide' },
+    h('span', { class: 'stat-label' }, '转向分布'), els.turnBars), STAT_TERMS.turnBars));
   fillStageStats();
 }
 
@@ -2148,6 +2258,7 @@ function statsModeGroup() {
   syncStatModeUI();
   return group('统计模块', [
     h('div', { class: 'hint' }, '实时统计按当前播放位置统计（含轨迹数据，随播放 / 跳帧变化）；总计统计展示整轮运行的全量汇总。两种口径共用同一套指标与展示格式。'),
+    h('div', { class: 'hint' }, '统计面板中带虚线下划线的指标均有术语说明：把鼠标停在统计格上即可查看其统计口径（如「覆盖率」「CA 演进次数」等）。'),
     seg,
     els.statModeHint,
     row(button('复制统计摘要', () => {
@@ -2194,6 +2305,7 @@ function statVisibilityGroup() {
   syncStatVisibilityCount();
   const body = [
     h('div', { class: 'hint' }, '低频统计项（生成新蛇 / 移动体消失 / 融合次数 / 排斥次数 / 生命机制等）默认隐藏，仅保留高频核心指标，避免统计面板拥挤。勾选即可逐项开启；隐藏项不生成统计格与摘要行，统计与导出数据不受影响。'),
+    h('div', { class: 'hint' }, '把鼠标停在任意统计项上，可查看该指标的口径说明（如「覆盖率」「CA 演进次数」等专业概念）。'),
     els.statVisibilityHint,
     row(
       button('仅核心指标', () => setHiddenStats(toggleableStatKeys().filter((k) => !CORE_STAT_KEYS.includes(k)), '已切换为「仅核心指标」'), 'ghost small'),
@@ -2205,7 +2317,9 @@ function statVisibilityGroup() {
   for (const g of STAT_GROUPS) {
     body.push(h('div', { class: 'sub-title' }, g.title));
     body.push(h('div', { class: 'chips-line' },
-      ...g.keys.map((key) => checkbox(!isStatHidden(key), (on) => setStatHidden(key, !on), statLabel(key)))));
+      ...g.keys.map((key) => bindTermTip(
+        checkbox(!isStatHidden(key), (on) => setStatHidden(key, !on), statLabel(key)),
+        STAT_TERMS[key]))));
   }
   return group('统计项显示配置', body, { key: 'stat-visibility', open: false });
 }
@@ -2954,7 +3068,7 @@ function syncControlBar() {
  */
 const CONFIG_TABS = [
   { key: 'core', label: '核心规则', hint: '网格与坐标、起点与移动体、基础移动规则、碰撞与自撞、环境规则、结束规则' },
-  { key: 'visual', label: '视觉显示', hint: '格子绘制、轨迹与蛇身样式、特效开关' },
+  { key: 'visual', label: '视觉显示', hint: '基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置' },
   { key: 'scene', label: '场景与运行', hint: '场景名称与描述、随机种子、规则执行方式' },
   { key: 'extend', label: '扩展机制', hint: '多蛇与交互、蛇死亡转化、生命机制、元胞自动机' },
 ];
@@ -3009,7 +3123,12 @@ function renderConfigPanel() {
     lifeGroup(cfg),        // 生命机制（多生命系统）
     caGroup(cfg),          // 元胞自动机
   );
-  panels.get('visual').append(styleGroup(cfg));
+  panels.get('visual').append(
+    visualBasicGroup(cfg),   // 基础视觉设置
+    visualEffectsGroup(cfg), // 高级视觉特效
+    visualOverlayGroup(cfg), // 悬停与提示
+    visualThemeGroup(cfg),   // 色彩主题配置
+  );
   panels.get('scene').append(sceneGroup(cfg));
 
   tabs.appendChild(nav);
@@ -3045,6 +3164,8 @@ function revealConfigGroup(groupKey) {
 
 /** 由搜索自动展开过的分组键：清除搜索时还原为展开前的状态 */
 const cfgSearchOpened = new Set();
+/** 搜索输入的防抖定时器（连续输入时只在停顿后过滤一次） */
+let cfgSearchTimer = null;
 
 function configSearchBar() {
   const input = h('input', {
@@ -3055,12 +3176,23 @@ function configSearchBar() {
   input.value = state.cfgSearch;
   input.addEventListener('input', () => {
     state.cfgSearch = input.value;
-    applyConfigSearch(input.value);
+    // 过滤需要对每个分组做一次 textContent 序列化，逐键触发在大面板上很卡，
+    // 因此按输入停顿后再统一过滤（输入框本身仍即时回显）。
+    if (cfgSearchTimer) clearTimeout(cfgSearchTimer);
+    cfgSearchTimer = setTimeout(() => {
+      cfgSearchTimer = null;
+      applyConfigSearch(state.cfgSearch);
+    }, 120);
   });
   els.cfgSearchHint = h('span', { class: 'mini-label' }, '');
   return h('div', { class: 'cfg-search' },
     input,
-    button('清除', () => { state.cfgSearch = ''; input.value = ''; applyConfigSearch(''); }, 'ghost small'),
+    button('清除', () => {
+      if (cfgSearchTimer) { clearTimeout(cfgSearchTimer); cfgSearchTimer = null; }
+      state.cfgSearch = '';
+      input.value = '';
+      applyConfigSearch('');
+    }, 'ghost small'),
     button('展开全部', () => setAllGroupsOpen(els.config, true), 'ghost small'),
     button('收起全部', () => setAllGroupsOpen(els.config, false), 'ghost small'),
     els.cfgSearchHint);
@@ -3166,7 +3298,12 @@ function gridGroup(cfg) {
       field('宽', numBind(g, 'width', () => { syncGridSize(); onSimChange(); }, { min: 2, max: 400 })),
       field('高', numBind(g, 'height', () => { syncGridSize(); onSimChange(); }, { min: 2, max: 400 })),
     ),
-    field('边界行为', selBind(g, 'boundary', () => onSimChange(), [
+    field('边界行为', selBind(g, 'boundary', () => {
+      // 边界改为不可穿越时自动补开「安全避撞 → 边界规避」，避免实体照着墙撞
+      syncBoundaryAvoidance();
+      onSimChange();
+      rebuildAll();
+    }, [
       { value: 'stop', label: '停止（撞墙即停）' },
       { value: 'bounce', label: '反弹' },
       { value: 'wrap', label: '穿越到另一侧' },
@@ -3429,27 +3566,67 @@ function moveRulesGroup(cfg) {
 
 /* ---------------- 安全避撞预设（方向选择的条件概率增强） ---------------- */
 
+/**
+ * 边界改为「不可穿越」时自动补上「边界规避」。
+ * 撞墙即结束 / 掉头的边界下，不规避等于放任实体去撞墙；
+ * 只做「自动补开」，不会关掉用户已开启的项，用户后续手动修改依然生效。
+ */
+function syncBoundaryAvoidance() {
+  const cfg = state.cfg;
+  if (cfg.grid.boundary !== 'wrap') cfg.safety.avoidWall = true;
+}
+
 function safetySection(cfg) {
   const s = cfg.safety;
+  const wallMatters = cfg.grid.boundary !== 'wrap';
   const note = h('div', { class: 'hint' });
   const syncNote = () => {
-    note.textContent = (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents)
-      ? '已启用：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。'
+    const on = [
+      s.avoidBody && '自身身体',
+      s.avoidObstacle && '障碍物',
+      s.avoidOtherAgents && '其它移动体',
+      s.avoidWall && '不可穿越边界',
+    ].filter(Boolean);
+    note.textContent = on.length
+      ? `已启用（${on.join(' / ')}）：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。`
       : '未启用：方向选择完全按基础 / 条件概率权重进行。';
   };
   syncNote();
-  const bind = (key, label) => chkBind(s, key, () => { syncNote(); onSimChange(); }, label);
+  /**
+   * 单项开关：取消任一项时把「避开全部」同步为关闭，保证总开关与子项状态始终一致。
+   * 不做禁用 / 锁定，用户随时可以手动改回。
+   */
+  const item = (key, label) => chkBind(s, key, (v) => {
+    if (!v) s.avoidAll = false;
+    onSimChange();
+    rebuildAll();
+  }, label);
+  const count = ['avoidBody', 'avoidObstacle', 'avoidOtherAgents', 'avoidWall'].filter((k) => s[k]).length;
   return group('安全避撞预设（方向选择）', [
+    switchField('避开全部',
+      chkBind(s, 'avoidAll', (v) => {
+        s.avoidBody = v;
+        s.avoidObstacle = v;
+        s.avoidOtherAgents = v;
+        s.avoidWall = v;
+        onSimChange();
+        rebuildAll();
+      }, '一键开启 / 关闭全部规避项（默认开启）'),
+      '默认开启：一次性打开下面的全部规避项。仍可逐项手动调整——取消任一项会同步关闭本开关，不会被强制锁定。'),
     field('规避对象', h('div', { class: 'chips-line' },
-      bind('avoidBody', '自身身体'),
-      bind('avoidObstacle', '障碍物'),
-      bind('avoidOtherAgents', '其它移动体')),
+      item('avoidBody', '自身身体'),
+      item('avoidObstacle', '障碍物'),
+      item('avoidOtherAgents', '其它移动体')),
       '规避是「择优」而非「禁止」：仍有可行方向时按权重择优，从而降低自撞概率'),
+    field('规避边界', h('div', { class: 'chips-line' }, item('avoidWall', '不可穿越的边界')),
+      wallMatters
+        ? '当前边界不可穿越：开启后实体不再触碰边界，撞墙 / 反弹都只会发生在无路可走时'
+        : '当前边界为「穿越到另一侧」：越界会环绕回网格内，本项不生效；把边界改为停止 / 反弹后会自动开启'),
     note,
     field('碰撞预警提示', h('div', { class: 'chips-line' },
       chkBind(s, 'warnSelfCollision', () => onSimChange(), '标记「下一步会撞到自身身体」的危险格')),
       '开启后每步检查各可行朝向，把会导致自撞的落点标为警示色；长蛇场景会带来少量额外开销，默认关闭'),
-  ], { open: false, badge: (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents) ? '已启用' : '' });
+  ], { open: false, badge: count ? `已启用 ${count} 项` : '' });
 }
 
 /* ---------------- 多蛇生成与交互 ---------------- */
@@ -4537,71 +4714,22 @@ function endGroup(cfg) {
   ], { open: false, badge: `已启用 ${enabledCount} 项` });
 }
 
-/* ---------------- 展示样式（视觉显示主选项卡 → 子选项卡） ---------------- */
+/* ---------------- 展示样式（视觉显示主选项卡） ---------------- */
 
-/**
- * 「视觉显示」主选项卡的子选项卡划分。
- * 原先所有样式开关集中在一个分组里，单页滚动很长、视觉负担重；
- * 这里按「基础绘制 / 动态特效 / 悬停与提示 / 色彩与界面」四类收敛，
- * 每个子选项卡内再按功能细分为折叠分组，选项数量与分类逻辑都保持清晰。
- * 分组本身与其中所有控件原样保留，只是换了归属，功能可访问性不变。
+/*
+ * 「视觉显示」曾用一层「子选项卡」来压缩首屏长度，但子选项卡的标题与内部折叠分组
+ * 完全同名（如「基础视觉设置」），界面上于是出现
+ * 「主选项卡 → 同名子选项卡 → 同名折叠分组 → 字段」四层，
+ * 用户无法判断某个设置项究竟挂在子选项卡上还是分组上——多出来的那一层反而模糊了从属关系。
+ *
+ * 现在改为把四类视觉设置直接作为主选项卡下的折叠分组（与其它三个主选项卡结构完全一致），
+ * 层级收敛为「主选项卡 → 折叠分组 → 字段」三层：
+ *   - 分组默认收起，首屏只露出四行标题，无需再靠子选项卡压缩长度；
+ *   - 每个分组沿用 group() 的深度配色、左侧色条与徽标，「属于哪一类、在哪一层」一眼可辨；
+ *   - 设置搜索不再需要「搜索时展开全部子面板」的特殊处理，命中项始终落在同一套分组里。
  */
-const VISUAL_SUBTABS = [
-  { key: 'basic', label: '基础视觉设置', hint: '格子绘制、显示内容、环境显示、连接方式' },
-  { key: 'effects', label: '高级视觉特效', hint: '轨迹渐隐与配色、尖端平滑、交互特效、发光' },
-  { key: 'overlay', label: '悬停与提示', hint: '重访高亮、行列准线、悬浮提示内容、穿越日志' },
-  { key: 'theme', label: '色彩主题配置', hint: '选项卡配色、紧凑排版、统计动画、界面读数' },
-];
 
-/** 视觉子选项卡的当前选择（面板重建后保持用户所选子选项卡） */
-const VISUAL_SUBTAB_HOST = 'visual';
-
-/**
- * 视觉显示主面板：子选项卡导航 + 各子面板。
- * 结构与主选项卡一致（导航 + 面板容器 + 显隐切换），
- * 因此「搜索设置项」时可通过 .cfg-tabs.searching 一次性展开全部子面板。
- */
-function styleGroup(cfg) {
-  const wrap = h('div', { class: 'cfg-subtabs' });
-  const nav = h('div', { class: 'cfg-sub-nav', role: 'tablist' });
-  const panels = new Map();
-  const buttons = new Map();
-  const activate = (key) => {
-    const target = VISUAL_SUBTABS.some((t) => t.key === key) ? key : VISUAL_SUBTABS[0].key;
-    state.cfgSubTab[VISUAL_SUBTAB_HOST] = target;
-    for (const t of VISUAL_SUBTABS) {
-      buttons.get(t.key).classList.toggle('on', t.key === target);
-      buttons.get(t.key).setAttribute('aria-selected', t.key === target ? 'true' : 'false');
-      panels.get(t.key).classList.toggle('hidden', t.key !== target);
-    }
-  };
-  for (const t of VISUAL_SUBTABS) {
-    const b = button(t.label, () => activate(t.key), 'tab-btn');
-    b.title = t.hint;
-    b.setAttribute('role', 'tab');
-    b.dataset.subTabKey = t.key;
-    buttons.set(t.key, b);
-    nav.appendChild(b);
-    const panel = h('div', {
-      class: 'cfg-sub-panel',
-      role: 'tabpanel',
-      dataset: { subTabKey: t.key, subTabLabel: t.label },
-    });
-    panels.set(t.key, panel);
-  }
-
-  panels.get('basic').append(visualBasicGroup(cfg));
-  panels.get('effects').append(visualEffectsGroup(cfg));
-  panels.get('overlay').append(visualOverlayGroup(cfg));
-  panels.get('theme').append(visualThemeGroup(cfg));
-
-  wrap.appendChild(nav);
-  for (const t of VISUAL_SUBTABS) wrap.appendChild(panels.get(t.key));
-  activate(state.cfgSubTab[VISUAL_SUBTAB_HOST]);
-  return wrap;
-}
-
-/** 子选项卡一：基础视觉设置（格子绘制 · 显示内容 · 环境显示 · 连接方式） */
+/** 视觉设置分组一：基础视觉设置（格子绘制 · 显示内容 · 环境显示 · 连接方式） */
 function visualBasicGroup(cfg) {
   const s = cfg.style;
   return group('基础视觉设置', [
@@ -4636,7 +4764,7 @@ function visualBasicGroup(cfg) {
   ], { key: 'visual-basic', open: false });
 }
 
-/** 子选项卡二：高级视觉特效（轨迹衰减与配色 · 渲染效果 · 进出点标记） */
+/** 视觉设置分组二：高级视觉特效（轨迹衰减与配色 · 渲染效果 · 进出点标记） */
 function visualEffectsGroup(cfg) {
   const s = cfg.style;
   return group('高级视觉特效', [
@@ -4661,7 +4789,7 @@ function visualEffectsGroup(cfg) {
   ], { key: 'visual-effects', open: false });
 }
 
-/** 子选项卡三：悬停与提示（重访高亮 · 行列准线 · 悬浮提示内容 · 穿越日志） */
+/** 视觉设置分组三：悬停与提示（重访高亮 · 行列准线 · 悬浮提示内容 · 穿越日志） */
 function visualOverlayGroup(cfg) {
   const s = cfg.style;
   return group('悬停与提示', [
@@ -4735,7 +4863,7 @@ function tabColorField(label, key) {
   return field(label, row(picker, text));
 }
 
-/** 子选项卡四：色彩主题配置（选项卡配色 · 排版 · 界面读数） */
+/** 视觉设置分组四：色彩主题配置（选项卡配色 · 排版 · 界面读数） */
 function visualThemeGroup(cfg) {
   const s = cfg.style;
   return group('色彩主题配置', [

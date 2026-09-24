@@ -263,6 +263,8 @@ export class Simulation {
     const spawnCtl = { nextTick: null };
 
     stats.rngCalls = rng.calls; // 帧级快照需要「截至该帧」的随机调用次数
+    stats.obstacleCount = world.countState('obstacle');
+    stats.markerCount = world.countState('marker');
     frames.push(this.captureFrame(0, agents, storedCells, [], stats, logs, null, null));
 
     while (true) {
@@ -307,13 +309,13 @@ export class Simulation {
         stats.lives = mainAgent ? mainAgent.lives : 0;
         stats.maxLives = Math.max(stats.maxLives, primary.lives || 0);
       }
-      stats.obstacleCount = world.countState('obstacle');
-      stats.markerCount = world.countState('marker');
-      this.checkLengthOverflow(primary, tick);
-
+      // 环境计数只需在格子真正被改写时重算（全表扫描，长跑下是主要常数开销）
       if (ctx.cellsDirty) {
+        stats.obstacleCount = world.countState('obstacle');
+        stats.markerCount = world.countState('marker');
         storedCells = world.cells.slice();
       }
+      this.checkLengthOverflow(primary, tick);
       // 首帧 / 结束帧必定缓存，其余按当前采样步长抽样
       const isLast = outcome.ended || tick === maxFrames;
       if ((isLast || tick >= nextStoreTick) && lastStoredTick !== tick) {
@@ -428,15 +430,20 @@ export class Simulation {
 
     // 3. 逐个移动体推进（单蛇运行时与旧行为完全一致）
     let fatal = null;
+    // 「移动前状态」只有排斥交互回退这一步时才用得到，其余模式不必每步深拷贝整条蛇身
+    const ms = cfg.multiSnake;
+    const needPrevState = !!ms.enabled && ms.interaction.mode === 'repel';
     for (const agent of agents.slice()) {
       // 死亡（含生命耗尽）的移动体立即停止一切移动逻辑；
       // 仅「死亡后仍可移动」开启时以僵尸态继续参与推进。
       if (!agent.alive && !agent.zombie) continue;
       // 记录移动前状态：排斥模式下发生重叠时用于回退
-      agent.prevState = {
-        segments: agent.segments.map((s) => ({ col: s.col, row: s.row })),
-        dir: agent.dir,
-      };
+      if (needPrevState) {
+        agent.prevState = {
+          segments: agent.segments.map((s) => ({ col: s.col, row: s.row })),
+          dir: agent.dir,
+        };
+      }
       const res = this.stepAgent(ctx, engine, agent, tickEvents);
       if (res && res.ended) {
         if (agent.isMain) { fatal = res.reason; break; }
@@ -457,6 +464,9 @@ export class Simulation {
     stats.ruleTriggers += engine.run('afterStep', ctx, { sync });
     stats.ruleTriggers += engine.run('timer', ctx, { sync });
     if (ctx.pending.end) return { ended: true, reason: this.ruleEndReason(ctx), turn: main ? main.lastTurn : null };
+
+    // 5.5 结算上述规则阶段写入的长度变化（移动阶段的 planLength 已把 pending 归零）
+    this.settlePostRuleLength(ctx);
 
     // 6. 多蛇生成
     this.maybeSpawn(ctx, tickEvents);
@@ -1153,12 +1163,16 @@ export class Simulation {
   }
 
   /** 目标格是否落在自身身体上（不含头部），兼容边界穿越 */
-  selfBlocks(ctx, agent, target) {
+  selfBlocks(ctx, agent, target, allowTail = false) {
     const grid = ctx.grid;
     const c = this.resolveCandidate(ctx, target);
     if (!c.ok) return false;
     const index = grid.idx(c.coord.col, c.coord.row);
+    const last = agent.segments.length - 1;
     for (let i = 1; i < agent.segments.length; i++) {
+      // 兜底模式（allowTail）：尾部体节本步会让位，与 detectCollision 的 skipTail 口径一致，
+      // 仅在「其余方向全被身体封死」时使用，避免必然自撞。
+      if (allowTail && i === last) continue;
       if (grid.idx(agent.segments[i].col, agent.segments[i].row) === index) return true;
     }
     return false;
@@ -1187,28 +1201,63 @@ export class Simulation {
   }
 
   /**
-   * 安全避撞预设：剔除会撞上自身身体 / 障碍物 / 其它移动体的候选转向。
+   * 「死胡同」判定：走进 target 后，该格的全部相邻方向是否都已被身体 / 障碍物 /
+   * 不可达边界堵死。贪心避障只看「下一格是否安全」，很容易一头钻进只进不出的凹槽，
+   * 身体一长就自锁；这里向前多看一格，把这类必被困死的落点提前排除。
+   */
+  isDeadEnd(ctx, agent, target) {
+    const grid = ctx.grid;
+    const blocked = new Set();
+    const last = agent.segments.length - 1;
+    for (let i = 0; i < agent.segments.length; i++) {
+      // 头与尾都会让位（headIntoTail=false 时撞尾不算碰撞），不计入阻塞
+      if (i === last && !ctx.config.collision.headIntoTail) continue;
+      blocked.add(grid.idx(agent.segments[i].col, agent.segments[i].row));
+    }
+    blocked.delete(grid.idx(target.col, target.row));
+    for (let d = 0; d < grid.dirCount; d++) {
+      const c = this.resolveCandidate(ctx, grid.step(target, d));
+      if (!c.ok) continue;
+      if (blocked.has(grid.idx(c.coord.col, c.coord.row))) continue;
+      if (ctx.world.isBlocking(c.coord)) continue;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 安全避撞预设：剔除会撞上自身身体 / 障碍物 / 其它移动体 / 边界的候选转向。
    * 返回空数组表示「所有方向都不可行」，调用方应回落到原始权重（从而触发原本的碰撞逻辑）。
    * 未启用任何规避项时返回 null，保持与旧版本完全一致的随机序列。
+   *
+   * avoidWall（边界规避）只在**不可穿越的边界**下有意义：此时越界候选在
+   * resolveCandidate 中即为不可达，直接剔除；穿越边界下越界会环绕回网格内，
+   * 因此不受该项影响。
    */
-  filterSafeOptions(ctx, agent, options) {
+  filterSafeOptions(ctx, agent, options, opts = {}) {
     const cfg = ctx.config;
     const s = cfg.safety;
+    const allowTail = opts.allowTail === true && !cfg.collision.headIntoTail;
     const repel = cfg.multiSnake.enabled && cfg.multiSnake.interaction.mode === 'repel';
     const avoidOthers = s.avoidOtherAgents || repel;
-    if (!s.avoidBody && !s.avoidObstacle && !avoidOthers) return null;
+    const avoidWall = s.avoidWall && cfg.grid.boundary !== 'wrap';
+    if (!s.avoidBody && !s.avoidObstacle && !avoidOthers && !avoidWall) return null;
     const grid = ctx.grid;
     const out = [];
     for (const o of options) {
       if (o.weight <= 0) continue;
       const dir = o.dir !== undefined ? o.dir : resolveTurn(o.key, agent, grid, ctx.rng);
       // 边界穿越开启时，越界候选先环绕回网格内再判定，避免四角位置被误剔；
-      // 非穿越边界下越界候选仍照旧保留，交由后续撞墙 / 反弹逻辑处理。
+      // 边界规避开启时，不可达的越界候选直接剔除，实体因此不会触碰边界。
       const c = this.resolveCandidate(ctx, grid.step(agent.head, dir));
-      if (!c.ok) { out.push({ ...o, dir }); continue; }
+      if (!c.ok) {
+        if (avoidWall) continue;
+        out.push({ ...o, dir });
+        continue;
+      }
       const target = c.coord;
       if (s.avoidObstacle && ctx.world.isBlocking(target)) continue;
-      if (s.avoidBody && this.selfBlocks(ctx, agent, target)) continue;
+      if (s.avoidBody && this.selfBlocks(ctx, agent, target, allowTail)) continue;
       if (avoidOthers && occupiedByAgent(ctx, target, agent)) continue;
       out.push({ ...o, dir });
     }
@@ -1250,7 +1299,27 @@ export class Simulation {
       { key: 'straight', weight: Math.max(0, weights.straight) },
       { key: 'right', weight: Math.max(0, weights.right) },
     ];
-    const safe = this.filterSafeOptions(ctx, agent, options);
+    let safe = this.filterSafeOptions(ctx, agent, options);
+    /**
+     * 兜底：所有方向都被自身身体封死时，把「仅被尾部挡住」的方向作为最后选择。
+     * 尾节本步会让位（headIntoTail=false 时撞尾不算碰撞），因此这能把必死的局面
+     * 换成大概率存活；只有真正无路可走时才回落到原始权重。
+     */
+    if (safe && safe.length === 0) {
+      const tailSafe = this.filterSafeOptions(ctx, agent, options, { allowTail: true });
+      if (tailSafe.length) safe = tailSafe;
+    }
+    /**
+     * 死胡同过滤：在仍有多个可行方向时，剔除会走进去就出不来的落点。
+     * 全部都是死胡同时保持原样（此时无处可躲，只能按权重赌一把）。
+     */
+    if (safe && safe.length > 1) {
+      const live = safe.filter((o) => {
+        const c = this.resolveCandidate(ctx, grid.step(agent.head, o.dir));
+        return !c.ok || !this.isDeadEnd(ctx, agent, c.coord);
+      });
+      if (live.length) safe = live;
+    }
     const pool = safe && safe.length ? safe : options;
     const { item } = rng.weighted(pool, (o) => o.weight);
     return { dir: item.dir !== undefined ? item.dir : resolveTurn(item.key, agent, grid, rng), turnKey: item.key };
@@ -1359,6 +1428,36 @@ export class Simulation {
     ctx.pending.lengthDelta = 0;
     ctx.pending.setLength = null;
     return { desired, delta };
+  }
+
+  /**
+   * 结算「进入新格 / 移动后 / 定时」规则阶段写入的长度变化。
+   *
+   * 移动阶段结束时 planLength 会清空 ctx.pending，因此这些阶段里
+   * changeLength / setLength 产生的长度增减若不在这里补结算，
+   * 就会只有日志、没有效果（「吃到标记物必定增长」正是这种情况）。
+   */
+  settlePostRuleLength(ctx) {
+    const p = ctx.pending;
+    const agent = ctx.agent;
+    if (p.lengthDelta === 0 && p.setLength === null) return;
+    const lp = ctx.config.body.lengthPolicy;
+    const delta = p.setLength === null ? p.lengthDelta : p.setLength - (agent ? agent.length : 0);
+    p.lengthDelta = 0;
+    p.setLength = null;
+    // 「固定长度」策略下身体长度由策略锁定，规则里的长度增减一律不生效（与 planLength 口径一致）
+    if (!agent || lp.mode === 'fixed' || delta === 0) return;
+    const maxLen = lp.growth.enabled ? lp.growth.maxLength : 100000;
+    const minLen = lp.shrink.enabled ? lp.shrink.minLength : 1;
+    const desired = Math.max(Math.min(agent.length + delta, maxLen), Math.max(1, minLen));
+    if (desired > agent.segments.length) {
+      while (agent.segments.length < desired) {
+        const tail = agent.segments[agent.segments.length - 1];
+        agent.segments.push({ ...tail });
+      }
+    } else {
+      while (agent.segments.length > Math.max(1, desired)) agent.segments.pop();
+    }
   }
 
   /** 头撞身体/其他移动体检测 */
@@ -1610,13 +1709,17 @@ export class Simulation {
       allAgentsGone: () => ctx.agents.filter((a) => a.alive).length === 0 && (stats.agentDeaths || 0) > 0,
       noMove: () => {
         if (!agent || !agent.segments.length) return false;
+        // 障碍物策略为「可穿行 / 可撞毁」时，被阻塞格并不构成「无路可走」：
+        // 实体确实能走进该格（穿行）或把障碍物清掉（撞毁），
+        // 此时若仍按阻塞判定，会在障碍物密集的场景（森林火灾 / 交通流）里误判为收尾。
+        const obstacleBlocks = cfg.collision.obstacle !== 'pass' && cfg.collision.obstacle !== 'destroy';
         // 必须兼容边界穿越：越界邻居在 wrap 下应环绕回网格另一侧再判定，
         // 否则蛇头位于画布四角时所有方向都被跳过，会误判「无路可走」。
         for (let d = 0; d < grid.dirCount; d++) {
           const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
           if (!c.ok) continue;
           const t = c.coord;
-          if (this.isBlocked(ctx, t)) continue;
+          if (obstacleBlocks && this.isBlocked(ctx, t)) continue;
           if (this.detectCollision(ctx, agent, t, false)) continue;
           return false;
         }

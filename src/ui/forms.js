@@ -254,7 +254,8 @@ export function selBind(obj, key, onChange, options) {
 }
 
 export function chkBind(obj, key, onChange, label) {
-  return checkbox(obj[key], (v) => { obj[key] = v; onChange(); }, label);
+  // 回调把新值一并传出：需要联动其它字段（如「避开全部」总开关）的处理函数依赖该值
+  return checkbox(obj[key], (v) => { obj[key] = v; onChange(v); }, label);
 }
 
 export function textBind(obj, key, onChange, opts) {

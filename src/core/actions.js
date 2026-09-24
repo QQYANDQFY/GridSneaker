@@ -153,6 +153,7 @@ export function applyAction(action, subject, ctx) {
         const pos = resolvePosition(action.position, subject, ctx, placed);
         if (!pos) break;
         if (world.set(pos, stateName)) {
+          ctx.cellsDirty = true;
           placed.push(pos);
           events.push({ type: 'cell', coord: pos, state: stateName, highlight: true });
         }
@@ -165,6 +166,7 @@ export function applyAction(action, subject, ctx) {
       const stateName = action.type === 'removeObstacle' ? 'obstacle' : 'marker';
       const pos = resolvePosition(action.position, subject, ctx);
       if (pos && world.get(pos) === stateName && world.set(pos, 'empty')) {
+        ctx.cellsDirty = true;
         events.push({ type: 'cell', coord: pos, state: 'empty', highlight: true });
         texts.push(`移除${positionLabel(action.position)}的${stateName === 'obstacle' ? '障碍物' : '标记物'}`);
       } else {
@@ -175,6 +177,7 @@ export function applyAction(action, subject, ctx) {
     case 'setCellState': {
       const pos = resolvePosition(action.position, subject, ctx);
       if (pos && world.set(pos, action.state)) {
+        ctx.cellsDirty = true;
         events.push({ type: 'cell', coord: pos, state: action.state, highlight: true });
         texts.push(`将${positionLabel(action.position)}设为 ${action.state}`);
       }
@@ -191,11 +194,13 @@ export function applyAction(action, subject, ctx) {
         }
       }
       texts.push(`清空全部 ${action.state}（${n} 格）`);
+      if (n) ctx.cellsDirty = true;
       break;
     }
     case 'paintTrail': {
       const pos = resolvePosition(action.position, subject, ctx);
       if (pos && world.set(pos, action.state)) {
+        ctx.cellsDirty = true;
         events.push({ type: 'cell', coord: pos, state: action.state, highlight: false });
         texts.push(`在${positionLabel(action.position)}绘制 ${action.state}`);
       }

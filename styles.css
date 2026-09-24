@@ -117,6 +117,15 @@ html, body {
   z-index: 9000;
 }
 .tooltip.show { display: block; }
+/* 术语说明浮层：说明文本比坐标提示长，放宽最大宽度；术语名高亮、说明接续换行 */
+.tooltip.term-tip { max-width: min(380px, 76vw); }
+.tooltip .tip-term {
+  display: block;
+  color: var(--accent);
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.tooltip .tip-desc { display: block; color: var(--text); }
 
 /* ---------------- 控件 ---------------- */
 
@@ -134,6 +143,17 @@ html, body {
   padding: 4px 0;
 }
 .controls-line + .controls-line { border-top: 1px dashed var(--line); }
+
+/* 长跑运行提示：与轨迹筛选的加载态同一套动效语言 */
+.run-loading {
+  color: #ffd166;
+  font-size: 11px;
+}
+.run-loading::before {
+  content: "◌ ";
+  animation: query-spin 1s linear infinite;
+  display: inline-block;
+}
 
 .btn {
   background: var(--panel-2);
@@ -538,51 +558,16 @@ details.group.target {
 }
 .cfg-tab-panel { padding-top: 2px; }
 
-/* ---------------- 主选项卡内的子选项卡（视觉显示 → 基础 / 特效 / 悬停 / 主题） ---------------- */
-.cfg-subtabs { margin-top: 2px; }
-.cfg-sub-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 3px 0 4px;
-  border-bottom: 1px dashed var(--line);
-  margin-bottom: 4px;
-}
-.cfg-sub-nav .btn.tab-btn {
-  flex: 1 1 auto;
-  padding: 4px 7px;
-  font-size: 11px;
-  white-space: nowrap;
-  background: var(--tab-off-bg);
-  color: var(--tab-off-text);
-  border-color: var(--tab-off-border);
-}
-.cfg-sub-nav .btn.tab-btn:hover {
-  color: var(--tab-on-text);
-  border-color: var(--tab-on-border);
-}
-.cfg-sub-nav .btn.tab-btn.on {
-  background: var(--tab-on-bg);
-  color: var(--tab-on-text);
-  border-color: var(--tab-on-border);
-  font-weight: 600;
-}
-/* 搜索时同时展开全部子面板，命中项不会藏在未选中的子选项卡里 */
-.cfg-tabs.searching .cfg-sub-nav { display: none; }
-.cfg-tabs.searching .cfg-sub-panel { display: block !important; }
-.cfg-tabs.searching .cfg-sub-panel + .cfg-sub-panel {
-  border-top: 1px dashed var(--line);
-  margin-top: 8px;
-  padding-top: 6px;
-}
-.cfg-tabs.searching .cfg-sub-panel::before {
-  content: attr(data-sub-tab-label);
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  margin: 2px 0 2px;
-}
+/*
+ * 选项卡面板内的分组层级。
+ * 四个主选项卡结构完全一致：面板 → 折叠分组 → 字段，
+ * 因此不再需要任何「面板内再嵌一层选项卡」的特殊样式。
+ * 分组自身的层级感来自 group() 写入的 --grp-h/s/l 深度配色与左侧色条；
+ * 这里再补一点嵌套内缩，让「分组里的子分组」在视觉上明确退后一级。
+ */
+.cfg-tab-panel > .group:first-child { margin-top: 2px; }
+.group .group-body > .group { margin-left: 5px; }
+.group .group-body > .group > summary { font-size: 12px; }
 
 /* 选项卡配色实时预览：与真实选项卡共用同一套 CSS 变量 */
 .tab-preview { display: flex; gap: 6px; margin: 6px 0 8px; }
@@ -619,6 +604,19 @@ details.group.target {
 .cfg-tab-nav .btn.tab-btn.no-hits { opacity: 0.42; }
 .cfg-tab-nav .btn.tab-btn.has-hits:not(.on) { color: #d7ecff; }
 .stat-label { display: block; color: var(--muted); font-size: 10.5px; }
+/*
+ * 术语说明的可发现性提示：带术语说明的统计格 / 统计项复选框，
+ * 标签文字下方有虚线下划线、光标变为帮助态，提示「可悬浮查看口径说明」。
+ * 下划线用低对比色，避免在统计面板里形成视觉噪声。
+ */
+.stat.has-term .stat-label,
+.check-wrap.has-term > span {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-decoration-color: rgba(150, 175, 200, 0.45);
+  text-underline-offset: 2px;
+}
+.stat.has-term:hover .stat-label { color: var(--text); }
 .stat-value { font-size: 13px; font-weight: 600; }
 /* 统计口径切换：数值在原节点上更新，只用一次淡入过渡提示「数据已重算」 */
 .stage-stats.stat-switch .stat-value { animation: stat-fade 0.24s ease; }

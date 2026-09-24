@@ -69,16 +69,18 @@ export const PRESETS = [
   {
     id: 'bounce',
     name: '撞墙反弹',
-    description: '边界反弹模式：撞到墙后掉头，永不越界；反弹时自动启用安全避撞，不会撞到自身身体。',
+    description: '边界反弹模式：撞到墙后掉头，永不越界。本模板显式关闭「边界规避」，让「撞墙 → 掉头」过程真实可见；同时保留「自身身体」规避，掉头时不会撞到自己的脖子。',
     build: () => base({
       meta: { name: '撞墙反弹', description: '边界行为 = 反弹' },
       grid: { type: 'square', width: 24, height: 18, boundary: 'bounce' },
       start: { col: 12, row: 9, direction: 'up' },
       body: { initialLength: 8 },
       moveRules: { left: 0.2, straight: 0.6, right: 0.2 },
-      // 反弹落点会自动避开自身身体，这里同步勾选「安全避撞 → 自身身体」，
-      // 使方向选择阶段也一并规避自撞
-      safety: { avoidBody: true },
+      // 反弹落点会自动避开自身身体（Simulation.bounceSafeOption）；这里同步勾选「安全避撞 → 自身身体」，
+      // 使方向选择阶段也一并规避自撞。
+      // 边界规避必须显式关闭：反弹模式的意义就是「撞墙 → 掉头」，
+      // 若沿用「不可穿越边界自动开启边界规避」的默认值，蛇会永远躲着墙走，看不到任何反弹。
+      safety: { avoidAll: false, avoidBody: true, avoidWall: false },
       endConditions: { maxSteps: 500, wall: false },
       style: { cellSize: 24 },
     }),
@@ -100,7 +102,7 @@ export const PRESETS = [
   {
     id: 'growing-snake',
     name: '增长型贪吃蛇',
-    description: '每步以 20% 概率增长，吃到标记物必定增长；标记物被吃掉后消失。',
+    description: '每步以 20% 概率增长，吃到标记物必定增长并消耗掉该标记物。默认开启安全避撞（自身身体 / 障碍物 / 边界），身体变长后会优先选择不会自撞的方向。',
     build: () => base({
       meta: { name: '增长型贪吃蛇', description: '可变长度 + 标记物进食' },
       grid: { type: 'square', width: 26, height: 20, boundary: 'stop' },
@@ -109,17 +111,26 @@ export const PRESETS = [
         initialLength: 3,
         lengthPolicy: {
           mode: 'variable',
-          growth: { enabled: true, trigger: 'step', amount: 1, probability: 0.2, interval: 1, maxLength: 60 },
+          // 「吃到标记物必定增长」交给内置的 eat 触发：踏入标记物格时自动消耗该格并增长，
+          // 步数增长则由下面的环境规则以 20% 概率给出
+          growth: { enabled: true, trigger: 'eat', amount: 1, probability: 1, interval: 1, maxLength: 60 },
           shrink: { enabled: false },
         },
       },
-      moveRules: { left: 0.5, straight: 0.34, right: 0.16 },
+      // 转向略高于直行：长身体时更容易绕开自己的尾巴，实测在多组随机种子下存活步数最稳
+      moveRules: { left: 0.34, straight: 0.32, right: 0.34 },
       environmentRules: [
-        rule('grow-eat', '吃到标记物', {
+        rule('grow-step', '每步增长', {
+          // 条件用 random 子句而不是规则级 probability：未命中时不产生日志，避免刷屏
+          clauses: [{ type: 'random', probability: 0.2 }],
           actions: [{ type: 'changeLength', amount: 1 }],
-          clauses: [defaultClause('cellState')],
         }),
       ],
+      /**
+       * 显式开启安全避撞：边界为「停止」，越界会被直接终止；地图上又散布着标记物，
+       * 因此自身身体、障碍物与边界三项都要规避，避免刚起步就一头撞死。
+       */
+      safety: { avoidBody: true, avoidObstacle: true, avoidWall: true },
       caMode: {
         enabled: true,
         states: ['empty', 'obstacle', 'marker'],
@@ -136,13 +147,16 @@ export const PRESETS = [
   {
     id: 'collision-lab',
     name: '碰撞停止实验',
-    description: '撞到自身立即停止，统计碰撞点与存活步数，适合策略对比实验。',
+    description: '撞到自身立即停止，统计碰撞点与存活步数，适合策略对比实验（本模板刻意关闭安全避撞，保证自撞一定会发生）。',
     build: () => base({
       meta: { name: '碰撞停止实验', description: '自撞即停' },
       grid: { type: 'square', width: 20, height: 20, boundary: 'wrap' },
       start: { col: 10, row: 10, direction: 'up' },
       body: { initialLength: 12 },
       moveRules: { left: 1, straight: 1, right: 1 },
+      // 本模板的目的就是观察「撞到自身立即停止」，因此必须显式关闭全部安全避撞，
+      // 否则默认开启的规避逻辑会让蛇一直绕开自己，实验永远等不到自撞。
+      safety: { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false },
       selfCollisionPolicy: { action: 'stop', n: 2, maxConsecutive: 5 },
       endConditions: { maxSteps: 2000, selfCollision: true, wall: false },
       style: { cellSize: 24 },
@@ -159,6 +173,12 @@ export const PRESETS = [
       body: { initialLength: 4 },
       moveRules: { left: 1, straight: 1.2, right: 1 },
       collision: { obstacle: 'stop' },
+      /**
+       * 障碍物策略为「撞到即停」：若不规避，蛇会在十几步内撞死在随机撒下的障碍物上，
+       * 「环境感知 → 条件 → 后果」的闭环根本来不及展开。这里开启障碍物与边界规避
+       * （边界为「停止」，越界会被终止），让生态能持续演化更久。
+       */
+      safety: { avoidObstacle: true, avoidWall: true },
       environmentRules: [
         rule('spawn-wall', '前方障碍则右转', {
           clauses: [{ type: 'direction', objects: ['obstacle'], rel: 'front', distance: 1 }],

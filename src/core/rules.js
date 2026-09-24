@@ -111,8 +111,14 @@ export class RuleEngine {
         subjects.push({ coord: grid.coord(i), agent: ctx.agent, kind: 'cell', segmentIndex: -1 });
       }
     }
-    for (const s of subjects) s.ruleId = rule.id;
-    return subjects;
+    /**
+     * 条件判定：逐个主体求值后过滤（主体为「环境单元」时即逐格判定）。
+     * 这一步缺失会让条件形同虚设——规则会在每个触发阶段无条件生效，
+     * 「前方有障碍则转向」之类的条件规则退化为「每步都转向」。
+     */
+    const matched = subjects.filter((s) => evaluateCondition(cond, s, this.makeEvalCtx(ctx)));
+    for (const s of matched) s.ruleId = rule.id;
+    return matched;
   }
 
   makeEvalCtx(ctx) {

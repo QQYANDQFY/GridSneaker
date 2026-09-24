@@ -219,13 +219,20 @@ export function defaultConfig() {
     },
     moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
     /**
-     * 安全避撞预设：在方向选择阶段先剔除会撞到自身身体（可选：障碍物 / 其它移动体）的候选方向，
+     * 安全避撞预设：在方向选择阶段先剔除会撞到自身身体 / 障碍物 / 其它移动体 / 边界的候选方向，
      * 仅当所有可行方向均被阻塞时才回落到原始权重，从而触发原本的碰撞逻辑。
+     *
+     * avoidAll 是「避开全部」总开关（默认开启）：勾选即一次性打开下面四项，
+     * 任一项被单独取消时它自动同步为关闭；用户可随时手动改回，不锁定任何选项。
+     * avoidWall 为「边界规避」：不可穿越的边界（停止 / 反弹 / 自定义）下自动开启，
+     * 让实体在方向选择阶段就避开会触碰边界的落点（穿越边界无需规避，越界即环绕）。
      */
     safety: {
-      avoidBody: false,
-      avoidObstacle: false,
+      avoidAll: true,
+      avoidBody: true,
+      avoidObstacle: true,
       avoidOtherAgents: true,
+      avoidWall: true,
       /** 碰撞预警提示：在画面上标出下一步会撞到自身身体的危险格（默认关闭） */
       warnSelfCollision: false,
     },
@@ -887,15 +894,36 @@ function normTabColors(raw) {
   return out;
 }
 
-/** 安全避撞预设 */
-function normSafety(raw = {}) {
+/**
+ * 安全避撞预设。
+ *
+ * 默认全部规避开启（「避开全部」）：
+ *  - raw 未给字段时按「避开全部」的默认值补齐（旧存档 / 旧模板因此也不会再一头撞死）；
+ *  - avoidWall 在**不可穿越的边界**（停止 / 反弹 / 自定义）下自动开启，避免实体触碰边界；
+ *    穿越边界（wrap）不需要边界规避（越界即环绕），缺省为关闭；
+ *  - 用户显式写入的取值一律尊重（可手动关闭任一项，包括自动开启的边界规避）。
+ *
+ * @param {object} raw 原始 safety 配置
+ * @param {string} boundary 规范化后的边界策略（grid.boundary）
+ */
+function normSafety(raw = {}, boundary = 'wrap') {
   const d = defaultConfig().safety;
+  const src = raw && typeof raw === 'object' ? raw : {};
+  // 「避开全部」总开关：缺省沿用默认（开启）
+  const avoidAll = bool(src.avoidAll, d.avoidAll);
+  const blockedBoundary = boundary !== 'wrap';
   return {
-    avoidBody: bool(raw.avoidBody, d.avoidBody),
-    avoidObstacle: bool(raw.avoidObstacle, d.avoidObstacle),
-    avoidOtherAgents: bool(raw.avoidOtherAgents, d.avoidOtherAgents),
+    avoidAll,
+    avoidBody: bool(src.avoidBody, d.avoidBody && avoidAll),
+    avoidObstacle: bool(src.avoidObstacle, d.avoidObstacle && avoidAll),
+    avoidOtherAgents: bool(src.avoidOtherAgents, d.avoidOtherAgents && avoidAll),
+    /**
+     * 边界规避：不可穿越边界下自动添加（缺省开启），穿越边界下缺省关闭；
+     * 显式取值（true / false）始终优先，保证用户的手动修改不会被覆盖。
+     */
+    avoidWall: bool(src.avoidWall, blockedBoundary && avoidAll),
     /** 碰撞预警提示：标出「下一步会撞到自身身体」的危险格（默认关闭，避免长蛇额外开销） */
-    warnSelfCollision: bool(raw.warnSelfCollision, d.warnSelfCollision),
+    warnSelfCollision: bool(src.warnSelfCollision, d.warnSelfCollision),
   };
 }
 
@@ -1140,7 +1168,7 @@ export function normalizeConfig(rawInput = {}) {
     start,
     body,
     moveRules,
-    safety: normSafety(raw.safety),
+    safety: normSafety(raw.safety, grid.boundary),
     multiSnake: normMultiSnake(raw.multiSnake),
     ruleExecution: raw.ruleExecution === 'sync' ? 'sync' : 'async',
     advancedRules: normAdvancedRules(raw.advancedRules),

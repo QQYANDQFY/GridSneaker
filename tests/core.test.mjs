@@ -3452,23 +3452,27 @@ section('视觉子选项卡 / 统计项显示配置 / 开关行排版 / 选项�
     '面板上给出「当前显示 / 总数」计数提示');
   ok(/state\.cfg\.style\.statFlash/.test(app), '统计口径切换的淡入动画受开关控制');
 
-  /* 2) 视觉显示模块重构为子选项卡 */
-  ok(/const VISUAL_SUBTABS = \[/.test(app), '视觉显示主类别下建立子选项卡表');
+  /* 2) 视觉显示模块：层级收敛为「主选项卡 → 折叠分组 → 字段」 */
+  ok(!/VISUAL_SUBTABS|cfgSubTab|cfg-subtabs|cfg-sub-panel|function styleGroup\(/.test(app),
+    '二级选项卡及其容器、装配函数已全部移除（去掉多余的一层嵌套）');
+  ok(!/cfg-subtabs|cfg-sub-nav|cfg-sub-panel|data-sub-tab-label/.test(css),
+    '样式表中同步移除子选项卡相关规则（不残留死样式）');
+  ok(/panels\.get\('visual'\)\.append\(\s*\n\s*visualBasicGroup\(cfg\),[\s\S]*?visualThemeGroup\(cfg\),[\s\S]*?\n\s*\);/.test(app),
+    '四类视觉设置直接作为「视觉显示」主选项卡下的折叠分组');
   for (const label of ['基础视觉设置', '高级视觉特效', '悬停与提示', '色彩主题配置']) {
-    ok(new RegExp(`label: '${label}'`).test(app), `子选项卡「${label}」存在`);
+    ok(new RegExp(`return group\\('${label}'`).test(app), `折叠分组「${label}」存在`);
   }
-  ok(/class: 'cfg-subtabs'/.test(app) && /class: 'cfg-sub-nav'/.test(app) && /class: 'cfg-sub-panel'/.test(app),
-    '子选项卡由「导航 + 子面板」结构承载');
-  ok(/panels\.get\('basic'\)\.append\(visualBasicGroup\(cfg\)\)/.test(app)
-    && /panels\.get\('effects'\)\.append\(visualEffectsGroup\(cfg\)\)/.test(app)
-    && /panels\.get\('overlay'\)\.append\(visualOverlayGroup\(cfg\)\)/.test(app)
-    && /panels\.get\('theme'\)\.append\(visualThemeGroup\(cfg\)\)/.test(app),
-    '四类视觉配置项分别归入对应子选项卡');
-  ok(/state\.cfgSubTab\[VISUAL_SUBTAB_HOST\]/.test(app), '子选项卡选择被记忆（面板重建后保持用户所选）');
-  ok(/\.cfg-tabs\.searching \.cfg-sub-panel \{ display: block !important; \}/.test(css),
-    '搜索设置项时展开全部子面板（命中项不会藏在未选中的子选项卡里）');
-  ok(/\.cfg-subtabs/.test(css) && /\.cfg-sub-nav/.test(css) && /attr\(data-sub-tab-label\)/.test(css),
-    '子选项卡样式与搜索态标题接入样式表');
+  ok(['基础视觉设置', '高级视觉特效', '悬停与提示', '色彩主题配置'].every((label) =>
+    (app.match(new RegExp(`'${label}'`, 'g')) || []).length === 1),
+    '每个分类标题只出现一次（不再出现「同名子选项卡 + 同名折叠分组」的重复层级）');
+  ok(/'基础视觉设置'/.test(app) && /key: 'visual-basic'/.test(app)
+    && /key: 'visual-effects'/.test(app) && /key: 'visual-overlay'/.test(app) && /key: 'visual-theme'/.test(app),
+    '四个视觉分组各有稳定分组键（折叠状态在面板重建后保持）');
+  ok(/\{ key: 'visual', label: '视觉显示', hint: '基础视觉设置、高级视觉特效、悬停与提示、色彩主题配置' \}/.test(app),
+    '主选项卡提示语与四个分组一一对应（进入分类即知有哪些设置）');
+  ok(/\.cfg-tab-panel > \.group:first-child \{ margin-top: 2px; \}/.test(css)
+    && /\.group \.group-body > \.group \{ margin-left: 5px; \}/.test(css),
+    '嵌套分组按层级内缩，从属关系在样式上可辨');
 
   /* 3) 核心规则排版统一（开关行） */
   ok(/export function switchField\(label, control, hint\)/.test(formsSrc), '新增统一的开关行组件 switchField');
@@ -3500,8 +3504,8 @@ section('视觉子选项卡 / 统计项显示配置 / 开关行排版 / 选项�
     '自定义配色运行时写入根元素变量');
   ok(/\.cfg-tab-nav \.btn\.tab-btn\.on/.test(css) && /background: var\(--tab-on-bg\)/.test(css),
     '主选项卡激活态使用可配置变量（两态色差更明显）');
-  ok(/\.cfg-sub-nav \.btn\.tab-btn\.on/.test(css) && /\.mode-switch \.btn\.mode-btn\.on/.test(css),
-    '子选项卡与统计口径切换共用同一套配色变量');
+  ok(/\.cfg-tab-nav \.btn\.tab-btn\.on/.test(css) && /\.mode-switch \.btn\.mode-btn\.on/.test(css),
+    '统计口径切换与主选项卡共用同一套配色变量');
   ok(/function applyTabTheme\(\)/.test(app), '存在统一的配色应用函数 applyTabTheme');
   ok(/syncControlBar\(\);[^\n]*\n\s*applyTabTheme\(\);/.test(app),
     '重建面板时（载入模板 / 导入配置）刷新配色与紧凑排版');
@@ -3536,6 +3540,488 @@ section('视觉子选项卡 / 统计项显示配置 / 开关行排版 / 选项�
     '选项卡配色色槽也有中文标签（载入模板前的改动提示可读）');
   ok(/DEFAULT_HIDDEN_STATS/.test(cfgSrc) && /TAB_COLORS_DEFAULT/.test(cfgSrc),
     '新增常量集中在 config.js 导出（供界面与差异比对共用）');
+}
+
+/* ---------- 本轮：规则条件求值 / 规则阶段长度结算 / 预设模板与避撞算法（回归） ---------- */
+
+section('规则引擎：条件求值（条件为假必须不触发）');
+{
+  /**
+   * 历史缺陷：主体收集阶段从不求值条件，导致带条件的规则在每个触发阶段无条件生效
+   * （「前方有障碍则转向」退化成「每步都转向」）。这里用同一套配置、只改条件真假做 A/B 对照。
+   */
+  const mk = (clause) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 12, height: 10, boundary: 'wrap' };
+    cfg.start = { col: 6, row: 5, direction: 'up' };
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.seed = 7;
+    cfg.endConditions = { ...cfg.endConditions, maxSteps: 12, noMove: false };
+    cfg.environmentRules = [defaultRule({
+      id: 'cond-probe',
+      name: '条件探针',
+      subject: 'head',
+      trigger: 'afterStep',
+      condition: { logic: 'and', clauses: [clause] },
+      actions: [{ type: 'createMarker', position: 'randomEmpty' }],
+    })];
+    return cfg;
+  };
+
+  // 地图上没有任何障碍物：「前方是障碍物」恒为假
+  const falsy = new Simulation(mk({ type: 'cellState', position: 'front', state: 'obstacle' })).run();
+  eq(falsy.stats.ruleTriggers, 0, '条件恒为假时规则一次都不触发');
+  eq(falsy.logs.filter((l) => l.ruleId === 'cond-probe').length, 0, '条件恒为假时不产生任何该规则的日志');
+  eq(falsy.stats.markerCount, 0, '条件恒为假时不会产生任何标记物');
+
+  // 同一套配置下「前方是空格」恒为真，用作正向对照
+  const truthy = new Simulation(mk({ type: 'cellState', position: 'front', state: 'empty' })).run();
+  ok(truthy.stats.ruleTriggers > 0, '条件恒为真时规则正常触发（对照）', `实际 ${truthy.stats.ruleTriggers}`);
+  eq(truthy.logs.filter((l) => l.ruleId === 'cond-probe').length, truthy.stats.ruleTriggers, '每次触发都留有该规则的日志');
+}
+
+section('规则引擎：移动后规则的长度增减必须真实结算');
+{
+  /**
+   * 历史缺陷：移动阶段的 planLength 会把 ctx.pending 归零，之后 afterStep / onEnter / timer
+   * 规则写入的 changeLength / setLength 没有结算点，表现为「只有日志、没有效果」。
+   */
+  const cfg = defaultConfig();
+  cfg.grid = { type: 'square', width: 40, height: 30, boundary: 'wrap' };
+  cfg.start = { col: 20, row: 25, direction: 'up' };
+  cfg.body.initialLength = 3;
+  cfg.body.lengthPolicy = {
+    ...cfg.body.lengthPolicy,
+    mode: 'variable',
+    growth: { ...cfg.body.lengthPolicy.growth, enabled: false },
+    shrink: { ...cfg.body.lengthPolicy.shrink, enabled: false },
+  };
+  cfg.moveRules = { left: 0, straight: 1, right: 0 };
+  cfg.seed = 7;
+  cfg.endConditions = { ...cfg.endConditions, maxSteps: 10, noMove: false };
+  cfg.environmentRules = [defaultRule({
+    id: 'grow-after',
+    name: '移动后增长',
+    subject: 'head',
+    trigger: 'afterStep',
+    condition: { logic: 'and', clauses: [{ type: 'random', probability: 1 }] },
+    actions: [{ type: 'changeLength', amount: 1 }],
+  })];
+  const r = new Simulation(cfg).run();
+  eq(r.stats.ruleTriggers, 10, '「每步移动后」规则在 10 步内触发 10 次');
+  eq(r.frames[r.frames.length - 1].agents[0].length, 13, '移动后规则写入的 +1 长度被真实结算（身长随步数增长）');
+
+  // 对照：长度策略为「固定长度」时规则里的长度增减不生效
+  const fixed = JSON.parse(JSON.stringify(cfg));
+  fixed.body.lengthPolicy.mode = 'fixed';
+  const r2 = new Simulation(fixed).run();
+  eq(r2.frames[r2.frames.length - 1].agents[0].length, 3, '固定长度策略下规则的长度增减不生效');
+  ok(r2.stats.ruleTriggers > 0, '固定长度策略不影响规则触发本身');
+}
+
+section('安全避撞默认值：总开关与「不可穿越边界」自动规避');
+{
+  const d = defaultConfig();
+  eq(d.safety.avoidAll, true, '「避开全部」默认开启');
+  eq(d.safety.avoidBody, true, '自重避让默认开启');
+  eq(d.safety.avoidObstacle, true, '障碍物规避默认开启');
+
+  const norm = (patch) => normalizeConfig({ ...d, grid: { ...d.grid, ...(patch.grid || {}) }, safety: patch.safety }).safety;
+  eq(norm({ grid: { boundary: 'stop' }, safety: {} }).avoidWall, true,
+    '边界为「停止」（不可穿越）时自动带上边界规避');
+  eq(norm({ grid: { boundary: 'bounce' }, safety: {} }).avoidWall, true,
+    '边界为「反弹」时同样自动带上边界规避');
+  eq(norm({ grid: { boundary: 'wrap' }, safety: {} }).avoidWall, false,
+    '边界为「穿越」时越界会被环绕回网格内，不需要边界规避');
+  eq(norm({ grid: { boundary: 'stop' }, safety: { avoidAll: false } }).avoidWall, false,
+    '用户手动关闭「避开全部」后边界规避随之关闭（不锁定用户选择）');
+  eq(norm({ grid: { boundary: 'stop' }, safety: { avoidWall: false, avoidAll: true } }).avoidWall, false,
+    '用户单独关闭边界规避时保留该选择');
+  eq(norm({ grid: { boundary: 'stop' }, safety: { avoidWall: true, avoidAll: false } }).avoidWall, true,
+    '用户单独开启边界规避时保留该选择');
+}
+
+section('避撞算法：尾部让位兜底与死胡同前瞻');
+{
+  const cfg = defaultConfig();
+  cfg.grid = { type: 'square', width: 6, height: 6, boundary: 'wrap' };
+  cfg.safety = { avoidBody: true, avoidObstacle: false, avoidOtherAgents: false };
+  const sim = new Simulation(cfg);
+  const grid = sim.grid;
+  const agent = new Agent('main', [{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 3, row: 3 }], 1, { isMain: true });
+  const ctx = { grid, world: new World(grid, sim.states), agents: [agent], config: sim.config, rng: new RNG(11), tick: 1 };
+
+  const tail = { col: 3, row: 3 };
+  eq(sim.selfBlocks(ctx, agent, tail), true, '常规判定下尾部体节视为自身身体');
+  eq(sim.selfBlocks(ctx, agent, tail, true), false, '兜底判定下尾部体节会让位（与「撞尾不算碰撞」口径一致）');
+  eq(sim.selfBlocks(ctx, agent, { col: 3, row: 2 }, true), true, '兜底判定不会放过除尾部以外的体节');
+
+  // 头撞尾算碰撞时，兜底也要一并关闭，避免把「必死」当「可行」
+  const opts = [{ key: 'left', weight: 1 }, { key: 'straight', weight: 1 }, { key: 'right', weight: 1 }];
+  const boxed = new Agent('m2', [
+    { col: 2, row: 2 }, { col: 1, row: 2 }, { col: 3, row: 2 }, { col: 2, row: 1 }, { col: 2, row: 3 },
+  ], 1, { isMain: true });
+  const ctxBoxed = {
+    ...ctx,
+    agents: [boxed],
+    config: { ...sim.config, collision: { ...sim.config.collision, headIntoTail: true } },
+  };
+  eq(sim.filterSafeOptions(ctxBoxed, boxed, opts, { allowTail: true }).length, 0,
+    '「撞尾算碰撞」时兜底不生效，仍返回空数组');
+
+  // 同一局面、撞尾不算碰撞时，兜底恰好放出「尾部那一格」
+  const softCtx = { ...ctx, agents: [boxed] };
+  eq(sim.filterSafeOptions(softCtx, boxed, opts).length, 0, '常规判定下四个方向全被身体挡住');
+  eq(sim.filterSafeOptions(softCtx, boxed, opts, { allowTail: true }).length, 1,
+    '兜底判定恰好放出尾部所在的那一个方向');
+
+  // 死胡同：目标格 (4,2) 的四个相邻格全部被身体占据
+  const coil = new Agent('coil', [
+    { col: 3, row: 3 }, { col: 3, row: 2 }, { col: 4, row: 1 }, { col: 4, row: 3 }, { col: 5, row: 2 }, { col: 4, row: 4 },
+  ], 1, { isMain: true });
+  const ctxCoil = { ...ctx, agents: [coil] };
+  ok(sim.isDeadEnd(ctxCoil, coil, { col: 4, row: 2 }), '相邻方向全被身体封死的落点被判为死胡同');
+  ok(!sim.isDeadEnd(ctxCoil, coil, { col: 2, row: 2 }), '仍有出口的落点不判为死胡同');
+}
+
+section('预设模板：增长型贪吃蛇与整体运行回归');
+{
+  const cfg = buildPresetConfig('growing-snake');
+  eq(cfg.body.lengthPolicy.growth.trigger, 'eat', '「吃到标记物必定增长」由内置 eat 触发承担');
+  eq(cfg.body.lengthPolicy.growth.probability, 1, '吃到标记物时必定增长（概率 1）');
+  eq(cfg.safety.avoidBody, true, '默认规避自身身体');
+  eq(cfg.safety.avoidObstacle, true, '默认规避障碍物');
+  eq(cfg.safety.avoidWall, true, '默认规避不可穿越的边界');
+
+  const run = new Simulation(cfg).run();
+  const last = run.frames[run.frames.length - 1];
+  const len = last.agents[0] ? last.agents[0].length : 0;
+  ok(run.stats.steps > 20, '不再「数步即停」：存活步数显著提升', `实际 ${run.stats.steps}`);
+  eq(run.stats.selfCollisions, 0, '默认具备规避自身身体的能力（全程零自撞）');
+  ok(run.endReason.code !== 'selfCollision', '不会以自撞收尾');
+  ok(len > cfg.body.initialLength, '身体随运行持续变长（增长真实生效）', `初始 ${cfg.body.initialLength} → ${len}`);
+  const markerCount = last.cells.reduce((n, v) => n + (v === 2 ? 1 : 0), 0);
+  const initMarkerCount = run.frames[0].cells.reduce((n, v) => n + (v === 2 ? 1 : 0), 0);
+  ok(markerCount < initMarkerCount, '踩到的标记物被真正消耗掉', `初始 ${initMarkerCount} → ${markerCount}`);
+
+  /** 逐个体检：所有预设都必须能跑完并给出结束原因 */
+  for (const p of PRESETS) {
+    const r = new Simulation(buildPresetConfig(p.id)).run();
+    ok(r.stats.steps >= 1 && !!r.endReason && !!r.endReason.code, `预设「${p.name}」可正常跑完并给出结束原因`);
+  }
+  const bounce = new Simulation(buildPresetConfig('bounce')).run();
+  eq(bounce.endReason.code, 'maxSteps', '「撞墙反弹」不再因自撞提前收尾');
+  eq(bounce.stats.selfCollisions, 0, '「撞墙反弹」全程无自撞');
+  const ecology = new Simulation(buildPresetConfig('obstacle-ecology')).run();
+  ok(ecology.stats.steps >= 100, '「障碍物生态」在条件规则修正后能持续演化', `实际 ${ecology.stats.steps}`);
+  const hybrid = new Simulation(buildPresetConfig('hybrid-life')).run();
+  eq(hybrid.stats.selfCollisions, 0, '「混合生命」默认避撞下无自撞');
+  const collLab = new Simulation(buildPresetConfig('collision-lab')).run();
+  eq(collLab.endReason.code, 'selfCollision', '「碰撞停止实验」刻意关闭避撞，仍按自撞收尾（实验语义不变）');
+}
+
+/* ---------- 安全避撞 UI：避开全部总开关与边界自动规避（源码级回归） ---------- */
+
+section('安全避撞 UI：避开全部总开关与边界自动规避（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const diffSrc = readFileSync(new URL('../src/core/config-diff.js', import.meta.url), 'utf8');
+
+  ok(/function syncBoundaryAvoidance\(\)/.test(app), '提供「边界不可穿越时补开边界规避」的收敛函数');
+  ok(/if \(cfg\.grid\.boundary !== 'wrap'\) cfg\.safety\.avoidWall = true;/.test(app),
+    '边界为不可穿越（停止 / 反弹 / 随机转向 / 自定义）时自动开启边界规避');
+  ok(/field\('边界行为', selBind\(g, 'boundary', \(\) => \{\s*\n\s*\/\/[^\n]*\n\s*syncBoundaryAvoidance\(\);/.test(app),
+    '切换「边界行为」时立即执行自动规避（改配置即生效）');
+  ok(/function safetySection\(cfg\)/.test(app), '安全避撞面板由独立函数承载');
+  ok(/switchField\('避开全部'/.test(app), '面板提供「避开全部」总开关');
+  ok(/s\.avoidBody = v;\s*\n\s*s\.avoidObstacle = v;\s*\n\s*s\.avoidOtherAgents = v;\s*\n\s*s\.avoidWall = v;/.test(app),
+    '总开关一键同步四个子项（身体 / 障碍物 / 其它移动体 / 边界）');
+  ok(/if \(!v\) s\.avoidAll = false;/.test(app), '取消任一子项时同步关闭总开关（状态自洽）');
+  const formsSrc = readFileSync(new URL('../src/ui/forms.js', import.meta.url), 'utf8');
+  ok(/export function chkBind\(obj, key, onChange, label\) \{[\s\S]*?onChange\(v\);/.test(formsSrc),
+    'chkBind 必须把新值回传给回调：总开关的联动依赖该值，丢失时会把四项写成 undefined');
+  ok(/chkBind\(s, 'avoidAll', \(v\) => \{/.test(app) && /chkBind\(s, key, \(v\) => \{/.test(app),
+    '总开关与子项都按「带新值」的方式订阅变化');
+  const safetyFn = (() => {
+    const start = app.indexOf('function safetySection(');
+    return app.slice(start, app.indexOf('\n}\n', start));
+  })();
+  ok(safetyFn.length > 200 && !/disabled/.test(safetyFn),
+    '不锁定任何控件：用户随时可手动改回（保留手动修改权限）');
+  ok(/item\('avoidWall', '不可穿越的边界'\)/.test(app), '边界规避作为独立子项可单独调整');
+  ok(/const wallMatters = cfg\.grid\.boundary !== 'wrap';/.test(app), '面板按当前边界行为区分「边界规避」是否生效');
+  ok(/badge: count \? `已启用 \$\{count\} 项` : ''/.test(app), '分组徽标实时显示已启用的规避项数');
+  ok(/avoidAll: '避开全部（总开关）'/.test(diffSrc) && /avoidWall: '避让不可穿越边界'/.test(diffSrc)
+    && /warnSelfCollision: '自撞预警提示'/.test(diffSrc),
+    '安全避撞新增字段在配置差异比对中有中文标签');
+
+  /* 行为侧：默认值 / 规范化 / 自动规避的真实数值约束（与上面的源码断言互为印证） */
+  const d = defaultConfig();
+  eq(d.safety.avoidAll, true, '「避开全部」默认开启');
+  eq(d.safety.avoidBody, true, '默认规避自身身体');
+  eq(d.safety.avoidObstacle, true, '默认规避障碍物');
+  const norm = (boundary, safety = {}) => normalizeConfig({
+    ...d, grid: { ...d.grid, boundary }, safety,
+  }).safety;
+  eq(norm('stop', {}).avoidWall, true, '边界为「停止」时默认开启边界规避');
+  eq(norm('bounce', {}).avoidWall, true, '边界为「反弹」时默认开启边界规避');
+  eq(norm('wrap', {}).avoidWall, false, '边界为「穿越」时不开启边界规避（越界会环绕，规避无意义）');
+  eq(norm('stop', { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false }).avoidAll,
+    false, '用户显式关闭总开关的选择被保留');
+  const manual = norm('stop', { avoidAll: false, avoidWall: false });
+  eq(manual.avoidAll, false, '显式关闭时总开关不被自动改写');
+  eq(manual.avoidWall, false, '边界不可穿越但用户手动关闭「边界规避」时同样被尊重（保留手动修改权限）');
+}
+
+/* ---------- 统计术语说明：覆盖率 / CA 演进次数等概念提示（源码级回归） ---------- */
+
+section('统计术语说明：覆盖率 / CA 演进次数等概念提示（源码级回归）');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+  /* 1) 术语表覆盖全部统计项：新增指标若漏配说明，这里会直接失败 */
+  const keysStart = app.indexOf('const STAT_KEYS = [');
+  const keysSrc = app.slice(keysStart, app.indexOf('];', keysStart));
+  const statKeys = [...keysSrc.matchAll(/\['(\w+)', '[^']+'\]/g)].map((m) => m[1]);
+  ok(statKeys.length >= 35, '解析到全部统计项键', `实际 ${statKeys.length} 项`);
+  ok(statKeys.includes('coverage') && statKeys.includes('caSteps') && statKeys.includes('ruleTriggers'),
+    '覆盖率 / CA 演进次数 / 规则触发等专业指标均在统计项表中');
+
+  const termsStart = app.indexOf('const STAT_TERMS = {');
+  ok(termsStart > 0, '建立统计术语说明表 STAT_TERMS');
+  const termsSrc = app.slice(termsStart, app.indexOf('\n};', termsStart));
+  const entries = [...termsSrc.matchAll(/^\s{2}(\w+): \{ name: '([^']+)', desc: '([^']+)' \},/gm)];
+  const termKeys = entries.map((m) => m[1]);
+  const missing = statKeys.filter((k) => !termKeys.includes(k));
+  ok(missing.length === 0, '每个统计项都有对应术语说明（不遗漏）', `缺失：${missing.join(',') || '无'}`);
+  ok(termKeys.includes('lengthCurve') && termKeys.includes('turnBars'),
+    '「长度曲线」「转向分布」两个图表项也有说明');
+  eq(termKeys.length, new Set(termKeys).size, '术语表键无重复');
+  for (const [, , name, desc] of entries) {
+    ok(name.length > 0 && desc.length >= 15, `「${name}」有实质性的口径说明`, `说明长度 ${desc.length}`);
+  }
+  // 说明必须准确指向核心层的真实口径（抽查关键概念）
+  ok(/不重复格子数占网格总格数的百分比/.test(termsSrc), '覆盖率说明指出「去重格子数 / 网格总格数」');
+  ok(/元胞自动机执行的更新代数/.test(termsSrc), 'CA 演进次数说明指向元胞自动机的更新代数');
+  ok(/条件为假的规则不会计入/.test(termsSrc), '规则触发说明点明「条件为假不计入」的口径');
+
+  /* 2) 交互接线：统计格与统计项复选框悬浮即显示说明 */
+  ok(/function bindTermTip\(el, term\)/.test(app), '提供术语浮层绑定函数 bindTermTip');
+  ok(/els\.tooltip\.innerHTML = termTipHtml\(term\)/.test(app)
+    && /els\.tooltip\.classList\.add\('show', 'term-tip'\)/.test(app),
+    '术语浮层复用画布悬浮提示节点（定位 / 边界翻转逻辑共用，不新增浮层）');
+  ok(/el\.addEventListener\('mouseenter', show\)/.test(app) && /el\.addEventListener\('mousemove', show\)/.test(app)
+    && /el\.addEventListener\('mouseleave', hideTooltip\)/.test(app),
+    '悬浮进入 / 移动显示、移出隐藏');
+  ok(/bindTermTip\(cell, STAT_TERMS\[key\]\)/.test(app), '统计面板的每个统计格按指标绑定术语说明');
+  ok(/\.\.\.g\.keys\.map\(\(key\) => bindTermTip\(/.test(app),
+    '「统计项显示配置」中每个统计项复选框同样可悬浮查看说明');
+  ok(/STAT_TERMS\.lengthCurve/.test(app) && /STAT_TERMS\.turnBars/.test(app),
+    '长度曲线与转向分布两个图表项也绑定说明');
+  ok(/function termTipHtml\(term\)/.test(app) && /tip-term/.test(app) && /tip-desc/.test(app),
+    '浮层内容为「术语名 + 说明」两段结构');
+  ok(/classList\.remove\('show', 'term-tip'\)/.test(app),
+    '隐藏时清除加宽态，避免影响后续画布提示的宽度测量');
+  ok(/把鼠标停在任意统计项上，可查看该指标的口径说明/.test(app)
+    && /带虚线下划线的指标均有术语说明/.test(app),
+    '设置面板上给出「可悬浮查看说明」的引导文案');
+
+  /* 3) 样式：可发现性提示与浮层排版 */
+  ok(/\.tooltip\.term-tip \{/.test(css) && /\.tooltip \.tip-term \{/.test(css) && /\.tooltip \.tip-desc \{/.test(css),
+    '术语浮层样式接入样式表（术语名高亮 / 说明换行 / 加宽）');
+  ok(/\.stat\.has-term \.stat-label,/.test(css) && /\.check-wrap\.has-term > span \{/.test(css),
+    '带说明的统计格与统计项标签显示虚线下划线');
+  ok(/cursor: help;/.test(css) && /text-decoration: underline dotted;/.test(css),
+    '虚线下划线 + 帮助态光标作为「可悬浮」的视觉提示');
+  ok(/\.stat\.has-term:hover \.stat-label \{ color: var\(--text\); \}/.test(css),
+    '悬浮时标签提亮（与静态态区分）');
+}
+
+/* ---------- 规则动作改写环境：回放快照必须同步刷新 ---------- */
+
+section('规则动作改写环境后：回放帧快照必须同步刷新（cellsDirty）');
+{
+  /**
+   * 历史缺陷：世界状态被改写的「脏标记」只在模拟核心内部设置，
+   * 环境规则的动作（产生 / 移除障碍物与标记物、直接设状态、清空状态、绘制轨迹）
+   * 调用 World.set 后从不置脏，于是帧快照 storedCells 一直停留在旧内容：
+   * 规则产生的障碍物在回放画面与导出数据里看不见（只有短暂的波纹高亮提示）。
+   */
+  const mk = (action, steps = 6) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 20, height: 14, boundary: 'wrap' };
+    cfg.start = { col: 10, row: 7, direction: 'up' };
+    cfg.moveRules = { left: 0.3, straight: 0.4, right: 0.3 };
+    cfg.seed = 5;
+    cfg.endConditions = {
+      ...cfg.endConditions, maxSteps: steps, noMove: false,
+      selfCollision: false, wall: false, outOfBounds: false, obstacle: false,
+    };
+    cfg.safety = { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false, warnSelfCollision: false };
+    cfg.environmentRules = [defaultRule({
+      id: 'env-writer',
+      name: '环境写入者',
+      subject: 'head',
+      trigger: 'afterStep',
+      condition: { logic: 'and', clauses: [] },
+      actions: [action],
+    })];
+    return cfg;
+  };
+  const countState = (run, name) => {
+    const si = run.states.findIndex((s) => s.name === name);
+    if (si < 0) throw new Error(`未登记状态：${name}`);
+    return run.frames.map((f) => [...f.cells].filter((v) => v === si).length);
+  };
+
+  const created = new Simulation(mk({ type: 'createObstacle', position: 'randomEmpty' })).run();
+  const obstacleCounts = countState(created, 'obstacle');
+  ok(created.stats.ruleTriggers > 0, '环境写入规则确实触发了', `触发 ${created.stats.ruleTriggers} 次`);
+  ok(obstacleCounts[0] === 0, '首帧还没有障碍物', `实际 ${obstacleCounts[0]}`);
+  ok(obstacleCounts.at(-1) > 0,
+    '规则产生的障碍物必须出现在回放帧快照中（画面上能看见）', `末帧障碍物 ${obstacleCounts.at(-1)}`);
+  ok(obstacleCounts.every((n, i) => i === 0 || n >= obstacleCounts[i - 1]),
+    '帧快照中的障碍物数量单调不减（每步写入都被同步缓存）', obstacleCounts.join('→'));
+
+  const marked = new Simulation(mk({ type: 'createMarker', position: 'randomEmpty' }, 4)).run();
+  ok(countState(marked, 'marker').at(-1) > 0, '规则产生的标记物同样出现在帧快照中',
+    countState(marked, 'marker').join('→'));
+
+  const painted = new Simulation(mk({ type: 'setCellState', position: 'front', state: 'obstacle' }, 4)).run();
+  ok(countState(painted, 'obstacle').at(-1) > 0, '「直接设置格状态」也刷新帧快照',
+    countState(painted, 'obstacle').join('→'));
+
+  // 「清空状态」走的是直接改写 cells 数组的路径（不经过 World.set），需要单独验证：
+  // 先让障碍物逐帧累积，再在中途整体清空，两个方向的写入都必须落到帧快照里。
+  const wipeCfg = mk({ type: 'createObstacle', position: 'randomEmpty' }, 6);
+  wipeCfg.environmentRules[0].priority = 2; // 先产生
+  wipeCfg.environmentRules.push(defaultRule({
+    id: 'env-wiper',
+    name: '环境清空者',
+    subject: 'head',
+    trigger: 'afterStep',
+    condition: { logic: 'and', clauses: [{ type: 'stat', key: 'steps', comparator: '>=', value: 2 }] },
+    actions: [{ type: 'clearState', state: 'obstacle' }],
+    priority: 1, // 后清空
+  }));
+  const wiped = new Simulation(wipeCfg).run();
+  const wipeSeq = countState(wiped, 'obstacle');
+  ok(wipeSeq.some((n) => n > 0), '清空前帧快照里能看见累积的障碍物', wipeSeq.join('→'));
+  eq(wipeSeq.at(-1), 0, '「清空状态」在帧快照中生效（不残留旧快照的障碍物）');
+}
+
+section('任务5 优化：环境计数增量 / 帧快照脏标记 / 播放合并重绘 / 搜索防抖 / 长跑提示');
+{
+  const sim = readFileSync(new URL('../src/core/simulation.js', import.meta.url), 'utf8');
+  const act = readFileSync(new URL('../src/core/actions.js', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+  /* 1) 环境计数：只在格子真被改写时全表重算，别每步扫一遍整张网格 */
+  ok(/if \(ctx\.cellsDirty\) \{\s*\n\s*stats\.obstacleCount = world\.countState\('obstacle'\);\s*\n\s*stats\.markerCount = world\.countState\('marker'\);\s*\n\s*storedCells = world\.cells\.slice\(\);\s*\n\s*\}/.test(sim),
+    '环境计数与帧快照共用同一个「脏」判定');
+  ok(/stats\.obstacleCount = world\.countState\('obstacle'\);\s*\n\s*stats\.markerCount = world\.countState\('marker'\);\s*\n\s*frames\.push\(this\.captureFrame\(0/.test(sim),
+    '进入主循环前先算好首帧的环境计数');
+  eq((sim.match(/world\.countState\('/g) || []).length, 4,
+    '环境计数的全表扫描只剩「初始化」与「脏刷新」两处（各 2 项）');
+
+  /* 2) 帧快照脏标记：规则动作写环境后必须置脏 */
+  eq((act.match(/ctx\.cellsDirty = true;/g) || []).length, 5,
+    '规则动作的 5 处环境写入（产生 / 移除 / 改状态 / 清空 / 绘制轨迹）都会置脏');
+  ok(/texts\.push\(`清空全部 \$\{action\.state\}（\$\{n\} 格）`\);\s*\n\s*if \(n\) ctx\.cellsDirty = true;/.test(act),
+    '「清空状态」只在真的清掉格子时置脏（空操作不产生无谓刷新）');
+
+  /* 3) 移动前状态：仅排斥交互需要，其余模式不做每步深拷贝 */
+  ok(/const needPrevState = !!ms\.enabled && ms\.interaction\.mode === 'repel';/.test(sim)
+    && /if \(needPrevState\) \{\s*\n\s*agent\.prevState = \{/.test(sim),
+    '只在「排斥」交互下才备份整条蛇身（按需拷贝）');
+  ok(/mode === 'repel'[\s\S]{0,700}?a\.prevState\.segments/.test(sim),
+    '排斥回退处仍读取备份的移动前状态');
+
+  /* 4) 播放：一帧内推进多步时只刷新一次 DOM */
+  const loopBody = app.slice(app.indexOf('function loopTick('), app.indexOf('function frameChanged('));
+  ok(/if \(advanced\) frameChanged\(\);/.test(loopBody), '高倍速下一帧推进多步时合并为一次 DOM 刷新');
+  eq((loopBody.match(/frameChanged\(\)/g) || []).length, 1, '播放循环里每帧最多刷新一次 DOM');
+
+  /* 5) 配置搜索：按输入停顿防抖，避免逐键重排整块面板 */
+  ok(/let cfgSearchTimer = null;/.test(app), '建立搜索防抖定时器');
+  ok(/clearTimeout\(cfgSearchTimer\);\s*\n\s*cfgSearchTimer = setTimeout\(\(\) => \{\s*\n\s*cfgSearchTimer = null;\s*\n\s*applyConfigSearch\(state\.cfgSearch\);/.test(app),
+    '连续输入时只保留最后一次过滤');
+  ok(/\}, 120\);\s*\n\s*\}\);/.test(app), '防抖延迟为 120ms');
+  ok(!/input\.addEventListener\('input', \(\) => \{\s*\n\s*state\.cfgSearch = input\.value;\s*\n\s*applyConfigSearch\(/.test(app),
+    '输入事件里不再同步触发全量过滤');
+  ok(/button\('清除', \(\) => \{\s*\n\s*if \(cfgSearchTimer\) \{ clearTimeout\(cfgSearchTimer\); cfgSearchTimer = null; \}\s*\n\s*state\.cfgSearch = '';\s*\n\s*input\.value = '';\s*\n\s*applyConfigSearch\(''\);/.test(app),
+    '「清除」取消待执行的防抖并立即还原');
+
+  /* 6) 长跑：先给出「正在运行」反馈，再占用主线程 */
+  ok(/function setRunBusy\(busy, text\)/.test(app), '提供运行态提示开关');
+  ok(/const caCells = cfg\.caMode\.enabled \? cfg\.grid\.width \* cfg\.grid\.height : 0;/.test(app)
+    && /const heavy = effCap \* \(8 \+ caCells\) > 2e7;/.test(app),
+    '按步数与（开启 CA 时的）网格规模预估计算量');
+  ok(/const seq = \+\+runSeq;/.test(app) && /if \(seq !== runSeq\) return;/.test(app),
+    '长跑异步启动后若又发起新计算则丢弃旧的一次');
+  ok(/recompute\(\{ \.\.\.opts, deferred: true \}\);/.test(app)
+    && /finally \{\s*\n\s*setRunBusy\(false\);/.test(app),
+    '计算结束后必定收起提示（异常也不残留）');
+  ok(/if \(!opts\.deferred\) setRunBusy\(false\);/.test(app), '同步路径兜底清除残留提示');
+  ok(/els\.runLoading = h\('span', \{ class: 'run-loading hidden' \}, ''\)/.test(app)
+    && /els\.runBtn, els\.runLoading\)\)/.test(app),
+    '运行提示挂在播放控制条上，默认隐藏');
+  ok(/\.run-loading \{/.test(css) && /\.run-loading::before \{/.test(css) && /animation: query-spin/.test(css),
+    '运行提示复用轨迹筛选的加载动效');
+}
+
+section('任务5 优化：回放帧的统计口径与画面快照逐帧自洽（行为级）');
+{
+  const mkOnce = (steps) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 20, height: 14, boundary: 'wrap' };
+    cfg.start = { col: 10, row: 7, direction: 'up' };
+    cfg.moveRules = { left: 0.3, straight: 0.4, right: 0.3 };
+    cfg.seed = 7;
+    cfg.endConditions = {
+      ...cfg.endConditions, maxSteps: steps, noMove: false,
+      selfCollision: false, wall: false, outOfBounds: false, obstacle: false,
+    };
+    cfg.safety = { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false, warnSelfCollision: false };
+    // 只在第 5 步写一次环境：其余步都是「未脏」状态，正好检验计数缓存不会失真
+    cfg.environmentRules = [defaultRule({
+      id: 'once', name: '一次性写入', subject: 'head', trigger: 'afterStep',
+      condition: { logic: 'and', clauses: [{ type: 'stat', key: 'steps', comparator: '==', value: 5 }] },
+      actions: [{ type: 'createObstacle', position: 'randomEmpty', count: 2 }],
+    })];
+    return cfg;
+  };
+  const run = new Simulation(mkOnce(10)).run();
+  const si = run.states.findIndex((s) => s.name === 'obstacle');
+  const actual = (f) => [...f.cells].filter((v) => v === si).length;
+  ok(run.frames.every((f) => f.stats.obstacleCount === actual(f)),
+    '每一帧的「障碍物数」统计与其画面快照严格一致',
+    run.frames.map((f) => `${f.tick}:${f.stats.obstacleCount}/${actual(f)}`).join(' '));
+  ok(run.frames.filter((f) => f.tick < 5).every((f) => f.stats.obstacleCount === 0),
+    '写入发生前的各帧障碍物数为 0');
+  ok(run.frames.at(-1).stats.obstacleCount === 2,
+    '写入发生后（未再次改写的）各帧沿用正确的计数', `末帧 ${run.frames.at(-1).stats.obstacleCount}`);
+
+  // 排斥交互仍然按备份状态回退：小网格塞满移动体，必然发生重叠回退。
+  // 若「按需拷贝」的条件写错（该备份时没备份），repels 会恒为 0。
+  const repel = defaultConfig();
+  repel.grid = { type: 'square', width: 3, height: 3, boundary: 'wrap' };
+  repel.start = { col: 1, row: 1, direction: 'up' };
+  repel.seed = 3;
+  repel.body = { ...repel.body, initialLength: 3 };
+  repel.multiSnake = {
+    ...repel.multiSnake,
+    enabled: true,
+    spawn: { ...repel.multiSnake.spawn, mode: 'initial', maxAgents: 4, length: 3 },
+    interaction: { ...repel.multiSnake.interaction, mode: 'repel' },
+  };
+  repel.endConditions = { ...repel.endConditions, maxSteps: 200, noMove: false, selfCollision: false, wall: false, outOfBounds: false, obstacle: false };
+  repel.safety = { avoidAll: false, avoidBody: false, avoidObstacle: false, avoidOtherAgents: false, avoidWall: false, warnSelfCollision: false };
+  const repelled = new Simulation(repel).run();
+  ok(repelled.stats.repels > 0, '排斥交互仍会触发回退（按需备份没有漏掉该路径）', `排斥 ${repelled.stats.repels} 次`);
+  ok(repelled.stats.agents >= 2, '排斥模式下双方均生存', `存活 ${repelled.stats.agents}`);
 }
 
 /* ---------- 结果 ---------- */
