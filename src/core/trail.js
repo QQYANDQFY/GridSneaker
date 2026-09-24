@@ -10,6 +10,7 @@
  *   first  首次经过的步数
  *   last   末次经过的步数
  *   visits 经过次数（序数）
+ *   ticks  每次经过的步数序列（升序，供悬浮提示回溯「上一次经过步数」）
  *
  * 画面帧被抽样缓存（frameStride > 1）时，用当前帧的身体节补出未缓存的中间步，
  * 保证任意采样步长下轨迹都连续无缺口。
@@ -51,12 +52,14 @@ export function buildTrail(grid, frames) {
         first: tick,
         last: tick,
         visits: 1,
+        ticks: [tick],
       });
       return;
     }
     if (tick < cell.first) cell.first = tick;
     if (tick > cell.last) cell.last = tick;
     cell.visits++;
+    cell.ticks.push(tick);
   };
 
   for (const f of frames) {
@@ -211,6 +214,7 @@ export function sliceTrailUpToTick(trail, tick) {
         first: p.tick,
         last: p.tick,
         visits: 1,
+        ticks: [p.tick],
       };
       info.set(p.index, cell);
       continue;
@@ -218,8 +222,49 @@ export function sliceTrailUpToTick(trail, tick) {
     if (p.tick < cell.first) cell.first = p.tick;
     if (p.tick > cell.last) cell.last = p.tick;
     cell.visits++;
+    cell.ticks.push(p.tick);
   }
   return { path: kept, order, info, maxTick };
+}
+
+/**
+ * 单格的「截至某个步数」的访问回溯信息（供悬浮提示展示轨迹回溯内容）。
+ * 在 visits / ticks 基础上解出：
+ *   first 首次经过步数 · last 最近一次经过步数（≤ tick）· prev 上一次经过步数（≤ tick 的前一次）
+ *   count 截至 tick 的经过次数 · total 整轮经过次数
+ * 该格在 tick 之前从未经过时返回 null。
+ * @param {object} info buildTrail / sliceTrailUpToTick 输出的逐格信息
+ * @param {number} tick 当前步数（含）
+ */
+export function visitStatsAt(info, tick) {
+  const ticks = info && info.ticks;
+  if (!ticks || !ticks.length) return null;
+  const limit = Number.isFinite(tick) ? tick : Infinity;
+  let count = 0;
+  let last = null;
+  let prev = null;
+  for (let i = 0; i < ticks.length; i++) {
+    const t = ticks[i];
+    if (t > limit) continue; // 尚未发生的经过（ticks 升序，多移动体同帧时允许轻微乱序）
+    count++;
+    prev = last;
+    last = t;
+  }
+  if (!count) return null;
+  return { first: info.first, last, prev, count, total: info.visits };
+}
+
+/** 某格截至 tick 是否已至少经过 min 次（供「重访格高亮」判定，命中即提前返回） */
+export function revisitReached(info, tick, min) {
+  const ticks = info && info.ticks;
+  if (!ticks || ticks.length < min) return false;
+  const need = Math.max(2, Math.round(min) || 2);
+  let n = 0;
+  for (let i = 0; i < ticks.length; i++) {
+    if (ticks[i] > tick) continue;
+    if (++n >= need) return true;
+  }
+  return false;
 }
 
 /** 多条件组合方式 */

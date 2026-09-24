@@ -1524,7 +1524,8 @@ function bindCanvasEvents() {
     const c = renderer.hitTest(e.clientX, e.clientY);
     renderer.hover = c;
     draw();
-    if (!c) {
+    // 悬浮提示总开关（「展示样式 → 悬浮提示」）关闭时只保留画布高亮，不弹提示浮层
+    if (!c || renderer.style.hoverTip === false) {
       hideTooltip();
       return;
     }
@@ -1554,7 +1555,7 @@ function bindCanvasEvents() {
     const c = renderer.hitTest(t.clientX, t.clientY);
     renderer.hover = c;
     draw();
-    if (!c) { hideTooltip(); return; }
+    if (!c || renderer.style.hoverTip === false) { hideTooltip(); return; }
     els.tooltip.textContent = renderer.describe(state.frameIndex, c);
     els.tooltip.classList.add('show');
     placeTooltip(t.clientX, t.clientY);
@@ -4412,7 +4413,8 @@ function styleGroup(cfg) {
       checkbox(s.showBody, (v) => { s.showBody = v; onStyleChange(); }, '身体'),
       checkbox(s.showArrows, (v) => { s.showArrows = v; onStyleChange(); }, '方向箭头'),
       checkbox(s.showStartEnd, (v) => { s.showStartEnd = v; onStyleChange(); }, '起点/终点'),
-    )),
+      checkbox(s.showCrossings, (v) => { s.showCrossings = v; onStyleChange(); }, '边界进出点'),
+    ), '「边界进出点」与「轨迹」相互独立：默认关闭，可单独开启；即使关闭「轨迹」，进出点标记仍按播放进度依次出现'),
     field('环境显示', row(
       checkbox(s.showObstacles, (v) => { s.showObstacles = v; onStyleChange(); }, '障碍物'),
       checkbox(s.showMarkers, (v) => { s.showMarkers = v; onStyleChange(); }, '标记物'),
@@ -4437,11 +4439,33 @@ function styleGroup(cfg) {
     field('渲染效果', row(
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
       checkbox(s.trailSmooth, (v) => { s.trailSmooth = v; onStyleChange(); }, '轨迹尖端平滑'),
-      checkbox(s.showCrossings, (v) => { s.showCrossings = v; onStyleChange(); }, '边界穿越标记'),
       checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
       checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
       checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛'),
-    ), '「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；「边界穿越标记」在接缝两侧标出滑出 / 滑入点；蛇头眼睛默认隐藏，勾选后显示'),
+    ), '「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；蛇头眼睛默认隐藏，勾选后显示'),
+    field('进出点标记尺寸', rangeBind(s, 'crossingScale', () => onStyleChange(), { min: 0.4, max: 3, step: 0.1 }),
+      '边界进出点标记（滑出空心环 / 滑入实心点）的尺寸倍数；仅在开启「边界进出点」时可见'),
+    field('重访格高亮', row(
+      checkbox(s.showRevisit, (v) => { s.showRevisit = v; onStyleChange(); }, '开启'),
+    ), '把「截至当前步数已被经过达到阈值」的格子标出来（与播放进度同步，不提前泄露后面的轨迹）'),
+    field('重访判定次数', rangeBind(s, 'revisitMin', () => onStyleChange(), { min: 2, max: 20, step: 1, number: true }),
+      '经过次数达到该值的格子视为重访；数值越大，只保留反复踩踏的热点格'),
+    field('重访高亮不透明度', rangeBind(s, 'revisitAlpha', () => onStyleChange(), { min: 0.05, max: 0.6, step: 0.01 }),
+      '重访格高亮的填充不透明度；调低可与轨迹叠加观察'),
+    field('悬停行列准线', row(
+      checkbox(s.hoverCrosshair, (v) => { s.hoverCrosshair = v; onStyleChange(); }, '开启'),
+    ), '鼠标悬浮时高亮所在整行 / 整列并在格心画出十字导线，便于在大网格上定位坐标'),
+    field('准线宽度', rangeBind(s, 'hoverCrosshairWidth', () => onStyleChange(), { min: 0.5, max: 4, step: 0.5 }),
+      '行列准线中心导线的线宽；仅在开启「悬停行列准线」时可感知'),
+    field('悬浮提示', row(
+      checkbox(s.hoverTip, (v) => { s.hoverTip = v; onStyleChange(); }, '总开关'),
+    ), '关闭后鼠标悬浮只保留画布高亮，不再弹出信息浮层'),
+    field('提示内容', row(
+      checkbox(s.hoverTipState, (v) => { s.hoverTipState = v; onStyleChange(); }, '环境状态'),
+      checkbox(s.hoverTipAgent, (v) => { s.hoverTipAgent = v; onStyleChange(); }, '移动体'),
+      checkbox(s.hoverTipTrail, (v) => { s.hoverTipTrail = v; onStyleChange(); }, '轨迹回溯'),
+      checkbox(s.hoverTipMarkers, (v) => { s.hoverTipMarkers = v; onStyleChange(); }, '标记信息'),
+    ), '提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次 / 本次 / 上一次经过步数'),
     field('穿越事件日志', row(
       checkbox(cfg.events.logCrossings, (v) => { cfg.events.logCrossings = v; onSimChange(); }, '记录边界穿越到规则日志'),
     ), '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),

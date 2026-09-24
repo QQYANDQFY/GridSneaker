@@ -413,12 +413,37 @@ export function defaultConfig() {
       trailColorMode: 'fade',
       /** 轨迹尖端平滑过渡：播放到两帧之间时补出头部所在的一小段，让轨迹跟随蛇头平滑滑动 */
       trailSmooth: true,
-      /** 在轨迹接缝处标出边界穿越点 */
-      showCrossings: true,
+      /**
+       * 在轨迹接缝处标出边界进出点（滑出 / 滑入两侧各一个标记）。
+       * 与轨迹主体完全独立：关闭「轨迹」后仍可单独显示，默认关闭。
+       */
+      showCrossings: false,
+      /** 边界进出点标记的尺寸倍数（0.4 ~ 3） */
+      crossingScale: 1,
       /** 蛇头眼睛默认隐藏，需在「展示样式 → 渲染效果」中主动开启 */
       showEyes: false,
       showEffects: true,
       glow: false,
+      /** 悬停行列准线：鼠标悬浮时高亮所在整行 / 整列，便于在大网格上定位，默认关闭 */
+      hoverCrosshair: false,
+      /** 行列准线的中心导线宽度（0.5 ~ 4） */
+      hoverCrosshairWidth: 1,
+      /** 重访格高亮：把截至当前步数已被经过 ≥ revisitMin 次的格子标出来，默认关闭 */
+      showRevisit: false,
+      /** 重访判定阈值：经过次数达到该值即视为重访（2 ~ 20） */
+      revisitMin: 2,
+      /** 重访格高亮的填充不透明度（0.05 ~ 0.6） */
+      revisitAlpha: 0.22,
+      /** 悬浮提示总开关 */
+      hoverTip: true,
+      /** 悬浮提示：显示环境状态行 */
+      hoverTipState: true,
+      /** 悬浮提示：显示移动体（蛇头 / 体节）行 */
+      hoverTipAgent: true,
+      /** 悬浮提示：显示轨迹统计与上一次经过步数 */
+      hoverTipTrail: true,
+      /** 悬浮提示：显示起点 / 终点 / 边界进出点等标记信息（仍与对应的显示开关同步） */
+      hoverTipMarkers: true,
       /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
       trailJoin: 'line',
       bodyJoin: 'line',
@@ -762,10 +787,21 @@ function normalizeStyle(raw = {}) {
     trailColorMode: TRAIL_COLOR_MODES.includes(raw.trailColorMode) ? raw.trailColorMode : d.trailColorMode,
     trailSmooth: bool(raw.trailSmooth, d.trailSmooth),
     showCrossings: bool(raw.showCrossings, d.showCrossings),
+    crossingScale: clamp(num(raw.crossingScale, d.crossingScale), 0.4, 3),
     axisLabels: bool(raw.axisLabels, d.axisLabels),
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),
     glow: bool(raw.glow, d.glow),
+    hoverCrosshair: bool(raw.hoverCrosshair, d.hoverCrosshair),
+    hoverCrosshairWidth: clamp(num(raw.hoverCrosshairWidth, d.hoverCrosshairWidth), 0.5, 4),
+    showRevisit: bool(raw.showRevisit, d.showRevisit),
+    revisitMin: clamp(Math.round(num(raw.revisitMin, d.revisitMin)), 2, 20),
+    revisitAlpha: clamp(num(raw.revisitAlpha, d.revisitAlpha), 0.05, 0.6),
+    hoverTip: bool(raw.hoverTip, d.hoverTip),
+    hoverTipState: bool(raw.hoverTipState, d.hoverTipState),
+    hoverTipAgent: bool(raw.hoverTipAgent, d.hoverTipAgent),
+    hoverTipTrail: bool(raw.hoverTipTrail, d.hoverTipTrail),
+    hoverTipMarkers: bool(raw.hoverTipMarkers, d.hoverTipMarkers),
     trailJoin,
     bodyJoin,
     trailAngle: clamp(num(raw.trailAngle, d.trailAngle), 5, 85),

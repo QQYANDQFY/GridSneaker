@@ -17,6 +17,7 @@ import {
   trailQueryLabel, trailCellsToCSV, trailCellsToText,
   trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS,
   snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
+  visitStatsAt, revisitReached,
 } from '../src/core/trail.js';
 import { trailToSVG } from '../src/core/exporters.js';
 import { World, Agent } from '../src/core/world.js';
@@ -1781,6 +1782,8 @@ function headlessRenderer(style = {}) {
   r.result = null;
   r.trail = { path: [], order: [], info: new Map(), maxTick: 0 };
   r.trailInfo = r.trail.info;
+  r.crossingCells = new Map();
+  r._revisitCache = null;
   r.trailPix = null;
   r.trailRuns = [];
   r.pixDirty = true;
@@ -1810,6 +1813,15 @@ function attachResult(r, result) {
   r.body = result.config.body;
   r.trail = buildTrail(result.grid, result.frames);
   r.trailInfo = r.trail.info;
+  r.prepareCrossingCells(result.grid);
+  r._revisitCache = null;
+  // 与 CanvasRenderer.prepare() 保持同一口径：起 / 终点坐标取自首 / 末帧首个体节
+  const firstFrame = result.frames[0];
+  const lastFrame = result.frames[result.frames.length - 1];
+  r.startCoord = firstFrame?.agents[0]?.segments?.[0]
+    ? { col: firstFrame.agents[0].segments[0][0], row: firstFrame.agents[0].segments[0][1] } : null;
+  r.endCoord = lastFrame?.agents[0]?.segments?.[0]
+    ? { col: lastFrame.agents[0].segments[0][0], row: lastFrame.agents[0].segments[0][1] } : null;
   r.pixDirty = true;
   r.size = result.grid.canvasSize(r.style.cellSize, r.style.gap, Math.max(16, Math.round(r.style.cellSize * 0.9)));
   return r;
@@ -3051,8 +3063,11 @@ section('新增：轨迹尖端平滑过渡（帧间插值补画头部）');
 section('新增：边界穿越标记与事件日志');
 {
   const d = defaultConfig();
-  eq(d.style.showCrossings, true, '默认在轨迹接缝处标出边界穿越点');
-  eq(normalizeConfig({ ...d, style: { ...d.style, showCrossings: false } }).style.showCrossings, false, '可关闭穿越标记');
+  eq(d.style.showCrossings, false, '边界进出点默认关闭（与轨迹主体完全分离）');
+  eq(normalizeConfig({ ...d, style: { ...d.style, showCrossings: true } }).style.showCrossings, true, '可单独开启边界进出点');
+  eq(d.style.crossingScale, 1, '进出点标记尺寸默认为 1 倍');
+  eq(normalizeConfig({ ...d, style: { ...d.style, crossingScale: 9 } }).style.crossingScale, 3, '进出点标记尺寸被收敛到上限');
+  eq(normalizeConfig({ ...d, style: { ...d.style, crossingScale: 0.1 } }).style.crossingScale, 0.4, '进出点标记尺寸被收敛到下限');
   eq(d.events.logCrossings, true, '默认记录边界穿越事件日志');
   eq(normalizeConfig({ ...d, events: { logCrossings: false } }).events.logCrossings, false, '穿越日志开关可关闭');
   eq(normalizeConfig({ ...d, events: {} }).events.logCrossings, true, '缺省时穿越日志回退为开启');
@@ -3113,6 +3128,199 @@ section('新增：边界穿越标记与事件日志');
   const arcsWithout = calls2.filter((c) => c.name === 'arc').length;
   eq(arcsWith - arcsWithout, marks.length * 2, '每个穿越点在接缝两侧各绘制一个标记（关闭时完全不画）');
   ok(calls2.some((c) => c.name === 'stroke'), '关闭穿越标记后轨迹仍正常描边');
+
+  // 独立性：关闭「轨迹」后，「边界进出点」仍按自身开关照常绘制
+  const { r: r3, calls: calls3 } = headlessRenderer({ ...base, showTrail: false, showCrossings: true });
+  attachResult(r3, on);
+  r3.draw(on.frames.length - 1, 0);
+  eq(calls3.filter((c) => c.name === 'arc').length, marks.length * 2,
+    '关闭轨迹后边界进出点仍完整绘制（与轨迹主体完全分离）');
+  ok(r3.trailLo > 0, '未绘制轨迹时轨迹上界同样被推进（标记随播放依次出现）');
+  const { r: r4, calls: calls4 } = headlessRenderer({ ...base, showTrail: false, showCrossings: false });
+  attachResult(r4, on);
+  r4.draw(on.frames.length - 1, 0);
+  eq(calls4.filter((c) => c.name === 'arc').length, 0, '两个开关都关闭时不绘制任何进出点标记');
+
+  // 参数：标记尺寸随 crossingScale 缩放（其余样式完全一致）
+  const { r: rBig, calls: callsBig } = headlessRenderer({ ...base, showTrail: false, showCrossings: true, crossingScale: 2 });
+  attachResult(rBig, on);
+  rBig.draw(on.frames.length - 1, 0);
+  const arcSmall = calls3.find((c) => c.name === 'arc');
+  const arcBig = callsBig.find((c) => c.name === 'arc');
+  ok(!!arcSmall && !!arcBig, '两次绘制都产生了标记圆弧');
+  if (arcSmall && arcBig) {
+    ok(arcBig.args[2] > arcSmall.args[2], '进出点标记半径随「进出点标记尺寸」放大',
+      `${arcSmall.args[2].toFixed(2)} → ${arcBig.args[2].toFixed(2)}`);
+  }
+  eq(rBig.trailCrossings.length, marks.length, '标记数量与解算结果一致（缩放不影响位置解算）');
+}
+
+/* ---------- 本轮新增：轨迹访问回溯（上一次经过步数） ---------- */
+
+section('轨迹访问回溯：visitStatsAt（本次 / 上一次经过步数）');
+{
+  const info = { index: 3, col: 3, row: 0, order: 1, first: 5, last: 30, visits: 3, ticks: [5, 12, 30] };
+  eq(visitStatsAt(info, 4), null, '步数尚未到达该格时没有回溯信息');
+  eq(visitStatsAt(info, 5).prev, null, '首次经过时没有上一次经过');
+  eq(visitStatsAt(info, 5).count, 1, '首次经过时截至当前为 1 次');
+  eq(visitStatsAt(info, 12).prev, 5, '第二次经过的上一次 = 首次经过步数');
+  eq(visitStatsAt(info, 12).count, 2, '截至第二次经过时次数为 2');
+  eq(visitStatsAt(info, 20).prev, 5, '两次经过之间查询仍回溯到上一次经过');
+  eq(visitStatsAt(info, 20).last, 12, '两次经过之间「本次经过」为最近一次经过');
+  eq(visitStatsAt(info, 30).prev, 12, '末次经过的上一次为第二次经过步数');
+  eq(visitStatsAt(info, 30).last, 30, '末次经过的最近一次步数正确');
+  eq(visitStatsAt(info, 30).total, 3, '整轮经过次数取自 visits');
+  eq(visitStatsAt({ visits: 1 }, 10), null, '缺少步数序列时安全返回 null');
+  eq(visitStatsAt(info, Infinity).prev, 12, '不限定步数时回溯到整轮的上一次经过');
+
+  ok(revisitReached({ ticks: [1, 2] }, 2, 2), '截至当前达到阈值即判定为重访');
+  ok(!revisitReached({ ticks: [1, 2] }, 1, 2), '尚未积累到阈值时不算重访');
+  ok(!revisitReached({ ticks: [1] }, 99, 2), '只经过一次永远不算重访');
+  ok(revisitReached({ ticks: [7, 8, 9] }, 9, 3), '阈值可调（3 次）');
+
+  // 轨迹模型：每格的步数序列与经过次数一致（升序）
+  const result = new Simulation(wrapRun()).run();
+  const trail = buildTrail(result.grid, result.frames);
+  let mismatch = 0;
+  let unordered = 0;
+  for (const cell of trail.info.values()) {
+    if (cell.ticks.length !== cell.visits) mismatch++;
+    for (let i = 1; i < cell.ticks.length; i++) if (cell.ticks[i] < cell.ticks[i - 1]) unordered++;
+    if (cell.ticks[0] !== cell.first || cell.ticks[cell.ticks.length - 1] !== cell.last) mismatch++;
+  }
+  eq(mismatch, 0, '逐格步数序列长度 = 经过次数，且首末项与 first / last 一致');
+  eq(unordered, 0, '单移动体轨迹的逐格步数序列严格升序');
+  const sliced = sliceTrailUpToTick(trail, 40);
+  let sliceOk = true;
+  for (const cell of sliced.info.values()) {
+    if (cell.ticks.length !== cell.visits || cell.ticks[cell.ticks.length - 1] !== cell.last) sliceOk = false;
+  }
+  ok(sliceOk, '实时口径的截取轨迹同样带步数序列（结构一致）');
+}
+
+/* ---------- 本轮新增：悬浮提示与显示状态同步 ---------- */
+
+section('悬浮提示：内容与已开启的显示状态严格同步');
+{
+  const cfg = wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 90 } });
+  const result = new Simulation(cfg).run();
+  const grid = result.grid;
+  const last = result.frames.length - 1;
+  ok(result.frames[last].agents.length > 0, '末帧仍存在移动体（提示内容断言才有意义）');
+  const mk = (style) => attachResult(headlessRenderer({ cellSize: 20, gap: 2, trailFade: false, ...style }).r, result);
+
+  // 起点标记：跟随「起点/终点」显示开关
+  const start = { col: cfg.start.col, row: cfg.start.row };
+  ok(mk({ showStartEnd: true }).describe(last, start).includes('起点标记：本格为起始点'),
+    '开启「起点/终点」时提示中同步出现起点标记');
+  ok(!mk({ showStartEnd: false }).describe(last, start).includes('起点标记'),
+    '关闭「起点/终点」后提示中不再出现起点标记');
+
+  // 边界进出点：跟随「边界进出点」显示开关
+  const crossOn = mk({ showCrossings: true });
+  const crossOff = mk({ showCrossings: false });
+  const crossIdx = [...crossOn.crossingCells.keys()].find((i) => crossOn.crossingCells.get(i).out.length);
+  ok(crossIdx !== undefined, '穿越场景中存在作为「滑出点」的格子');
+  const crossCoord = { col: crossIdx % grid.width, row: Math.floor(crossIdx / grid.width) };
+  ok(crossOn.describe(last, crossCoord).includes('边界进出点：滑出（第 '),
+    '开启「边界进出点」时提示同步给出滑出步数');
+  ok(!crossOff.describe(last, crossCoord).includes('边界进出点'),
+    '关闭「边界进出点」后提示中不出现该类信息');
+
+  // 轨迹回溯：跟随「轨迹」显示开关，并包含本次 / 上一次经过步数
+  const trail = buildTrail(grid, result.frames);
+  const rep = [...trail.info.values()].find((c) => c.ticks.length >= 3 && c.index !== crossIdx);
+  ok(!!rep, '轨迹中存在被反复经过的格子（回溯断言才有意义）');
+  const repCoord = { col: rep.col, row: rep.row };
+  const textOn = mk({ showTrail: true, showCrossings: true }).describe(last, repCoord);
+  const times = rep.ticks;
+  ok(textOn.includes('轨迹：次序 #'), '开启「轨迹」时提示给出轨迹统计');
+  ok(textOn.includes(`本次经过：第 ${times[times.length - 1]} 步`), '提示中的本次经过为最近一次经过步数');
+  ok(textOn.includes(`上一次经过：第 ${times[times.length - 2]} 步`),
+    '提示中的上一次经过步数与轨迹模型记录一致');
+  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('轨迹：'),
+    '关闭「轨迹」后提示中不再出现轨迹信息（含上一次经过步数）');
+  ok(!mk({ showTrail: false }).describe(last, repCoord).includes('上一次经过'),
+    '关闭「轨迹」后不再展示轨迹回溯内容');
+
+  // 移动体 / 环境 / 各项内容开关 / 总开关
+  const seg = result.frames[last].agents[0].segments[0];
+  const headCoord = { col: seg[0], row: seg[1] };
+  ok(mk({ showBody: true }).describe(last, headCoord).includes('蛇头'),
+    '开启「身体」时提示给出移动体信息');
+  ok(!mk({ showBody: false }).describe(last, headCoord).includes('蛇头'),
+    '关闭「身体」后提示不再给出移动体信息');
+  ok(mk({ hoverTipState: true }).describe(last, repCoord).includes('环境：'), '开启「环境状态」时提示给出环境行');
+  ok(!mk({ hoverTipState: false }).describe(last, repCoord).includes('环境：'), '关闭「环境状态」后提示不再给出环境行');
+  ok(mk({ hoverTipMarkers: false, showStartEnd: true }).describe(last, start).includes('坐标')
+    && !mk({ hoverTipMarkers: false, showStartEnd: true }).describe(last, start).includes('起点标记'),
+    '关闭「标记信息」后即使显示开关开启也不在提示中给出标记行');
+  eq(mk({ hoverTip: false }).describe(last, repCoord), '', '关闭悬浮提示总开关后不再产生任何提示文本');
+}
+
+/* ---------- 本轮新增：重访格高亮与悬停行列准线 ---------- */
+
+section('新增显示模块：重访格高亮与悬停行列准线（开关 + 参数）');
+{
+  const d = defaultConfig();
+  eq(d.style.showRevisit, false, '重访格高亮默认关闭');
+  eq(d.style.revisitMin, 2, '重访判定次数默认为 2');
+  eq(d.style.hoverCrosshair, false, '悬停行列准线默认关闭');
+  eq(d.style.hoverTip, true, '悬浮提示默认开启');
+  eq(normalizeConfig({ ...d, style: { ...d.style, revisitMin: 99 } }).style.revisitMin, 20, '重访判定次数收敛到上限');
+  eq(normalizeConfig({ ...d, style: { ...d.style, revisitMin: 1 } }).style.revisitMin, 2, '重访判定次数收敛到下限');
+  eq(normalizeConfig({ ...d, style: { ...d.style, revisitAlpha: 5 } }).style.revisitAlpha, 0.6, '重访不透明度收敛到上限');
+  eq(normalizeConfig({ ...d, style: { ...d.style, hoverCrosshairWidth: 0 } }).style.hoverCrosshairWidth, 0.5, '准线宽度收敛到下限');
+  const shared = decodeConfigFromToken(encodeConfigToToken(normalizeConfig({
+    ...d, style: { ...d.style, showRevisit: true, revisitMin: 4, hoverTip: false, hoverCrosshair: true },
+  })));
+  eq(shared.style.showRevisit, true, '分享链接保留重访格高亮开关');
+  eq(shared.style.revisitMin, 4, '分享链接保留重访判定次数');
+  eq(shared.style.hoverTip, false, '分享链接保留悬浮提示总开关');
+  eq(shared.style.hoverCrosshair, true, '分享链接保留悬停行列准线开关');
+
+  const cfg = wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 90 } });
+  const result = new Simulation(cfg).run();
+  const last = result.frames.length - 1;
+  const lastTick = result.frames[last].tick;
+  const base = {
+    cellSize: 20, gap: 2, showGrid: false, showBody: false, showEffects: false,
+    highlightRules: false, showStartEnd: false, showTrail: false, showCrossings: false,
+  };
+  const r = attachResult(headlessRenderer(base).r, result);
+
+  const cells = r.revisitCells(lastTick);
+  ok(cells.length > 0, '存在达到默认阈值（2 次）的重访格', `重访格 ${cells.length} 个`);
+  ok(r.revisitCells(lastTick) === cells, '同一播放位置复用缓存，不重复全量扫描');
+  eq(r.revisitCells(0).length, 0, '第 0 步时还没有任何重访格（判定与播放进度同步）');
+  r.style.revisitMin = 20;
+  eq(r.revisitCells(lastTick).length, 0, '阈值提高到 20 后不再有格子达标');
+  r.style.revisitMin = 2;
+
+  const on = headlessRenderer({ ...base, showRevisit: true });
+  attachResult(on.r, result);
+  on.r.draw(last, 0);
+  const off = headlessRenderer(base);
+  attachResult(off.r, result);
+  off.r.draw(last, 0);
+  const fillsOn = on.calls.filter((c) => c.name === 'fill').length;
+  const fillsOff = off.calls.filter((c) => c.name === 'fill').length;
+  eq(fillsOn - fillsOff, cells.length, '每个重访格恰好补出一次高亮填充（关闭时完全不画）');
+
+  // 悬停行列准线：两条色带 + 十字导线，导线宽度随参数变化
+  const cx = headlessRenderer({ ...base, hoverCrosshair: true, hoverCrosshairWidth: 3 });
+  attachResult(cx.r, result);
+  cx.r.hover = { col: 3, row: 3 };
+  cx.calls.length = 0;
+  cx.r.draw(last, 0);
+  const cxOff = headlessRenderer(base);
+  attachResult(cxOff.r, result);
+  cxOff.r.hover = { col: 3, row: 3 };
+  cxOff.calls.length = 0;
+  cxOff.r.draw(last, 0);
+  eq(cx.calls.filter((c) => c.name === 'fillRect').length - cxOff.calls.filter((c) => c.name === 'fillRect').length,
+    2, '开启悬停行列准线后恰好多出两条色带（关闭时不画）');
+  ok(cx.sets.some((s) => s.name === 'lineWidth' && s.value === 3), '十字导线宽度随「准线宽度」参数生效');
 }
 
 /* ---------- 本轮：默认配置与界面措辞 ---------- */
@@ -3158,6 +3366,40 @@ section('自撞规则互斥：勾选即时自动关闭（源码级回归）');
   ok(/已启用 \$\{enabledCount\} 项/.test(app), '结束规则分组徽标显示当前启用条数');
   ok(/END_REASON_GROUP/.test(app) && /生命机制（多生命）/.test(app),
     '「生命耗尽」「全部转化为环境」等原因可定位到真正控制它的分组');
+}
+
+/* ---------- 边界进出点独立显示：源码级回归 ---------- */
+
+section('边界进出点独立显示与悬浮提示同步（源码级回归）');
+{
+  const canvas = readFileSync(new URL('../src/ui/canvas.js', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  const cfgSrc = readFileSync(new URL('../src/core/config.js', import.meta.url), 'utf8');
+
+  ok(!/s\.showTrail && s\.showCrossings/.test(canvas), '边界进出点绘制不再依赖「轨迹」开关');
+  ok(/if \(s\.showCrossings\) this\.drawTrailCrossings\(\);/.test(canvas), '边界进出点按自身开关独立绘制');
+  ok(/else if \(s\.showCrossings\) this\.syncTrailCursor\(tickF\);/.test(canvas),
+    '未绘制轨迹时仍推进轨迹上界（标记随播放依次出现）');
+  ok(/if \(s\.showTrail\) this\.drawTrail\(frame, th, tickF\);/.test(canvas), '轨迹主体仍由其自身开关控制');
+  ok(/crossingScale/.test(cfgSrc) && /this\.style\.crossingScale/.test(canvas)
+    && /this\.style\.cellSize \* [\d.]+ \* scale/.test(canvas.replace(/\s+/g, ' ')),
+    '进出点标记尺寸参数接入配置与渲染');
+  ok(/prepareCrossingCells\(grid\)/.test(canvas), '渲染准备阶段建立边界进出点逐格索引');
+  ok(/hoverTipMarkers/.test(canvas) && /s\.showCrossings && this\.crossingCells/.test(canvas),
+    '悬浮提示中的边界进出点信息与显示开关同步');
+  ok(/s\.showStartEnd && this\.startCoord/.test(canvas), '悬浮提示中的起点标记与「起点/终点」开关同步');
+  ok(/visitStatsAt\(info, frame\.tick\)/.test(canvas), '悬浮提示按当前步数回溯访问记录');
+  ok(/上一次经过/.test(canvas), '悬浮提示新增「上一次经过步数」字段');
+  ok(/renderer\.style\.hoverTip === false/.test(app), '悬浮提示总开关接入鼠标与触控悬浮处理');
+  ok(/checkbox\(s\.showCrossings/.test(app) && /'边界进出点'/.test(app),
+    '设置面板提供独立的「边界进出点」开关');
+  ok(/checkbox\(s\.hoverTip/.test(app) && /checkbox\(s\.hoverTipTrail/.test(app),
+    '设置面板提供悬浮提示总开关与内容开关');
+  ok(/checkbox\(s\.showRevisit/.test(app) && /rangeBind\(s, 'revisitMin'/.test(app),
+    '设置面板提供重访格高亮的开关与阈值参数');
+  ok(/checkbox\(s\.hoverCrosshair/.test(app) && /rangeBind\(s, 'hoverCrosshairWidth'/.test(app),
+    '设置面板提供悬停行列准线的开关与宽度参数');
+  ok(!/'边界穿越标记'/.test(app), '旧的「边界穿越标记」措辞已统一为「边界进出点」');
 }
 
 /* ---------- 结果 ---------- */

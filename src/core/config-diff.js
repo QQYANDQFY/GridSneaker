@@ -68,6 +68,11 @@ export const CONFIG_FIELD_LABELS = {
   showObstacles: '障碍物', showMarkers: '标记物', highlightRules: '规则高亮', showStartEnd: '起点/终点',
   trailFade: '轨迹渐隐', fadeMode: '轨迹衰减模式', fadeLength: '衰减步长',
   showEyes: '蛇头眼睛', showEffects: '交互特效', glow: '蛇身发光',
+  showCrossings: '边界进出点', crossingScale: '进出点标记尺寸',
+  hoverCrosshair: '悬停行列准线', hoverCrosshairWidth: '准线宽度',
+  showRevisit: '重访格高亮', revisitMin: '重访判定次数', revisitAlpha: '重访高亮不透明度',
+  hoverTip: '悬浮提示', hoverTipState: '提示：环境状态', hoverTipAgent: '提示：移动体',
+  hoverTipTrail: '提示：轨迹信息', hoverTipMarkers: '提示：标记信息',
   trailJoin: '轨迹连接方式', bodyJoin: '蛇身连接方式', trailAngle: '切角角度',
   followAgent: '跟随移动体', axisLabels: '坐标轴',
 };

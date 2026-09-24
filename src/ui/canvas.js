@@ -5,7 +5,7 @@
  */
 import { dirLabel } from '../core/grid.js';
 import { stateLabel } from '../core/world.js';
-import { buildTrail, unwrapTrail } from '../core/trail.js';
+import { buildTrail, unwrapTrail, visitStatsAt, revisitReached } from '../core/trail.js';
 
 export const STYLE_DEFAULTS = {
   cellSize: 26,
@@ -33,14 +33,39 @@ export const STYLE_DEFAULTS = {
   trailColorMode: 'fade',
   /** 轨迹尖端平滑过渡：播放到两帧之间时把轨迹头部补到步内位置，随蛇头平滑滑动而非逐格跳变 */
   trailSmooth: true,
-  /** 在轨迹接缝处标出边界穿越点（滑出 / 滑入两侧各一个标记） */
-  showCrossings: true,
+  /**
+   * 在轨迹接缝处标出边界进出点（滑出 / 滑入两侧各一个标记）。
+   * 与轨迹主体完全独立（关闭「轨迹」后仍可单独显示），默认关闭。
+   */
+  showCrossings: false,
+  /** 边界进出点标记的尺寸倍数 */
+  crossingScale: 1,
   /** 蛇头眼睛默认隐藏，仅在用户主动开启「展示样式 → 蛇头眼睛」时按朝向绘制 */
   showEyes: false,
   /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
   showEffects: true,
   /** 蛇身发光，突出移动体位置 */
   glow: false,
+  /** 悬停行列准线：鼠标悬浮时高亮所在整行 / 整列，便于在大网格上定位，默认关闭 */
+  hoverCrosshair: false,
+  /** 行列准线的中心导线宽度 */
+  hoverCrosshairWidth: 1,
+  /** 重访格高亮：把截至当前步数已被经过 ≥ revisitMin 次的格子标出来，默认关闭 */
+  showRevisit: false,
+  /** 重访判定阈值：经过次数达到该值即视为重访 */
+  revisitMin: 2,
+  /** 重访格高亮的填充不透明度 */
+  revisitAlpha: 0.22,
+  /** 悬浮提示总开关 */
+  hoverTip: true,
+  /** 悬浮提示：环境状态行 */
+  hoverTipState: true,
+  /** 悬浮提示：移动体行 */
+  hoverTipAgent: true,
+  /** 悬浮提示：轨迹统计与上一次经过步数 */
+  hoverTipTrail: true,
+  /** 悬浮提示：起点 / 终点 / 边界进出点等标记信息（仍与对应显示开关同步） */
+  hoverTipMarkers: true,
   /** 轨迹 / 蛇身的连接方式：curve 曲线（贝塞尔） · line 直线 · angle 按预设角度切角连接的直线 */
   trailJoin: 'line',
   bodyJoin: 'line',
@@ -96,6 +121,13 @@ const TRAIL_COLOR_RAMPS = {
 const CROSSING_OUT = 'rgba(255, 212, 59, 0.9)';
 const CROSSING_IN = 'rgba(77, 171, 247, 0.95)';
 
+/** 悬停高亮（格子描边 + 行列准线）的主色 */
+const HOVER_ACCENT = '#4dabf7';
+
+/** 重访格高亮的填充与描边色（暖色，与轨迹 / 筛选高亮区分开） */
+const REVISIT_FILL = 'rgba(255, 107, 107, 0.55)';
+const REVISIT_STROKE = 'rgba(255, 138, 101, 0.95)';
+
 /** 坐标筛选高亮的填充与描边色 */
 const FILTER_FILL = 'rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR = 'rgba(255, 212, 59, 0.95)';
@@ -127,8 +159,12 @@ export class Renderer {
     this.trailRuns = [];
     /** 边界穿越标记（滑出 / 滑入两侧的像素坐标），与 trailUn 一起重建 */
     this.trailCrossings = [];
+    /** 边界进出点的逐格索引：格下标 → { out:number[], in:number[] }（步数序列），供悬浮提示同步 */
+    this.crossingCells = new Map();
     /** 当前绘制到的轨迹点下标（供穿越标记按播放进度筛选） */
     this.trailLo = 0;
+    /** 重访格高亮缓存（按步数 / 阈值缓存，避免每帧全量重扫） */
+    this._revisitCache = null;
     this.pixDirty = true;
     /** 颜色分级取值缓冲（按轨迹点下标）；fade 模式下为 null */
     this.trailCv = null;
@@ -231,6 +267,8 @@ export class Renderer {
     const grid = this.grid;
     this.trail = buildTrail(grid, this.result.frames);
     this.trailInfo = this.trail.info;
+    this._revisitCache = null;
+    this.prepareCrossingCells(grid);
     this.pixDirty = true;
     this.collisionPoints = [];
 
@@ -244,6 +282,34 @@ export class Renderer {
     this.startCoord = firstFrame?.agents[0]?.segments?.[0] ? { col: firstFrame.agents[0].segments[0][0], row: firstFrame.agents[0].segments[0][1] } : null;
     const lastFrame = this.result.frames[this.result.frames.length - 1];
     this.endCoord = lastFrame?.agents[0]?.segments?.[0] ? { col: lastFrame.agents[0].segments[0][0], row: lastFrame.agents[0].segments[0][1] } : null;
+  }
+
+  /**
+   * 边界进出点的逐格索引：把 unwrapTrail 解出的每一次接缝（滑出点 → 滑入点）
+   * 反查到「格下标 → 该格作为滑出 / 滑入点的步数序列」。
+   * 悬浮提示据此判断光标所在格是否为边界进出点，并给出对应步数；
+   * 与画面标记同源（同一份 unwrapTrail 结果），因此两者永不脱节。
+   */
+  prepareCrossingCells(grid) {
+    this.crossingCells = new Map();
+    const path = this.trail.path;
+    if (!path.length || grid.boundary !== 'wrap') return;
+    const { crossings } = unwrapTrail(grid, path);
+    for (const cr of crossings) {
+      const out = path[cr.i - 1];
+      const inn = path[cr.i];
+      if (out) this.addCrossingCell(out.index, out.tick, 'out');
+      if (inn) this.addCrossingCell(inn.index, inn.tick, 'in');
+    }
+  }
+
+  addCrossingCell(index, tick, kind) {
+    let rec = this.crossingCells.get(index);
+    if (!rec) {
+      rec = { out: [], in: [] };
+      this.crossingCells.set(index, rec);
+    }
+    rec[kind].push(tick);
   }
 
   /**
@@ -384,7 +450,11 @@ export class Renderer {
     if (s.showGrid) this.drawGrid();
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th, tickF);
-    if (s.showTrail && s.showCrossings) this.drawTrailCrossings();
+    // 边界进出点与轨迹主体完全独立：关闭「轨迹」后仍按其自身开关单独绘制。
+    // 未绘制轨迹时仍需按播放进度推进轨迹上界，标记才会随播放依次出现。
+    else if (s.showCrossings) this.syncTrailCursor(tickF);
+    if (s.showCrossings) this.drawTrailCrossings();
+    if (s.showRevisit) this.drawRevisit(tickF);
     this.drawCompare();
     this.drawFilterHighlight();
     if (s.showEffects) this.drawEffects(i0);
@@ -393,6 +463,7 @@ export class Renderer {
     if (s.showStartEnd) this.drawStartEnd(frame);
     this.drawCollisions(frame);
     if (s.showCoords || s.axisLabels) this.drawAxis(th);
+    if (this.hover && s.hoverCrosshair) this.drawHoverCrosshair();
     if (this.hover) this.drawHover();
     ctx.restore();
   }
@@ -519,6 +590,25 @@ export class Renderer {
     if (mode === 'curve' && lo > 1) this.drawTrailCurve(th, lo, tick);
     else if (mode === 'angle' && lo > 1) this.drawTrailAngle(th, lo, tick);
     else this.drawTrailLine(th, lo, tick);
+  }
+
+  /**
+   * 只推进轨迹上界、不描边轨迹。
+   * 「边界进出点」独立于「轨迹」显示时，标记仍需按播放进度依次出现，
+   * 因此这里复用与 drawTrail 完全相同的二分口径（保证两种显示方式下标记出现的时机一致）。
+   */
+  syncTrailCursor(tickF) {
+    const path = this.trail.path;
+    if (!path.length) return;
+    let lo = 0;
+    let hi = path.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (path[mid].tick <= tickF) lo = mid + 1;
+      else hi = mid;
+    }
+    this.ensureTrailPix();
+    this.trailLo = lo;
   }
 
   /**
@@ -766,19 +856,21 @@ export class Renderer {
   }
 
   /**
-   * 边界穿越标记：在接缝两侧各画一个标记 ——
+   * 边界进出点标记：在接缝两侧各画一个标记 ——
    * 滑出侧为空心环（仍位于网格内的最后一点），滑入侧为实心点（从对侧出现的第一点）。
    * 只标记已经绘制到的穿越事件（下标小于当前轨迹上界），标记随播放推进依次出现。
+   * 标记尺寸由 style.crossingScale 缩放；本方法不依赖轨迹是否绘制（与轨迹主体完全独立）。
    */
   drawTrailCrossings() {
     const marks = this.trailCrossings;
     if (!marks || !marks.length) return;
     const ctx = this.ctx;
     const lo = this.trailLo;
-    const r = Math.max(2, this.style.cellSize * 0.12);
+    const scale = Number.isFinite(this.style.crossingScale) ? this.style.crossingScale : 1;
+    const r = Math.max(1.2, this.style.cellSize * 0.12 * scale);
     ctx.save();
     this.clipTrail();
-    ctx.lineWidth = Math.max(1.2, r * 0.55);
+    ctx.lineWidth = Math.max(1, r * 0.55);
     for (const m of marks) {
       if (m.i >= lo) continue;
       ctx.strokeStyle = CROSSING_OUT;
@@ -790,6 +882,82 @@ export class Renderer {
       ctx.arc(m.inX, m.inY, r, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
+  }
+
+  /**
+   * 重访格高亮：把「截至当前步数已被经过 ≥ revisitMin 次」的格子标出来。
+   * 判定与播放进度同步（未走过的格与尚未形成重访的格都不标），
+   * 因此不会提前泄露后面的轨迹；结果按步数 / 阈值缓存，逐帧播放不重复全量扫描。
+   */
+  drawRevisit(tick) {
+    const cells = this.revisitCells(tick);
+    if (!cells.length) return;
+    const ctx = this.ctx;
+    const s = this.style;
+    const half = (s.cellSize - s.gap) / 2;
+    const alpha = Number.isFinite(s.revisitAlpha) ? s.revisitAlpha : 0.22;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = REVISIT_FILL;
+    ctx.strokeStyle = REVISIT_STROKE;
+    ctx.lineWidth = Math.max(1, s.cellSize * 0.06);
+    for (const info of cells) {
+      const p = this.center(info);
+      if (this.grid.type === 'hex') pathHex(ctx, p.x, p.y, half * 0.92);
+      else roundRect(ctx, p.x - half, p.y - half, half * 2, half * 2, s.cellSize * 0.18);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 截至 tick 已经达到重访阈值的格子信息（按步数 / 阈值缓存） */
+  revisitCells(tick) {
+    const min = Math.max(2, Math.round(this.style.revisitMin) || 2);
+    const cache = this._revisitCache;
+    if (cache && cache.tick === tick && cache.min === min) return cache.cells;
+    const cells = [];
+    if (this.trailInfo && this.trailInfo.size) {
+      for (const info of this.trailInfo.values()) {
+        if (revisitReached(info, tick, min)) cells.push(info);
+      }
+    }
+    this._revisitCache = { tick, min, cells };
+    return cells;
+  }
+
+  /**
+   * 悬停行列准线：把光标所在整行 / 整列以淡色带标出，并在格心画一条十字导线，
+   * 便于在大网格上快速定位坐标；绘制范围裁剪到网格区域，不侵入四周留白。
+   */
+  drawHoverCrosshair() {
+    const ctx = this.ctx;
+    const s = this.style;
+    const { cellSize, gap } = s;
+    const p = this.center(this.hover);
+    const rect = this.gridRect();
+    const w = rect.right - rect.left;
+    const h = rect.bottom - rect.top;
+    const pitch = cellSize + gap;
+    const lw = Number.isFinite(s.hoverCrosshairWidth) ? s.hoverCrosshairWidth : 1;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, w, h);
+    ctx.clip();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = HOVER_ACCENT;
+    ctx.fillRect(p.x - pitch / 2, rect.top, pitch, h);
+    ctx.fillRect(rect.left, p.y - pitch / 2, w, pitch);
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = HOVER_ACCENT;
+    ctx.lineWidth = Math.max(0.5, lw);
+    ctx.beginPath();
+    ctx.moveTo(p.x, rect.top);
+    ctx.lineTo(p.x, rect.bottom);
+    ctx.moveTo(rect.left, p.y);
+    ctx.lineTo(rect.right, p.y);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1854,7 +2022,7 @@ export class Renderer {
     const { cellSize } = this.style;
     const p = this.center(this.hover);
     ctx.save();
-    ctx.strokeStyle = '#4dabf7';
+    ctx.strokeStyle = HOVER_ACCENT;
     ctx.lineWidth = 1.5;
     const half = cellSize / 2;
     if (this.grid.type === 'hex') pathHex(ctx, p.x, p.y, half * 0.9);
@@ -1899,22 +2067,83 @@ export class Renderer {
     return best;
   }
 
-  /** 当前帧的完整信息文本（用于悬停提示） */
+  /**
+   * 当前帧的悬浮提示文本（用于鼠标悬浮格子时的浮层）。
+   *
+   * 内容与「已开启的显示状态」严格同步：起始点 / 终点标记、边界进出点标记、轨迹、移动体
+   * 各自跟随对应的显示开关，未开启的可视化元素不会在提示中出现；
+   * 轨迹部分额外给出「截至当前步数的本次 / 上一次经过步数」，保证轨迹回溯信息完整。
+   */
   describe(frameIndex, coord) {
-    const frame = this.result.frames[Math.max(0, Math.min(frameIndex, this.result.frames.length - 1))];
+    const s = this.style;
+    const frames = this.result.frames;
+    const frame = frames[Math.max(0, Math.min(frameIndex, frames.length - 1))];
     if (!frame) return '';
+    if (s.hoverTip === false) return '';
     const lines = [`坐标 (${coord.col}, ${coord.row})`];
     const index = this.grid.idx(coord.col, coord.row);
-    const st = this.states[frame.cells[index]];
-    lines.push(`环境：${st ? stateLabel(st.name) : '空格'}`);
-    for (const a of frame.agents) {
-      const i = a.segments.findIndex(([c, r]) => c === coord.col && r === coord.row);
-      if (i === 0) lines.push(`${a.label}：蛇头（方向 ${dirLabel(this.grid.type, a.dir)}）`);
-      else if (i > 0) lines.push(`${a.label}：第 ${i} 节`);
-    }
     const info = this.trailInfo.get(index);
-    if (info) lines.push(`轨迹：次序 #${info.order}，首次第 ${info.first} 步，末次第 ${info.last} 步，共 ${info.visits} 次`);
+
+    if (s.hoverTipState !== false) {
+      const st = this.states[frame.cells[index]];
+      lines.push(`环境：${st ? stateLabel(st.name) : '空格'}`);
+    }
+
+    // 标记类信息：与「起点/终点」「边界进出点」两个显示开关同步，未开启则不出现
+    if (s.hoverTipMarkers !== false) {
+      const isStart = s.showStartEnd && this.startCoord
+        && this.startCoord.col === coord.col && this.startCoord.row === coord.row;
+      if (isStart) lines.push(`起点标记：本格为起始点${info ? `（首次第 ${info.first} 步）` : ''}`);
+      const isEnd = s.showStartEnd && this.endCoord
+        && this.endCoord.col === coord.col && this.endCoord.row === coord.row;
+      if (isEnd) lines.push('终点标记：本格为结束点');
+      if (s.showCrossings && this.crossingCells) {
+        const rec = this.crossingCells.get(index);
+        const parts = [];
+        if (rec) {
+          const out = this.crossingSteps(rec.out, frame.tick);
+          const inn = this.crossingSteps(rec.in, frame.tick);
+          if (out) parts.push(`滑出（${out}）`);
+          if (inn) parts.push(`滑入（${inn}）`);
+        }
+        if (parts.length) lines.push(`边界进出点：${parts.join(' · ')}`);
+      }
+    }
+
+    if (s.hoverTipAgent !== false && s.showBody) {
+      for (const a of frame.agents) {
+        const i = a.segments.findIndex(([c, r]) => c === coord.col && r === coord.row);
+        if (i === 0) lines.push(`${a.label}：蛇头（方向 ${dirLabel(this.grid.type, a.dir)}）`);
+        else if (i > 0) lines.push(`${a.label}：第 ${i} 节`);
+      }
+    }
+
+    if (s.hoverTipTrail !== false && s.showTrail && info) {
+      lines.push(`轨迹：次序 #${info.order} · 首次第 ${info.first} 步 · 末次第 ${info.last} 步 · 共 ${info.visits} 次`);
+      const at = visitStatsAt(info, frame.tick);
+      if (at) {
+        lines.push(`本次经过：第 ${at.last} 步（截至当前共 ${at.count} 次）`);
+        lines.push(at.prev === null ? '上一次经过：无（本格首次经过）' : `上一次经过：第 ${at.prev} 步`);
+      }
+    }
     return lines.join('\n');
+  }
+
+  /**
+   * 边界进出点的步数文案：只列出「已经播放到」的穿越事件（与画面标记同步出现），
+   * 超过 3 次时以「等 N 次」收尾，避免提示浮层被长列表撑开。
+   */
+  crossingSteps(ticks, tick) {
+    if (!ticks || !ticks.length) return '';
+    const shown = [];
+    let hit = 0;
+    for (const t of ticks) {
+      if (t > tick) continue;
+      hit++;
+      if (shown.length < 3) shown.push(t);
+    }
+    if (!hit) return '';
+    return hit > shown.length ? `第 ${shown.join('、')} 步 等 ${hit} 次` : `第 ${shown.join('、')} 步`;
   }
 }
 

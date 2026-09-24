@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.6.2</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.6.3</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -1135,10 +1135,21 @@ fadeMode:'linear',
 fadeLength:60,
 trailColorMode:'fade',
 trailSmooth:true,
-showCrossings:true,
+showCrossings:false,
+crossingScale:1,
 showEyes:false,
 showEffects:true,
 glow:false,
+hoverCrosshair:false,
+hoverCrosshairWidth:1,
+showRevisit:false,
+revisitMin:2,
+revisitAlpha:0.22,
+hoverTip:true,
+hoverTipState:true,
+hoverTipAgent:true,
+hoverTipTrail:true,
+hoverTipMarkers:true,
 trailJoin:'line',
 bodyJoin:'line',
 trailAngle:45,
@@ -1437,10 +1448,21 @@ fadeLength:clamp(num(raw.fadeLength,d.fadeLength),FADE_LENGTH_LIMIT.min,FADE_LEN
 trailColorMode:TRAIL_COLOR_MODES.includes(raw.trailColorMode)?raw.trailColorMode:d.trailColorMode,
 trailSmooth:bool(raw.trailSmooth,d.trailSmooth),
 showCrossings:bool(raw.showCrossings,d.showCrossings),
+crossingScale:clamp(num(raw.crossingScale,d.crossingScale),0.4,3),
 axisLabels:bool(raw.axisLabels,d.axisLabels),
 showEyes:bool(raw.showEyes,d.showEyes),
 showEffects:bool(raw.showEffects,d.showEffects),
 glow:bool(raw.glow,d.glow),
+hoverCrosshair:bool(raw.hoverCrosshair,d.hoverCrosshair),
+hoverCrosshairWidth:clamp(num(raw.hoverCrosshairWidth,d.hoverCrosshairWidth),0.5,4),
+showRevisit:bool(raw.showRevisit,d.showRevisit),
+revisitMin:clamp(Math.round(num(raw.revisitMin,d.revisitMin)),2,20),
+revisitAlpha:clamp(num(raw.revisitAlpha,d.revisitAlpha),0.05,0.6),
+hoverTip:bool(raw.hoverTip,d.hoverTip),
+hoverTipState:bool(raw.hoverTipState,d.hoverTipState),
+hoverTipAgent:bool(raw.hoverTipAgent,d.hoverTipAgent),
+hoverTipTrail:bool(raw.hoverTipTrail,d.hoverTipTrail),
+hoverTipMarkers:bool(raw.hoverTipMarkers,d.hoverTipMarkers),
 trailJoin,
 bodyJoin,
 trailAngle:clamp(num(raw.trailAngle,d.trailAngle),5,85),
@@ -2151,12 +2173,14 @@ order:order.length,
 first:tick,
 last:tick,
 visits:1,
+ticks:[tick],
 });
 return;
 }
 if(tick<cell.first)cell.first=tick;
 if(tick>cell.last)cell.last=tick;
 cell.visits++;
+cell.ticks.push(tick);
 };
 for(const f of frames){
 const agents=f.agents||[];
@@ -2272,6 +2296,7 @@ order:order.length,
 first:p.tick,
 last:p.tick,
 visits:1,
+ticks:[p.tick],
 };
 info.set(p.index,cell);
 continue;
@@ -2279,8 +2304,37 @@ continue;
 if(p.tick<cell.first)cell.first=p.tick;
 if(p.tick>cell.last)cell.last=p.tick;
 cell.visits++;
+cell.ticks.push(p.tick);
 }
 return{path:kept,order,info,maxTick};
+}
+function visitStatsAt(info,tick){
+const ticks=info&&info.ticks;
+if(!ticks|| !ticks.length)return null;
+const limit=Number.isFinite(tick)?tick:Infinity;
+let count=0;
+let last=null;
+let prev=null;
+for(let i=0;i<ticks.length;i++){
+const t=ticks[i];
+if(t>limit)continue;
+count++;
+prev=last;
+last=t;
+}
+if(!count)return null;
+return{first:info.first,last,prev,count,total:info.visits};
+}
+function revisitReached(info,tick,min){
+const ticks=info&&info.ticks;
+if(!ticks||ticks.length<min)return false;
+const need=Math.max(2,Math.round(min)||2);
+let n=0;
+for(let i=0;i<ticks.length;i++){
+if(ticks[i]>tick)continue;
+if(++n>=need)return true;
+}
+return false;
 }
 const TRAIL_QUERY_LOGICS=['and','or'];
 const TRAIL_QUERY_LOGIC_LABELS={and:'全部满足（且）',or:'任一满足（或）'};
@@ -2496,7 +2550,7 @@ return[
 `重合率 ${pct}%（重合 / 并集，共 ${diff.union} 格）`,
 ].join('\n');
 }
-return{buildTrail,unwrapTrail,defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText};
+return{buildTrail,unwrapTrail,visitStatsAt,revisitReached,defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText};
 })();
 __MODULES["src/core/presets.js"]=(function(){
 const{defaultConfig,defaultRule,defaultClause}=__MODULES["src/core/config.js"];
@@ -5649,6 +5703,11 @@ showTrail:'轨迹',showBody:'身体',showArrows:'方向箭头',showCoords:'坐�
 showObstacles:'障碍物',showMarkers:'标记物',highlightRules:'规则高亮',showStartEnd:'起点/终点',
 trailFade:'轨迹渐隐',fadeMode:'轨迹衰减模式',fadeLength:'衰减步长',
 showEyes:'蛇头眼睛',showEffects:'交互特效',glow:'蛇身发光',
+showCrossings:'边界进出点',crossingScale:'进出点标记尺寸',
+hoverCrosshair:'悬停行列准线',hoverCrosshairWidth:'准线宽度',
+showRevisit:'重访格高亮',revisitMin:'重访判定次数',revisitAlpha:'重访高亮不透明度',
+hoverTip:'悬浮提示',hoverTipState:'提示：环境状态',hoverTipAgent:'提示：移动体',
+hoverTipTrail:'提示：轨迹信息',hoverTipMarkers:'提示：标记信息',
 trailJoin:'轨迹连接方式',bodyJoin:'蛇身连接方式',trailAngle:'切角角度',
 followAgent:'跟随移动体',axisLabels:'坐标轴',
 };
@@ -5778,7 +5837,7 @@ return{diffConfigs,summarizeConfigChanges};
 __MODULES["src/ui/canvas.js"]=(function(){
 const{dirLabel}=__MODULES["src/core/grid.js"];
 const{stateLabel}=__MODULES["src/core/world.js"];
-const{buildTrail,unwrapTrail}=__MODULES["src/core/trail.js"];
+const{buildTrail,unwrapTrail,visitStatsAt,revisitReached}=__MODULES["src/core/trail.js"];
 const STYLE_DEFAULTS={
 cellSize:26,
 gap:2,
@@ -5797,10 +5856,21 @@ fadeMode:'linear',
 fadeLength:60,
 trailColorMode:'fade',
 trailSmooth:true,
-showCrossings:true,
+showCrossings:false,
+crossingScale:1,
 showEyes:false,
 showEffects:true,
 glow:false,
+hoverCrosshair:false,
+hoverCrosshairWidth:1,
+showRevisit:false,
+revisitMin:2,
+revisitAlpha:0.22,
+hoverTip:true,
+hoverTipState:true,
+hoverTipAgent:true,
+hoverTipTrail:true,
+hoverTipMarkers:true,
 trailJoin:'line',
 bodyJoin:'line',
 trailAngle:45,
@@ -5829,6 +5899,9 @@ order:['#9775fa','#4dabf7','#38d9a9','#ffd43b','#ff8787'],
 };
 const CROSSING_OUT='rgba(255, 212, 59, 0.9)';
 const CROSSING_IN='rgba(77, 171, 247, 0.95)';
+const HOVER_ACCENT='#4dabf7';
+const REVISIT_FILL='rgba(255, 107, 107, 0.55)';
+const REVISIT_STROKE='rgba(255, 138, 101, 0.95)';
 const FILTER_FILL='rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR='rgba(255, 212, 59, 0.95)';
 const COMPARE_BASE_COLOR='rgba(147, 161, 177, 0.9)';
@@ -5852,7 +5925,9 @@ this.trailInfo=new Map();
 this.trailUn=null;
 this.trailRuns=[];
 this.trailCrossings=[];
+this.crossingCells=new Map();
 this.trailLo=0;
+this._revisitCache=null;
 this.pixDirty=true;
 this.trailCv=null;
 this.trailCvMode='';
@@ -5926,6 +6001,8 @@ prepare(){
 const grid=this.grid;
 this.trail=buildTrail(grid,this.result.frames);
 this.trailInfo=this.trail.info;
+this._revisitCache=null;
+this.prepareCrossingCells(grid);
 this.pixDirty=true;
 this.collisionPoints=[];
 for(const f of this.result.frames){
@@ -5937,6 +6014,26 @@ const firstFrame=this.result.frames[0];
 this.startCoord=firstFrame?.agents[0]?.segments?.[0]?{col:firstFrame.agents[0].segments[0][0],row:firstFrame.agents[0].segments[0][1]}:null;
 const lastFrame=this.result.frames[this.result.frames.length-1];
 this.endCoord=lastFrame?.agents[0]?.segments?.[0]?{col:lastFrame.agents[0].segments[0][0],row:lastFrame.agents[0].segments[0][1]}:null;
+}
+prepareCrossingCells(grid){
+this.crossingCells=new Map();
+const path=this.trail.path;
+if(!path.length||grid.boundary!=='wrap')return;
+const{crossings}=unwrapTrail(grid,path);
+for(const cr of crossings){
+const out=path[cr.i-1];
+const inn=path[cr.i];
+if(out)this.addCrossingCell(out.index,out.tick,'out');
+if(inn)this.addCrossingCell(inn.index,inn.tick,'in');
+}
+}
+addCrossingCell(index,tick,kind){
+let rec=this.crossingCells.get(index);
+if(!rec){
+rec={out:[],in:[]};
+this.crossingCells.set(index,rec);
+}
+rec[kind].push(tick);
 }
 ensureTrailPix(){
 if(!this.pixDirty&&this.trailUn&&this.trailUn.length===this.trail.path.length*2)return;
@@ -6041,7 +6138,9 @@ ctx.fillRect(0,0,this.size.width,this.size.height);
 if(s.showGrid)this.drawGrid();
 this.drawCells(frame,th);
 if(s.showTrail)this.drawTrail(frame,th,tickF);
-if(s.showTrail&&s.showCrossings)this.drawTrailCrossings();
+else if(s.showCrossings)this.syncTrailCursor(tickF);
+if(s.showCrossings)this.drawTrailCrossings();
+if(s.showRevisit)this.drawRevisit(tickF);
 this.drawCompare();
 this.drawFilterHighlight();
 if(s.showEffects)this.drawEffects(i0);
@@ -6050,6 +6149,7 @@ if(s.showBody)this.drawAgents(frame,t>0?next:null,t);
 if(s.showStartEnd)this.drawStartEnd(frame);
 this.drawCollisions(frame);
 if(s.showCoords||s.axisLabels)this.drawAxis(th);
+if(this.hover&&s.hoverCrosshair)this.drawHoverCrosshair();
 if(this.hover)this.drawHover();
 ctx.restore();
 }
@@ -6158,6 +6258,19 @@ const mode=this.style.trailJoin;
 if(mode==='curve'&&lo>1)this.drawTrailCurve(th,lo,tick);
 else if(mode==='angle'&&lo>1)this.drawTrailAngle(th,lo,tick);
 else this.drawTrailLine(th,lo,tick);
+}
+syncTrailCursor(tickF){
+const path=this.trail.path;
+if(!path.length)return;
+let lo=0;
+let hi=path.length;
+while(lo<hi){
+const mid=(lo+hi)>>1;
+if(path[mid].tick<=tickF)lo=mid+1;
+else hi=mid;
+}
+this.ensureTrailPix();
+this.trailLo=lo;
 }
 trailRunsUpTo(lo,tick){
 const out=[];
@@ -6343,10 +6456,11 @@ const marks=this.trailCrossings;
 if(!marks|| !marks.length)return;
 const ctx=this.ctx;
 const lo=this.trailLo;
-const r=Math.max(2,this.style.cellSize*0.12);
+const scale=Number.isFinite(this.style.crossingScale)?this.style.crossingScale:1;
+const r=Math.max(1.2,this.style.cellSize*0.12*scale);
 ctx.save();
 this.clipTrail();
-ctx.lineWidth=Math.max(1.2,r*0.55);
+ctx.lineWidth=Math.max(1,r*0.55);
 for(const m of marks){
 if(m.i>=lo)continue;
 ctx.strokeStyle=CROSSING_OUT;
@@ -6358,6 +6472,69 @@ ctx.beginPath();
 ctx.arc(m.inX,m.inY,r,0,Math.PI*2);
 ctx.fill();
 }
+ctx.restore();
+}
+drawRevisit(tick){
+const cells=this.revisitCells(tick);
+if(!cells.length)return;
+const ctx=this.ctx;
+const s=this.style;
+const half=(s.cellSize-s.gap)/2;
+const alpha=Number.isFinite(s.revisitAlpha)?s.revisitAlpha:0.22;
+ctx.save();
+ctx.globalAlpha=alpha;
+ctx.fillStyle=REVISIT_FILL;
+ctx.strokeStyle=REVISIT_STROKE;
+ctx.lineWidth=Math.max(1,s.cellSize*0.06);
+for(const info of cells){
+const p=this.center(info);
+if(this.grid.type==='hex')pathHex(ctx,p.x,p.y,half*0.92);
+else roundRect(ctx,p.x-half,p.y-half,half*2,half*2,s.cellSize*0.18);
+ctx.fill();
+ctx.stroke();
+}
+ctx.restore();
+}
+revisitCells(tick){
+const min=Math.max(2,Math.round(this.style.revisitMin)||2);
+const cache=this._revisitCache;
+if(cache&&cache.tick===tick&&cache.min===min)return cache.cells;
+const cells=[];
+if(this.trailInfo&&this.trailInfo.size){
+for(const info of this.trailInfo.values()){
+if(revisitReached(info,tick,min))cells.push(info);
+}
+}
+this._revisitCache={tick,min,cells};
+return cells;
+}
+drawHoverCrosshair(){
+const ctx=this.ctx;
+const s=this.style;
+const{cellSize,gap}=s;
+const p=this.center(this.hover);
+const rect=this.gridRect();
+const w=rect.right-rect.left;
+const h=rect.bottom-rect.top;
+const pitch=cellSize+gap;
+const lw=Number.isFinite(s.hoverCrosshairWidth)?s.hoverCrosshairWidth:1;
+ctx.save();
+ctx.beginPath();
+ctx.rect(rect.left,rect.top,w,h);
+ctx.clip();
+ctx.globalAlpha=0.12;
+ctx.fillStyle=HOVER_ACCENT;
+ctx.fillRect(p.x-pitch/2,rect.top,pitch,h);
+ctx.fillRect(rect.left,p.y-pitch/2,w,pitch);
+ctx.globalAlpha=0.5;
+ctx.strokeStyle=HOVER_ACCENT;
+ctx.lineWidth=Math.max(0.5,lw);
+ctx.beginPath();
+ctx.moveTo(p.x,rect.top);
+ctx.lineTo(p.x,rect.bottom);
+ctx.moveTo(rect.left,p.y);
+ctx.lineTo(rect.right,p.y);
+ctx.stroke();
 ctx.restore();
 }
 drawTrailLine(th,lo,tick){
@@ -7238,7 +7415,7 @@ const ctx=this.ctx;
 const{cellSize}=this.style;
 const p=this.center(this.hover);
 ctx.save();
-ctx.strokeStyle='#4dabf7';
+ctx.strokeStyle=HOVER_ACCENT;
 ctx.lineWidth=1.5;
 const half=cellSize/2;
 if(this.grid.type==='hex')pathHex(ctx,p.x,p.y,half*0.9);
@@ -7280,20 +7457,65 @@ if(d<bestD){bestD=d;best=cand;}
 return best;
 }
 describe(frameIndex,coord){
-const frame=this.result.frames[Math.max(0,Math.min(frameIndex,this.result.frames.length-1))];
+const s=this.style;
+const frames=this.result.frames;
+const frame=frames[Math.max(0,Math.min(frameIndex,frames.length-1))];
 if(!frame)return'';
+if(s.hoverTip===false)return'';
 const lines=[`坐标 (${coord.col}, ${coord.row})`];
 const index=this.grid.idx(coord.col,coord.row);
+const info=this.trailInfo.get(index);
+if(s.hoverTipState!==false){
 const st=this.states[frame.cells[index]];
 lines.push(`环境：${st?stateLabel(st.name):'空格'}`);
+}
+if(s.hoverTipMarkers!==false){
+const isStart=s.showStartEnd&&this.startCoord
+&&this.startCoord.col===coord.col&&this.startCoord.row===coord.row;
+if(isStart)lines.push(`起点标记：本格为起始点${info?`（首次第 ${info.first} 步）`:''}`);
+const isEnd=s.showStartEnd&&this.endCoord
+&&this.endCoord.col===coord.col&&this.endCoord.row===coord.row;
+if(isEnd)lines.push('终点标记：本格为结束点');
+if(s.showCrossings&&this.crossingCells){
+const rec=this.crossingCells.get(index);
+const parts=[];
+if(rec){
+const out=this.crossingSteps(rec.out,frame.tick);
+const inn=this.crossingSteps(rec.in,frame.tick);
+if(out)parts.push(`滑出（${out}）`);
+if(inn)parts.push(`滑入（${inn}）`);
+}
+if(parts.length)lines.push(`边界进出点：${parts.join(' · ')}`);
+}
+}
+if(s.hoverTipAgent!==false&&s.showBody){
 for(const a of frame.agents){
 const i=a.segments.findIndex(([c,r])=>c===coord.col&&r===coord.row);
 if(i===0)lines.push(`${a.label}：蛇头（方向 ${dirLabel(this.grid.type,a.dir)}）`);
 else if(i>0)lines.push(`${a.label}：第 ${i} 节`);
 }
-const info=this.trailInfo.get(index);
-if(info)lines.push(`轨迹：次序 #${info.order}，首次第 ${info.first} 步，末次第 ${info.last} 步，共 ${info.visits} 次`);
+}
+if(s.hoverTipTrail!==false&&s.showTrail&&info){
+lines.push(`轨迹：次序 #${info.order} · 首次第 ${info.first} 步 · 末次第 ${info.last} 步 · 共 ${info.visits} 次`);
+const at=visitStatsAt(info,frame.tick);
+if(at){
+lines.push(`本次经过：第 ${at.last} 步（截至当前共 ${at.count} 次）`);
+lines.push(at.prev===null?'上一次经过：无（本格首次经过）':`上一次经过：第 ${at.prev} 步`);
+}
+}
 return lines.join('\n');
+}
+crossingSteps(ticks,tick){
+if(!ticks|| !ticks.length)return'';
+const shown=[];
+let hit=0;
+for(const t of ticks){
+if(t>tick)continue;
+hit++;
+if(shown.length<3)shown.push(t);
+}
+if(!hit)return'';
+return hit>shown.length?`第 ${shown.join('、')} 步 等 ${hit} 次`:`第 ${shown.join('、')} 步`;
 }
 }
 function ribbonWidth(radius,t){
@@ -9255,7 +9477,7 @@ if(!state.result)return;
 const c=renderer.hitTest(e.clientX,e.clientY);
 renderer.hover=c;
 draw();
-if(!c){
+if(!c||renderer.style.hoverTip===false){
 hideTooltip();
 return;
 }
@@ -9281,7 +9503,7 @@ touchStart={x:t.clientX,y:t.clientY,moved:false};
 const c=renderer.hitTest(t.clientX,t.clientY);
 renderer.hover=c;
 draw();
-if(!c){hideTooltip();return;}
+if(!c||renderer.style.hoverTip===false){hideTooltip();return;}
 els.tooltip.textContent=renderer.describe(state.frameIndex,c);
 els.tooltip.classList.add('show');
 placeTooltip(t.clientX,t.clientY);
@@ -11720,7 +11942,8 @@ checkbox(s.showTrail,(v)=>{s.showTrail=v;onStyleChange();},'轨迹'),
 checkbox(s.showBody,(v)=>{s.showBody=v;onStyleChange();},'身体'),
 checkbox(s.showArrows,(v)=>{s.showArrows=v;onStyleChange();},'方向箭头'),
 checkbox(s.showStartEnd,(v)=>{s.showStartEnd=v;onStyleChange();},'起点/终点'),
-)),
+checkbox(s.showCrossings,(v)=>{s.showCrossings=v;onStyleChange();},'边界进出点'),
+),'「边界进出点」与「轨迹」相互独立：默认关闭，可单独开启；即使关闭「轨迹」，进出点标记仍按播放进度依次出现'),
 field('环境显示',row(
 checkbox(s.showObstacles,(v)=>{s.showObstacles=v;onStyleChange();},'障碍物'),
 checkbox(s.showMarkers,(v)=>{s.showMarkers=v;onStyleChange();},'标记物'),
@@ -11745,11 +11968,33 @@ min:FADE_LENGTH_LIMIT.min,max:FADE_LENGTH_LIMIT.max,step:1,number:true,
 field('渲染效果',row(
 checkbox(s.trailFade,(v)=>{s.trailFade=v;onStyleChange();},'轨迹渐隐'),
 checkbox(s.trailSmooth,(v)=>{s.trailSmooth=v;onStyleChange();},'轨迹尖端平滑'),
-checkbox(s.showCrossings,(v)=>{s.showCrossings=v;onStyleChange();},'边界穿越标记'),
 checkbox(s.showEffects,(v)=>{s.showEffects=v;onStyleChange();},'交互特效'),
 checkbox(s.glow,(v)=>{s.glow=v;onStyleChange();},'蛇身发光'),
 checkbox(s.showEyes,(v)=>{s.showEyes=v;onStyleChange();},'蛇头眼睛'),
-),'「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；「边界穿越标记」在接缝两侧标出滑出 / 滑入点；蛇头眼睛默认隐藏，勾选后显示'),
+),'「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；蛇头眼睛默认隐藏，勾选后显示'),
+field('进出点标记尺寸',rangeBind(s,'crossingScale',()=>onStyleChange(),{min:0.4,max:3,step:0.1}),
+'边界进出点标记（滑出空心环 / 滑入实心点）的尺寸倍数；仅在开启「边界进出点」时可见'),
+field('重访格高亮',row(
+checkbox(s.showRevisit,(v)=>{s.showRevisit=v;onStyleChange();},'开启'),
+),'把「截至当前步数已被经过达到阈值」的格子标出来（与播放进度同步，不提前泄露后面的轨迹）'),
+field('重访判定次数',rangeBind(s,'revisitMin',()=>onStyleChange(),{min:2,max:20,step:1,number:true}),
+'经过次数达到该值的格子视为重访；数值越大，只保留反复踩踏的热点格'),
+field('重访高亮不透明度',rangeBind(s,'revisitAlpha',()=>onStyleChange(),{min:0.05,max:0.6,step:0.01}),
+'重访格高亮的填充不透明度；调低可与轨迹叠加观察'),
+field('悬停行列准线',row(
+checkbox(s.hoverCrosshair,(v)=>{s.hoverCrosshair=v;onStyleChange();},'开启'),
+),'鼠标悬浮时高亮所在整行 / 整列并在格心画出十字导线，便于在大网格上定位坐标'),
+field('准线宽度',rangeBind(s,'hoverCrosshairWidth',()=>onStyleChange(),{min:0.5,max:4,step:0.5}),
+'行列准线中心导线的线宽；仅在开启「悬停行列准线」时可感知'),
+field('悬浮提示',row(
+checkbox(s.hoverTip,(v)=>{s.hoverTip=v;onStyleChange();},'总开关'),
+),'关闭后鼠标悬浮只保留画布高亮，不再弹出信息浮层'),
+field('提示内容',row(
+checkbox(s.hoverTipState,(v)=>{s.hoverTipState=v;onStyleChange();},'环境状态'),
+checkbox(s.hoverTipAgent,(v)=>{s.hoverTipAgent=v;onStyleChange();},'移动体'),
+checkbox(s.hoverTipTrail,(v)=>{s.hoverTipTrail=v;onStyleChange();},'轨迹回溯'),
+checkbox(s.hoverTipMarkers,(v)=>{s.hoverTipMarkers=v;onStyleChange();},'标记信息'),
+),'提示内容与当前已开启的显示状态严格同步：起点/终点、边界进出点、轨迹、移动体等未开启的可视化元素不会出现在提示中；「轨迹回溯」包含首次 / 末次 / 本次 / 上一次经过步数'),
 field('穿越事件日志',row(
 checkbox(cfg.events.logCrossings,(v)=>{cfg.events.logCrossings=v;onSimChange();},'记录边界穿越到规则日志'),
 ),'开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
