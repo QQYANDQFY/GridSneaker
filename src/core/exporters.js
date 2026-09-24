@@ -2,7 +2,7 @@
  * 导出能力：配置 JSON、轨迹 CSV/JSON、规则日志、SVG 矢量图、PNG 截图
  */
 import { dirNames } from './grid.js';
-import { buildTrail } from './trail.js';
+import { buildTrail, unwrapTrail } from './trail.js';
 
 export function toJSON(obj, pretty = true) {
   return JSON.stringify(obj, null, pretty ? 2 : 0);
@@ -240,7 +240,6 @@ export function trailToSVG(result, styleOverride = {}) {
   const trailB = style.darkMode ? '#63b3ed' : '#2b6cb0';
   const trail = buildTrail(grid, result.frames);
   const spec = svgFadeSpec(style);
-  const pitch = style.cellSize + style.gap;
 
   const parts = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${size.width.toFixed(1)}" height="${size.height.toFixed(1)}" viewBox="0 0 ${size.width.toFixed(1)} ${size.height.toFixed(1)}" font-family="system-ui, sans-serif">`);
@@ -255,12 +254,14 @@ export function trailToSVG(result, styleOverride = {}) {
     }
   }
 
-  // 轨迹：按「步数连续 + 同一移动体 + 像素间距」切段，段内按亮度分档合并成 polyline
+  // 轨迹：按「步数连续 + 同一移动体 + 跨边界折回」切段，段内按亮度分档合并成 polyline
   const baseWidth = Math.max(1.5, (style.cellSize - style.gap) * 0.4);
-  for (const run of svgTrailRuns(grid, trail.path, trail.maxTick, style, pitch)) {
+  // 与画面渲染一致：亮度按渐隐档量化取值，同档的相邻段合并为一条 polyline
+  const fadeStyle = (t) => svgFadeStyle(spec.on ? (svgFadeBucket(t) + 0.5) / SVG_FADE_BUCKETS : 1, trailA, trailB, baseWidth);
+  for (const run of svgTrailRuns(grid, trail.path, trail.maxTick, style)) {
     if (!run.length) continue;
     if (run.length === 1) {
-      const st = svgFadeStyle(run[0].t, trailA, trailB, baseWidth);
+      const st = fadeStyle(run[0].t);
       parts.push(`<circle cx="${run[0].x.toFixed(1)}" cy="${run[0].y.toFixed(1)}" r="${(baseWidth * 0.5).toFixed(1)}" fill="${st.color}" fill-opacity="${st.alpha.toFixed(3)}"/>`);
       continue;
     }
@@ -269,7 +270,7 @@ export function trailToSVG(result, styleOverride = {}) {
     for (let k = 1; k < run.length; k++) {
       const next = k + 1 < run.length ? svgFadeBucket((run[k].t + run[k + 1].t) / 2) : -1;
       if (next === bucket) continue;
-      const st = svgFadeStyle((run[start].t + run[k].t) / 2, trailA, trailB, baseWidth);
+      const st = fadeStyle((run[start].t + run[k].t) / 2);
       const pts = [];
       for (let j = start; j <= k; j++) pts.push(`${run[j].x.toFixed(1)},${run[j].y.toFixed(1)}`);
       parts.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="${st.color}" stroke-width="${st.width.toFixed(2)}" stroke-opacity="${st.alpha.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`);
@@ -327,33 +328,44 @@ function svgFadeStyle(t, a, b, baseWidth) {
   };
 }
 
-/** 轨迹路径 → 像素连续段（同一移动体、步数连续、像素间距不过大） */
-function svgTrailRuns(grid, path, maxTick, style, pitch) {
+/**
+ * 轨迹路径 → 像素连续段（同一移动体、步数连续、跨边界处按整圈平移折回）。
+ *
+ * 环绕边界下相邻两步会「瞬移」到对侧：若按像素间距断段，跨缝前后的轨迹会整段缺失
+ * （边界格只画出半条轨迹）。这里与画面渲染共用 unwrapTrail 的解算 —— 先得到连续展开坐标，
+ * 再按整圈平移折回，每段带上自己的平移量，接缝两侧的轨迹都完整保留。
+ */
+function svgTrailRuns(grid, path, maxTick, style) {
   const spec = svgFadeSpec(style);
-  const runs = [];
-  let run = [];
-  let prev = null;
-  for (let i = 0; i < path.length; i++) {
-    const p = path[i];
-    const t = svgFadeProgress(maxTick - p.tick, spec);
-    if (spec.on && t <= 0) {
-      if (run.length) runs.push(run);
-      run = [];
-      prev = null;
-      continue;
+  const out = [];
+  if (!path.length) return out;
+  const { col, row, runs } = unwrapTrail(grid, path);
+  // 整圈平移量（横向 width 格 / 纵向 height 格）对应的像素位移
+  const zero = grid.toPixel({ col: 0, row: 0 }, style.cellSize, style.gap);
+  const xr = grid.toPixel({ col: grid.width, row: 0 }, style.cellSize, style.gap);
+  const yr = grid.toPixel({ col: 0, row: grid.height }, style.cellSize, style.gap);
+  const ax = xr.x - zero.x;
+  const ay = xr.y - zero.y;
+  const bx = yr.x - zero.x;
+  const by = yr.y - zero.y;
+  for (const run of runs) {
+    // 段内步数升序 → 仅头部（较早）的点可能已超出衰减窗口
+    let from = run.from;
+    const to = run.to;
+    if (spec.on) {
+      while (from <= to && maxTick - path[from].tick >= spec.len) from++;
+      if (from > to) continue;
     }
-    const px = grid.toPixel({ col: p.index % grid.width, row: Math.floor(p.index / grid.width) }, style.cellSize, style.gap);
-    const brk = prev && (p.tick - prev.tick !== 1 || p.agent !== prev.agent
-      || Math.hypot(px.x - prev.x, px.y - prev.y) > pitch * 1.7);
-    if (brk && run.length) {
-      runs.push(run);
-      run = [];
+    const dx = -(run.kx * ax + run.ky * bx);
+    const dy = -(run.kx * ay + run.ky * by);
+    const pts = [];
+    for (let k = from; k <= to; k++) {
+      const px = grid.toPixel({ col: col[k], row: row[k] }, style.cellSize, style.gap);
+      pts.push({ x: px.x + dx, y: px.y + dy, t: spec.on ? svgFadeProgress(maxTick - path[k].tick, spec) : 1 });
     }
-    run.push({ x: px.x, y: px.y, t: spec.on ? t : 1 });
-    prev = { x: px.x, y: px.y, tick: p.tick, agent: p.agent };
+    if (pts.length) out.push(pts);
   }
-  if (run.length) runs.push(run);
-  return runs;
+  return out;
 }
 
 /* --------------------------- 文件下载 --------------------------- */

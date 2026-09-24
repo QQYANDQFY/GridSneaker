@@ -85,6 +85,92 @@ export function buildTrail(grid, frames) {
   return { path, order, info, maxTick, grid };
 }
 
+/**
+ * 轨迹的「连续展开 + 按周期折回」，供画面渲染与 SVG 导出共用。
+ *
+ * 环绕边界（wrap）下相邻两步的格坐标会「瞬移」到对侧：若直接按两次的真实坐标连线，
+ * 这条线段会横穿整张画面；而按像素间距强行断开，又会让跨缝前后的轨迹整段缺失
+ * （边界格只显示半条轨迹）。这里改为与体节渲染同一套解算：
+ *   1) 沿轨迹逐点累加「环绕最短位移」，得到连续展开坐标（相邻点恒差一步）；
+ *   2) 展开坐标按整圈平移折回可视区域；每折回一圈就切一段，
+ *      并让新段与上一段重叠一个点 —— 跨缝的那一步因此在滑出侧、滑入侧各画一次，
+ *      接缝两侧的轨迹都完整可见。
+ *
+ * @param {Grid} grid
+ * @param {Array<{index:number,tick:number,agent:number}>} path
+ * @returns {{col: Int32Array, row: Int32Array, runs: Array<{from:number,to:number,kx:number,ky:number}>,
+ *            crossings: Array<{i:number,okx:number,oky:number,nkx:number,nky:number}>}}
+ *   某段内的绘制坐标 = { col[i] - kx * width, row[i] - ky * height }（i ∈ [from, to]）
+ *   crossings 记录每一次穿越边界的接缝：i 为滑入侧第一个点的下标，
+ *   okx / oky 为滑出侧所在段的平移量，nkx / nky 为滑入侧所在段的平移量。
+ */
+export function unwrapTrail(grid, path) {
+  const n = path.length;
+  const col = new Int32Array(n);
+  const row = new Int32Array(n);
+  const runs = [];
+  const crossings = [];
+  if (!n || !grid) return { col, row, runs, crossings };
+  const width = grid.width;
+  const height = grid.height;
+  // 只有环绕边界才需要展开；宽 / 高过小时「环绕最短位移」无法区分方向，退化为不展开
+  const wrapX = grid.boundary === 'wrap' && width > 2;
+  const wrapY = grid.boundary === 'wrap' && height > 2;
+  const periodic = wrapX || wrapY;
+  let from = 0;
+  let kx = 0;
+  let ky = 0;
+  for (let i = 0; i < n; i++) {
+    const node = path[i];
+    const c = node.index % width;
+    const r = (node.index / width) | 0;
+    if (!i) {
+      col[i] = c;
+      row[i] = r;
+      continue;
+    }
+    const a = path[i - 1];
+    const ac = a.index % width;
+    const ar = (a.index / width) | 0;
+    let dc = c - ac;
+    let dr = r - ar;
+    if (periodic) {
+      const d = grid.wrapDelta({ col: ac, row: ar }, { col: c, row: r });
+      if (wrapX) dc = d.dc;
+      if (wrapY) dr = d.dr;
+    }
+    // 换移动体 / 步数不连续 / 跨度超过一步：断开并重新锚定到真实位置
+    if (node.tick - a.tick !== 1 || node.agent !== a.agent || Math.abs(dc) > 1 || Math.abs(dr) > 1) {
+      runs.push({ from, to: i - 1, kx, ky });
+      from = i;
+      kx = 0;
+      ky = 0;
+      col[i] = c;
+      row[i] = r;
+      continue;
+    }
+    col[i] = col[i - 1] + dc;
+    row[i] = row[i - 1] + dr;
+    if (periodic) {
+      const nc = col[i] - kx * width;
+      const nr = row[i] - ky * height;
+      if (nc < 0 || nc >= width || nr < 0 || nr >= height) {
+        const nkx = wrapX ? Math.floor(col[i] / width) : 0;
+        const nky = wrapY ? Math.floor(row[i] / height) : 0;
+        if (nkx !== kx || nky !== ky) {
+          runs.push({ from, to: i, kx, ky }); // 旧段带上跨缝点：滑出侧一直画到边界
+          crossings.push({ i, okx: kx, oky: ky, nkx, nky });
+          from = i - 1; // 新段重叠一个点：滑入侧从对侧接着画
+          kx = nkx;
+          ky = nky;
+        }
+      }
+    }
+  }
+  runs.push({ from, to: n - 1, kx, ky });
+  return { col, row, runs, crossings };
+}
+
 /* ------------------------------------------------------------------ */
 /* 坐标筛选查询                                                        */
 /* ------------------------------------------------------------------ */

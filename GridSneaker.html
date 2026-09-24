@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GridSneaker · 网格移动动画模拟平台</title>
   <style>
-:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}.end-row.locked{opacity:0.6;border-color:var(--line);border-style:dashed}.end-row.locked>.check-wrap,.end-row.locked .checkbox{cursor:not-allowed}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap}.cfg-tab-nav .btn.tab-btn.on{background:#1c3b5a;color:#d7ecff;border-color:var(--accent)}.cfg-tab-panel{padding-top:2px}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:transparent;color:var(--muted);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:#1c3b5a;color:#d7ecff}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}
+:root{--bg:#0b0e13;--panel:#12161d;--panel-2:#171c25;--line:#242c38;--text:#e6edf3;--muted:#93a1b1;--accent:#4dabf7;--accent-2:#51cf66;--danger:#ff6b6b;--warn:#ffc078}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}#topbar{display:flex;align-items:baseline;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}#topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:0.3px}#topbar h1 .sub{margin-left:10px;font-size:12px;font-weight:400;color:var(--muted)}.topbar-hint{color:var(--muted);font-size:12px}#layout{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(280px,340px);gap:12px;padding:12px;height:calc(100% - 45px);align-items:start}@media (max-width:1180px){#layout{grid-template-columns:1fr;height:auto}.panel.scroll{max-height:60vh}}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}.panel.scroll{overflow-y:auto;max-height:calc(100vh - 70px)}#stage{display:flex;flex-direction:column;gap:10px;min-width:0}#canvas-wrap{position:relative;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:calc(100vh - 300px)}#canvas{display:block;border-radius:6px}.tooltip{position:fixed;left:0;top:0;display:none;max-width:min(300px,60vw);white-space:pre-line;padding:6px 9px;border-radius:6px;background:rgba(10,14,20,0.96);border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,0.45);color:var(--text);font-size:12px;line-height:1.55;pointer-events:none;z-index:9000}.tooltip.show{display:block}.controls{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.controls-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0}.controls-line+.controls-line{border-top:1px dashed var(--line)}.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background 0.15s,border-color 0.15s,transform 0.05s}.btn:hover{border-color:var(--accent)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:0.45;cursor:not-allowed}.btn.primary{background:#1c3b5a;border-color:#2f6da8}.btn.ghost{background:transparent}.btn.small{padding:3px 8px;font-size:11px}.btn.icon{padding:3px 7px;font-size:12px}.btn.danger{border-color:#6b2b2b;color:#ffb4b4}.btn.danger:hover{border-color:var(--danger)}.input{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px;font-family:inherit;min-width:0;width:100%}.input:focus{outline:none;border-color:var(--accent)}.input:disabled{opacity:0.5;cursor:not-allowed}.input.tiny{width:auto;min-width:68px;padding:2px 5px;font-size:11px}.textarea{resize:vertical;font-family:ui-monospace,Consolas,monospace;line-height:1.4}.checkbox{accent-color:var(--accent)}.color{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}.check-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}.range-wrap{display:flex;align-items:center;gap:8px;width:100%}.range{flex:1;accent-color:var(--accent);min-width:80px}.range.timeline{width:100%}.range-out{min-width:34px;text-align:right;color:var(--muted);font-size:11px}.range-num{flex:0 0 62px;width:62px;padding:3px 6px;font-size:12px;text-align:center}.group{--grp-h:212;--grp-s:24%;--grp-l:9%;--grp-border:hsl(var(--grp-h) calc(var(--grp-s)+8%) calc(var(--grp-l)+8%));--grp-bar:hsl(var(--grp-h) calc(var(--grp-s)+34%) calc(var(--grp-l)+44%));background:hsl(var(--grp-h) var(--grp-s) var(--grp-l));border:1px solid var(--grp-border);border-left:3px solid var(--grp-bar);border-radius:9px;margin:8px 0}.group>summary{cursor:pointer;padding:8px 10px;font-weight:600;font-size:12.5px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;color:hsl(var(--grp-h) calc(var(--grp-s)+24%) calc(var(--grp-l)+76%))}.group>summary::before{content:"▸";color:var(--grp-bar);font-size:11px}.group[open]>summary::before{content:"▾"}.group>summary .badge{font-size:10px;color:hsl(var(--grp-h) calc(var(--grp-s)+30%) calc(var(--grp-l)+56%));border:1px solid var(--grp-border);border-radius:20px;padding:0 6px}.group-body{padding:4px 10px 10px}.field{margin:7px 0}.field-label{display:block;color:var(--muted);font-size:11.5px;margin-bottom:3px}.field-hint{display:block;color:#6f7d8c;font-size:11px;margin-top:3px}.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.row>.field{flex:1 1 96px;min-width:0}.row>.check-wrap{padding-bottom:4px;min-width:0}.skin-row{display:flex;align-items:center;gap:10px}.skin-preview{flex:0 0 auto;width:46px;height:46px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d1117}.skin-preview.has-image{border-style:solid}.skin-preview img{width:100%;height:100%;object-fit:cover;display:block}.skin-empty{color:#6f7d8c;font-size:10px}.skin-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}.skin-file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.row-actions{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:4px;margin-left:auto}.row-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:23px;height:23px;padding:0 6px;line-height:1}.hint{color:#6f7d8c;font-size:11px;margin:4px 0}.mini-label{color:var(--muted);font-size:11.5px;white-space:nowrap}.sub-title{color:var(--accent);font-size:12px;margin:10px 0 2px;font-weight:600}.divider{height:1px;background:var(--line);margin:10px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:#0d1117;border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:2px 9px;font-size:11px;cursor:pointer}.chip.on{background:#1c3b5a;border-color:var(--accent);color:#d7ecff}.chips-line{display:flex;gap:12px;flex-wrap:wrap}.rule-list{display:flex;flex-direction:column}.save-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}.save-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}.save-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-no{flex:0 0 auto;width:18px;text-align:center;color:var(--accent);font-size:11.5px;font-weight:600}.condition{border-left:2px solid var(--line);padding-left:8px;margin-top:2px}.clause{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0}.clause-index{min-width:18px;height:18px;border-radius:50%;background:#22303f;color:var(--accent);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center}.action-list{display:flex;flex-direction:column;gap:6px}.action-item{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.state-list{display:flex;flex-direction:column;gap:5px}.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.state-row .input{flex:0 0 84px}.state-row select.input{flex:0 0 70px;width:70px}.swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}.swatch.empty{background:repeating-linear-gradient(45deg,#1b222c,#1b222c 4px,#232c38 4px,#232c38 8px)}.counts{display:flex;flex-direction:column;gap:4px}.count-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.end-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 6px;border-radius:7px;border:1px dashed transparent;margin:3px 0}.end-row.on{background:rgba(77,171,247,0.07);border-color:rgba(77,171,247,0.3)}.end-row.target{background:rgba(255,209,102,0.16);border-color:#ffd166;border-style:solid;animation:end-row-flash 0.5s ease-in-out 4 alternate}@keyframes end-row-flash{from{box-shadow:0 0 0 0 rgba(255,209,102,0)}to{box-shadow:0 0 0 3px rgba(255,209,102,0.32)}}.end-row.locked{opacity:0.6;border-color:var(--line);border-style:dashed}.end-row.locked>.check-wrap,.end-row.locked .checkbox{cursor:not-allowed}.end-row .field{margin:0;flex:0 1 118px;min-width:54px}.end-row .field-label{margin-bottom:1px}.end-row>.check-wrap{flex:1 1 auto;min-width:0}.end-row .row-actions{align-items:center}.speed-wrap{width:auto;flex:0 1 320px}.priority-no{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:11px}.stage-stats{display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;min-width:96px}.stat.wide{flex:1 1 100%}.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--accent)}.cfg-search{display:flex;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:2;padding:4px 0 6px;background:var(--panel)}.cfg-search .input{flex:1 1 auto}.cfg-search .mini-label{flex:0 0 auto}.cfg-tab-nav{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}.cfg-tab-nav .btn.tab-btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px;white-space:nowrap}.cfg-tab-nav .btn.tab-btn.on{background:#1c3b5a;color:#d7ecff;border-color:var(--accent)}.cfg-tab-panel{padding-top:2px}.cfg-tabs.searching .cfg-tab-panel{display:block !important}.cfg-tabs.searching .cfg-tab-panel+.cfg-tab-panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}.cfg-tabs.searching .cfg-tab-panel::before{content:attr(data-tab-label);display:block;color:var(--accent);font-size:11.5px;font-weight:600;margin:2px 0 4px}.cfg-tab-nav .btn.tab-btn.no-hits{opacity:0.42}.cfg-tab-nav .btn.tab-btn.has-hits:not(.on){color:#d7ecff}.stat-label{display:block;color:var(--muted);font-size:10.5px}.stat-value{font-size:13px;font-weight:600}.stage-stats.stat-switch .stat-value{animation:stat-fade 0.24s ease}@keyframes stat-fade{from{opacity:0.25}to{opacity:1}}.mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:4px 0 2px}.mode-switch .btn.mode-btn{border:none;border-radius:0;background:transparent;color:var(--muted);padding:5px 12px;font-size:12px}.mode-switch .btn.mode-btn+.btn.mode-btn{border-left:1px solid var(--line)}.mode-switch .btn.mode-btn.on{background:#1c3b5a;color:#d7ecff}.spark{display:block;width:100%;max-width:260px;height:44px}.bars{display:flex;flex-direction:column;gap:3px;margin-top:2px}.bar-row{display:flex;align-items:center;gap:6px;font-size:11px}.bar-label{width:28px;color:var(--muted)}.bar-track{flex:1;height:7px;background:#0d1117;border-radius:5px;overflow:hidden}.bar-fill{height:100%}.bar-val{width:92px;text-align:right;color:var(--muted)}.log-list{max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.log-item{display:grid;grid-template-columns:44px 84px 96px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.log-item:hover{background:#121924}.log-item.active{background:rgba(77,171,247,0.16);outline:1px solid rgba(77,171,247,0.45)}.log-item.skipped{opacity:0.55}.log-tick{color:var(--accent)}.log-rule{color:#ffd43b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-text{color:#c8d3de}@media (max-width:1400px){.log-item{grid-template-columns:40px 1fr}.log-item .log-sub,.log-item .log-text{grid-column:2}}.hidden{display:none !important}.range-rows{display:flex;flex-direction:column;gap:4px}.range-line{display:flex;align-items:center;gap:6px}.range-tag{flex:0 0 26px;color:var(--muted);font-size:11px}.range-line .input{flex:0 0 66px;width:66px;padding:3px 6px;font-size:12px;text-align:center}.range.query-range{flex:1 1 auto;min-width:60px}.query-error{color:#ffb4b4;background:rgba(255,107,107,0.08);border:1px solid #6b2b2b;border-radius:7px;padding:5px 8px;font-size:11px;margin:6px 0}.query-loading{color:#ffd166;font-size:11px;margin:6px 0}.query-loading::before{content:"◌ ";animation:query-spin 1s linear infinite;display:inline-block}@keyframes query-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.query-preset{border-top:1px dashed var(--line);margin-top:8px;padding-top:2px}.query-preset .field{margin:5px 0}.query-dash{color:var(--muted);font-size:12px;padding:0 2px}.query-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0d1117}.query-item{display:grid;grid-template-columns:84px 62px 72px 1fr;gap:6px;padding:4px 7px;border-bottom:1px solid #161c25;font-size:11.5px;cursor:pointer;align-items:baseline}.query-item:hover{background:#121924}.query-coord{color:#ffd43b;font-variant-numeric:tabular-nums}.query-meta{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:1400px){.query-item{grid-template-columns:84px 1fr}.query-item .query-meta{grid-column:2}}.compare-stat{white-space:pre-line}.compare-list{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:8px;background:#0d1117;padding:5px 7px}.compare-item{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-item:first-child{color:var(--text)}.frame-label{color:var(--muted);font-size:12px;white-space:nowrap}.end-label{color:var(--accent-2);font-size:12px;font-weight:600}.end-label.ended{color:var(--warn)}.score-label{color:var(--accent-2);font-size:12px;font-weight:600}.score-label.record{color:#ffd166}.modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,8,12,0.62);opacity:0;transition:opacity 0.16s ease;z-index:12000}.modal-mask.show{opacity:1}.modal{display:flex;flex-direction:column;gap:10px;width:min(560px,100%);max-height:min(80vh,720px);padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,0.55);transform:translateY(8px);transition:transform 0.16s ease}.modal-mask.show .modal{transform:none}.modal-title{font-size:14px;font-weight:600}.modal-msg{color:var(--muted);font-size:12.5px;line-height:1.6}.modal-body{overflow-y:auto;padding:8px 10px;background:#0d1117;border:1px solid var(--line);border-radius:9px}.modal-sec+.modal-sec{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}.modal-sec-title{margin-bottom:3px;color:var(--accent);font-size:12px;font-weight:600}.modal-item{color:#c8d3de;font-size:12px;line-height:1.7}.modal-item::before{content:"· ";color:var(--muted)}.modal-foot{color:#6f7d8c;font-size:11.5px}.modal-actions{display:flex;justify-content:flex-end;gap:8px}.toast-box{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:100}.toast{min-width:180px;max-width:320px;padding:8px 12px;border-radius:8px;background:#16202c;border:1px solid var(--line);color:var(--text);font-size:12px;opacity:0;transform:translateY(8px);transition:opacity 0.2s,transform 0.2s}.toast.show{opacity:1;transform:none}.toast.success{border-color:#2f6b41}.toast.warn{border:2px solid var(--warn);background:#2b2110;color:#ffe3b8;font-weight:600;box-shadow:0 8px 24px rgba(255,192,120,0.22)}.toast.error{border:2px solid var(--danger);background:#2a1517;color:#ffd3d3;font-weight:600}.alert{display:flex;align-items:flex-start;gap:8px;margin:8px 0;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5}.alert .alert-icon{font-size:14px;line-height:1.3}.alert .alert-text{flex:1;min-width:0}.alert .alert-text strong{display:block;margin-bottom:2px}.alert.warn{border:1px solid var(--warn);border-left:4px solid var(--warn);background:#2b2110;color:#ffe3b8;box-shadow:0 0 0 1px rgba(255,192,120,0.12) inset}.diag-ok{color:var(--accent-2);font-size:12px;padding:2px 0}.diag-item{background:var(--panel-2);border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 9px;margin:6px 0}.diag-item.error{border-left-color:var(--danger)}.diag-item.warning{border-left-color:var(--warn)}.diag-item.info{border-left-color:var(--accent)}.diag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}.diag-level{flex:0 0 auto;font-size:10px;line-height:16px;border:1px solid var(--line);border-radius:20px;padding:0 6px;color:var(--muted)}.diag-level.error{color:#ffb3b3;border-color:#7a2d2d}.diag-level.warning{color:#ffd9a8;border-color:#7a5a23}.diag-level.info{color:#bfe0ff;border-color:#2b5675}.diag-title{font-size:12.5px;font-weight:600}.diag-msg{color:var(--muted);font-size:11.5px;line-height:1.6}.diag-fixes{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}.diag-fix-label{color:#6f7d8c;font-size:11px}#legacy-hint{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;background:#f5f7fa;color:#22303c;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;text-align:center;padding:16vh 24px 0}#legacy-hint h2{font-size:20px;margin:0 0 12px}#legacy-hint p{font-size:14px;line-height:1.8;margin:0 0 6px}#legacy-hint.hidden{display:none}#canvas{touch-action:pan-x pan-y pinch-zoom;-webkit-tap-highlight-color:transparent}#tooltip{pointer-events:none}@media (max-width:860px){.btn{padding:8px 12px}.btn.small{padding:7px 10px}.btn.icon{min-width:32px;padding:7px 8px}.checkbox{width:15px;height:15px}.check-wrap{padding:3px 0}.field{margin:9px 0}.cfg-tab-nav .btn.tab-btn{font-size:12px;padding:8px 10px}.save-row{padding:6px 8px}}
   </style>
 </head>
 <body>
@@ -20,7 +20,7 @@
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub">网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.6.0</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
+    <div class="topbar-hint">v<span id="app-version">2.6.1</span> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</div>
   </header>
 
   <main id="layout">
@@ -553,7 +553,7 @@ for(let col=0;col<this.width;col++)out.push({col,row});
 return out;
 }
 }
-return{Grid,parseDir,DIR_LABEL_CN,dirLabel,dirNames};
+return{Grid,parseDir,DIR_LABEL_CN,dirNames,dirLabel};
 })();
 __MODULES["src/core/ca.js"]=(function(){
 const CA_UPDATE_LABELS={
@@ -1034,6 +1034,7 @@ obstacle:'stop',
 countMode:'total',
 },
 selfCollisionPolicy:{action:'stop',n:2,maxConsecutive:5},
+events:{logCrossings:true},
 transform:{
 enabled:false,
 dieOnSelfCollision:true,
@@ -1132,6 +1133,9 @@ showStartEnd:true,
 trailFade:true,
 fadeMode:'linear',
 fadeLength:60,
+trailColorMode:'fade',
+trailSmooth:true,
+showCrossings:true,
 showEyes:false,
 showEffects:true,
 glow:false,
@@ -1401,6 +1405,7 @@ direction:str(r.direction,'east'),
 }
 const JOIN_MODES=['curve','line','angle'];
 const FADE_MODES=['linear','exponential'];
+const TRAIL_COLOR_MODES=['fade','visit','order'];
 const FADE_LENGTH_LIMIT={min:2,max:2000};
 function normJoin(raw,joinKey,smoothKey,fallback){
 if(JOIN_MODES.includes(raw[joinKey]))return raw[joinKey];
@@ -1429,6 +1434,9 @@ showStartEnd:bool(raw.showStartEnd,d.showStartEnd),
 trailFade:bool(raw.trailFade,d.trailFade),
 fadeMode:FADE_MODES.includes(raw.fadeMode)?raw.fadeMode:d.fadeMode,
 fadeLength:clamp(num(raw.fadeLength,d.fadeLength),FADE_LENGTH_LIMIT.min,FADE_LENGTH_LIMIT.max),
+trailColorMode:TRAIL_COLOR_MODES.includes(raw.trailColorMode)?raw.trailColorMode:d.trailColorMode,
+trailSmooth:bool(raw.trailSmooth,d.trailSmooth),
+showCrossings:bool(raw.showCrossings,d.showCrossings),
 axisLabels:bool(raw.axisLabels,d.axisLabels),
 showEyes:bool(raw.showEyes,d.showEyes),
 showEffects:bool(raw.showEffects,d.showEffects),
@@ -1661,6 +1669,7 @@ ruleExecution:raw.ruleExecution==='sync'?'sync':'async',
 advancedRules:normAdvancedRules(raw.advancedRules),
 collision,
 selfCollisionPolicy,
+events:{logCrossings:bool((raw.events||{}).logCrossings,d.events.logCrossings)},
 environmentRules,
 caMode,
 endConditions,
@@ -2170,6 +2179,70 @@ lastTickOf.set(a.id,f.tick);
 }
 return{path,order,info,maxTick,grid};
 }
+function unwrapTrail(grid,path){
+const n=path.length;
+const col=new Int32Array(n);
+const row=new Int32Array(n);
+const runs=[];
+const crossings=[];
+if(!n|| !grid)return{col,row,runs,crossings};
+const width=grid.width;
+const height=grid.height;
+const wrapX=grid.boundary==='wrap'&&width>2;
+const wrapY=grid.boundary==='wrap'&&height>2;
+const periodic=wrapX||wrapY;
+let from=0;
+let kx=0;
+let ky=0;
+for(let i=0;i<n;i++){
+const node=path[i];
+const c=node.index%width;
+const r=(node.index/width)|0;
+if(!i){
+col[i]=c;
+row[i]=r;
+continue;
+}
+const a=path[i-1];
+const ac=a.index%width;
+const ar=(a.index/width)|0;
+let dc=c-ac;
+let dr=r-ar;
+if(periodic){
+const d=grid.wrapDelta({col:ac,row:ar},{col:c,row:r});
+if(wrapX)dc=d.dc;
+if(wrapY)dr=d.dr;
+}
+if(node.tick-a.tick!==1||node.agent!==a.agent||Math.abs(dc)>1||Math.abs(dr)>1){
+runs.push({from,to:i-1,kx,ky});
+from=i;
+kx=0;
+ky=0;
+col[i]=c;
+row[i]=r;
+continue;
+}
+col[i]=col[i-1]+dc;
+row[i]=row[i-1]+dr;
+if(periodic){
+const nc=col[i]-kx*width;
+const nr=row[i]-ky*height;
+if(nc<0||nc>=width||nr<0||nr>=height){
+const nkx=wrapX?Math.floor(col[i]/width):0;
+const nky=wrapY?Math.floor(row[i]/height):0;
+if(nkx!==kx||nky!==ky){
+runs.push({from,to:i,kx,ky});
+crossings.push({i,okx:kx,oky:ky,nkx,nky});
+from=i-1;
+kx=nkx;
+ky=nky;
+}
+}
+}
+}
+runs.push({from,to:n-1,kx,ky});
+return{col,row,runs,crossings};
+}
 function sliceTrailUpToTick(trail,tick){
 const path=(trail&&trail.path)||[];
 const limit=Math.round(Number(tick));
@@ -2422,7 +2495,7 @@ return[
 `重合率 ${pct}%（重合 / 并集，共 ${diff.union} 格）`,
 ].join('\n');
 }
-return{buildTrail,defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText};
+return{buildTrail,unwrapTrail,defaultTrailQuery,queryTrail,trailQueryActive,trailQueryLabel,trailCellsToCSV,trailCellsToText,trailQueryBounds,validateTrailQuery,reconcileTrailQuery,sliceTrailUpToTick,TRAIL_RANGE_FIELDS,TRAIL_QUERY_LOGICS,TRAIL_QUERY_LOGIC_LABELS,snapshotTrail,snapshotMatchesGrid,compareSnapshots,compareToCSV,compareToText};
 })();
 __MODULES["src/core/presets.js"]=(function(){
 const{defaultConfig,defaultRule,defaultClause}=__MODULES["src/core/config.js"];
@@ -4096,7 +4169,7 @@ endCode:endReason&&endReason.code?endReason.code:null,
 return{computeScore,formatScore};
 })();
 __MODULES["src/core/simulation.js"]=(function(){
-const{Grid,parseDir}=__MODULES["src/core/grid.js"];
+const{Grid,parseDir,dirNames}=__MODULES["src/core/grid.js"];
 const{RNG}=__MODULES["src/core/rng.js"];
 const{World,Agent}=__MODULES["src/core/world.js"];
 const{CAEngine}=__MODULES["src/core/ca.js"];
@@ -4271,6 +4344,7 @@ lengthOverTime:[mainAgent?mainAgent.length:0],
 obstacleCount:0,
 markerCount:0,
 logsDropped:0,
+wrapCrossings:0,
 };
 const initStateIdx=new Set();
 if(mainAgent){
@@ -4407,6 +4481,7 @@ merges:stats.merges,
 transformDeaths:stats.transformDeaths,
 transformedCells:stats.transformedCells,
 collisionWarnings:stats.collisionWarnings,
+wrapCrossings:stats.wrapCrossings,
 lives:stats.lives,
 maxLives:stats.maxLives,
 lifeGains:stats.lifeGains,
@@ -4505,6 +4580,21 @@ fromRow:exit.row,
 dir,
 agentId:agent.id,
 });
+if(cfg.events?.logCrossings){
+ctx.stats.wrapCrossings=(ctx.stats.wrapCrossings||0)+1;
+ctx.log({
+tick:ctx.tick,
+ruleId:'boundary',
+ruleName:'边界穿越',
+trigger:'wrap',
+subject:agent.label||agent.id,
+coord:{col:target.col,row:target.row},
+priority:0,
+condition:`从 (${exit.col}, ${exit.row}) 沿${dirNames(grid.type)[dir]||dir}滑出边界`,
+actions:`从对侧 (${target.col}, ${target.row}) 滑入`,
+text:`「${agent.label||agent.id}」第 ${ctx.tick} 步穿越边界：(${exit.col}, ${exit.row}) → (${target.col}, ${target.row})`,
+});
+}
 }else if(mode==='bounce'){
 dir=grid.opposite(dir);
 const t2=grid.step(agent.head,dir);
@@ -5688,7 +5778,7 @@ return{diffConfigs,summarizeConfigChanges};
 __MODULES["src/ui/canvas.js"]=(function(){
 const{dirLabel}=__MODULES["src/core/grid.js"];
 const{stateLabel}=__MODULES["src/core/world.js"];
-const{buildTrail}=__MODULES["src/core/trail.js"];
+const{buildTrail,unwrapTrail}=__MODULES["src/core/trail.js"];
 const STYLE_DEFAULTS={
 cellSize:26,
 gap:2,
@@ -5705,6 +5795,9 @@ showStartEnd:true,
 trailFade:true,
 fadeMode:'linear',
 fadeLength:60,
+trailColorMode:'fade',
+trailSmooth:true,
+showCrossings:true,
 showEyes:false,
 showEffects:true,
 glow:false,
@@ -5730,6 +5823,12 @@ const FADE_BUCKETS=16;
 const RUN_GAP_CELLS=1.7;
 const FADE_MAX_ALPHA=0.62;
 const EXP_FADE_K=6;
+const TRAIL_COLOR_RAMPS={
+visit:['#4dabf7','#51cf66','#ffd43b','#ff922b','#ff6b6b'],
+order:['#9775fa','#4dabf7','#38d9a9','#ffd43b','#ff8787'],
+};
+const CROSSING_OUT='rgba(255, 212, 59, 0.9)';
+const CROSSING_IN='rgba(77, 171, 247, 0.95)';
 const FILTER_FILL='rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR='rgba(255, 212, 59, 0.95)';
 const COMPARE_BASE_COLOR='rgba(147, 161, 177, 0.9)';
@@ -5750,9 +5849,15 @@ this.body=null;
 this.hover=null;
 this.trail={path:[],order:[],info:new Map(),maxTick:0};
 this.trailInfo=new Map();
-this.trailPix=null;
+this.trailUn=null;
 this.trailRuns=[];
+this.trailCrossings=[];
+this.trailLo=0;
 this.pixDirty=true;
+this.trailCv=null;
+this.trailCvMode='';
+this._fadeT=null;
+this._fadeTable=null;
 this.gridLayer=null;
 this.gridDirty=true;
 this.filterSet=null;
@@ -5834,35 +5939,59 @@ const lastFrame=this.result.frames[this.result.frames.length-1];
 this.endCoord=lastFrame?.agents[0]?.segments?.[0]?{col:lastFrame.agents[0].segments[0][0],row:lastFrame.agents[0].segments[0][1]}:null;
 }
 ensureTrailPix(){
-if(!this.pixDirty&&this.trailPix&&this.trailPix.length===this.trail.path.length*2)return;
+if(!this.pixDirty&&this.trailUn&&this.trailUn.length===this.trail.path.length*2)return;
 const path=this.trail.path;
 const n=path.length;
-const pix=new Float32Array(n*2);
+const un=new Float32Array(n*2);
+this.trailCv=null;
+this.trailCvMode='';
+if(!n){
+this.trailUn=un;
+this.trailRuns=[];
+this.trailCrossings=[];
+this.pixDirty=false;
+return;
+}
+const grid=this.grid;
+const width=grid.width;
+const height=grid.height;
+const{col,row,runs,crossings}=unwrapTrail(grid,path);
+const origin=this.center({col:0,row:0});
+const ax=this.center({col:width,row:0}).x-origin.x;
+const ay=this.center({col:width,row:0}).y-origin.y;
+const bx=this.center({col:0,row:height}).x-origin.x;
+const by=this.center({col:0,row:height}).y-origin.y;
 const scratch=this._scratchA;
 for(let i=0;i<n;i++){
-const index=path[i].index;
-scratch.col=index%this.grid.width;
-scratch.row=(index/this.grid.width)|0;
-const p=this.center(scratch);
-pix[i*2]=p.x;
-pix[i*2+1]=p.y;
+scratch.col=col[i];
+scratch.row=row[i];
+const u=this.center(scratch);
+un[i*2]=u.x;
+un[i*2+1]=u.y;
 }
-const runs=[];
-const maxDist=(this.style.cellSize+this.style.gap)*RUN_GAP_CELLS;
-let start=0;
-for(let i=1;i<n;i++){
-const a=path[i-1];
-const b=path[i];
-const dx=pix[i*2]-pix[i*2-2];
-const dy=pix[i*2+1]-pix[i*2-1];
-if(b.tick-a.tick!==1||b.agent!==a.agent||Math.hypot(dx,dy)>maxDist){
-runs.push([start,i-1]);
-start=i;
+const segs=new Array(runs.length);
+for(let r=0;r<runs.length;r++){
+const run=runs[r];
+segs[r]={from:run.from,to:run.to,ox:-(run.kx*ax+run.ky*bx),oy:-(run.kx*ay+run.ky*by)};
 }
+const marks=new Array(crossings.length);
+for(let c=0;c<crossings.length;c++){
+const cr=crossings[c];
+const oox= -(cr.okx*ax+cr.oky*bx);
+const ooy= -(cr.okx*ay+cr.oky*by);
+const nox= -(cr.nkx*ax+cr.nky*bx);
+const noy= -(cr.nkx*ay+cr.nky*by);
+marks[c]={
+i:cr.i,
+outX:un[(cr.i-1)*2]+oox,
+outY:un[(cr.i-1)*2+1]+ooy,
+inX:un[cr.i*2]+nox,
+inY:un[cr.i*2+1]+noy,
+};
 }
-if(n)runs.push([start,n-1]);
-this.trailPix=pix;
-this.trailRuns=runs;
+this.trailUn=un;
+this.trailRuns=segs;
+this.trailCrossings=marks;
 this.pixDirty=false;
 }
 resize(){
@@ -5912,6 +6041,7 @@ ctx.fillRect(0,0,this.size.width,this.size.height);
 if(s.showGrid)this.drawGrid();
 this.drawCells(frame,th);
 if(s.showTrail)this.drawTrail(frame,th,tickF);
+if(s.showTrail&&s.showCrossings)this.drawTrailCrossings();
 this.drawCompare();
 this.drawFilterHighlight();
 if(s.showEffects)this.drawEffects(i0);
@@ -6022,26 +6152,29 @@ else hi=mid;
 }
 if(lo<1)return;
 this.ensureTrailPix();
+this.ensureTrailCv();
+this.trailLo=lo;
 const mode=this.style.trailJoin;
 if(mode==='curve'&&lo>1)this.drawTrailCurve(th,lo,tick);
 else if(mode==='angle'&&lo>1)this.drawTrailAngle(th,lo,tick);
 else this.drawTrailLine(th,lo,tick);
 }
 trailRunsUpTo(lo,tick){
-const runs=[];
+const out=[];
 const src=this.trailRuns;
 const spec=this.fadeSpec();
 const minTick=spec.on?tick-spec.len:-Infinity;
 const path=this.trail.path;
 for(let ri=0;ri<src.length;ri++){
-const a=src[ri][0];
-if(a>=lo)break;
-const b=Math.min(src[ri][1],lo-1);
-if(path[b].tick<minTick)continue;
-let from=a;
+const run=src[ri];
+if(run.from>=lo)break;
+const to=Math.min(run.to,lo-1);
+if(to<run.from)continue;
+if(path[to].tick<minTick)continue;
+let from=run.from;
 if(spec.on){
-let loI=a;
-let hiI=b+1;
+let loI=from;
+let hiI=to+1;
 while(loI<hiI){
 const mid=(loI+hiI)>>1;
 if(path[mid].tick>=minTick)hiI=mid;
@@ -6049,15 +6182,33 @@ else loI=mid+1;
 }
 from=loI;
 }
-const run=[];
-for(let k=from;k<=b;k++){
-const t=this.fadeProgress(tick-path[k].tick,spec);
+if(from>to)continue;
+out.push({from,to,ox:run.ox,oy:run.oy});
+}
+return out;
+}
+fillFadeRun(from,to,tick,spec){
+const path=this.trail.path;
+let ft=this._fadeT;
+if(!ft||ft.length<path.length)ft=this._fadeT=new Float32Array(path.length);
+if(!spec.on){
+for(let k=from;k<=to;k++)ft[k]=1;
+return ft;
+}
+for(let k=from;k<=to;k++)ft[k]=this.fadeProgress(tick-path[k].tick,spec);
+return ft;
+}
+runPoints(run,tick,spec){
+const un=this.trailUn;
+const cv=this.trailCv;
+const path=this.trail.path;
+const pts=[];
+for(let k=run.from;k<=run.to;k++){
+const t=spec.on?this.fadeProgress(tick-path[k].tick,spec):1;
 if(t<=0)continue;
-run.push({x:this.trailPix[k*2],y:this.trailPix[k*2+1],gi:k,t});
+pts.push({x:un[k*2]+run.ox,y:un[k*2+1]+run.oy,gi:k,t,cv:cv?cv[k]:0});
 }
-if(run.length)runs.push(run);
-}
-return runs;
+return pts;
 }
 fadeSpec(){
 const s=this.style;
@@ -6084,51 +6235,226 @@ width:Math.max(0.5,baseWidth*(0.45+0.55*a)),
 fadeBucket(t){
 return Math.max(0,Math.min(FADE_BUCKETS-1,Math.floor(t*FADE_BUCKETS)));
 }
+colorRamp(){
+return TRAIL_COLOR_RAMPS[this.style.trailColorMode]||null;
+}
+ensureTrailCv(){
+const mode=TRAIL_COLOR_RAMPS[this.style.trailColorMode]?this.style.trailColorMode:'fade';
+if(mode==='fade'){
+this.trailCv=null;
+this.trailCvMode='';
+return null;
+}
+const n=this.trail.path.length;
+if(this.trailCv&&this.trailCvMode===mode&&this.trailCv.length===n)return this.trailCv;
+const cv=new Float32Array(n);
+const info=this.trail.info;
+let maxVisits=1;
+for(const cell of info.values())if(cell.visits>maxVisits)maxVisits=cell.visits;
+const vDen=Math.max(1,maxVisits-1);
+const oDen=Math.max(1,this.trail.order.length-1);
+const path=this.trail.path;
+for(let i=0;i<n;i++){
+const cell=info.get(path[i].index);
+if(!cell)continue;
+cv[i]=mode==='visit'?(cell.visits-1)/vDen:(cell.order-1)/oDen;
+}
+this.trailCv=cv;
+this.trailCvMode=mode;
+return cv;
+}
+styleBucket(t,cv,cols){
+const ab=this.fadeBucket(t);
+return cols===1?ab:ab*cols+this.fadeBucket(cv);
+}
+fadeStyleTable(th,baseWidth){
+const ramp=this.colorRamp();
+const cols=ramp?FADE_BUCKETS:1;
+const c=this._fadeTable;
+if(c&&c.th===th&&c.baseWidth===baseWidth&&c.fade=== !!this.style.trailFade&&c.cols===cols)return c;
+const size=FADE_BUCKETS*cols;
+const alphas=new Float64Array(size);
+const widths=new Float64Array(size);
+const colors=new Array(size);
+for(let ab=0;ab<FADE_BUCKETS;ab++){
+const base=this.fadeAt(th,(ab+0.5)/FADE_BUCKETS,baseWidth);
+for(let cb=0;cb<cols;cb++){
+const i=ab*cols+cb;
+alphas[i]=base.alpha;
+widths[i]=base.width;
+colors[i]=ramp?paletteColor(ramp,(cb+0.5)/FADE_BUCKETS):base.color;
+}
+}
+const table={th,baseWidth,fade:!!this.style.trailFade,cols,alphas,widths,colors};
+this._fadeTable=table;
+return table;
+}
+clipTrail(){
+const ctx=this.ctx;
+const rect=this.gridRect();
+ctx.save();
+ctx.beginPath();
+ctx.rect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top);
+ctx.clip();
+}
+smoothHead(lo,tick){
+if(!this.style.trailSmooth)return null;
+const path=this.trail.path;
+if(lo<1||lo>=path.length)return null;
+const a=path[lo-1];
+const b=path[lo];
+if(b.tick-a.tick!==1||b.agent!==a.agent)return null;
+const f=tick-a.tick;
+if(!(f>0))return null;
+const runs=this.trailRuns;
+let run=null;
+for(let i=runs.length-1;i>=0;i--){
+if(runs[i].from<=lo-1&&runs[i].to>=lo){
+run=runs[i];
+break;
+}
+}
+if(!run)return null;
+const un=this.trailUn;
+const x0=un[(lo-1)*2]+run.ox;
+const y0=un[(lo-1)*2+1]+run.oy;
+const x1=un[lo*2]+run.ox;
+const y1=un[lo*2+1]+run.oy;
+const k=f>1?1:f;
+return{x0,y0,x1:x0+(x1-x0)*k,y1:y0+(y1-y0)*k,gi:lo};
+}
+strokeSmoothTip(th,lo,tick,baseWidth){
+const tip=this.smoothHead(lo,tick);
+if(!tip)return;
+const ctx=this.ctx;
+const tab=this.fadeStyleTable(th,baseWidth);
+const cv=this.trailCv;
+const b=this.styleBucket(1,cv&&lo-1<cv.length?cv[lo-1]:0,tab.cols);
+ctx.globalAlpha=tab.alphas[b];
+ctx.strokeStyle=tab.colors[b];
+ctx.lineWidth=tab.widths[b];
+ctx.beginPath();
+ctx.moveTo(tip.x0,tip.y0);
+ctx.lineTo(tip.x1,tip.y1);
+ctx.stroke();
+}
+drawTrailCrossings(){
+const marks=this.trailCrossings;
+if(!marks|| !marks.length)return;
+const ctx=this.ctx;
+const lo=this.trailLo;
+const r=Math.max(2,this.style.cellSize*0.12);
+ctx.save();
+this.clipTrail();
+ctx.lineWidth=Math.max(1.2,r*0.55);
+for(const m of marks){
+if(m.i>=lo)continue;
+ctx.strokeStyle=CROSSING_OUT;
+ctx.beginPath();
+ctx.arc(m.outX,m.outY,r*1.5,0,Math.PI*2);
+ctx.stroke();
+ctx.fillStyle=CROSSING_IN;
+ctx.beginPath();
+ctx.arc(m.inX,m.inY,r,0,Math.PI*2);
+ctx.fill();
+}
+ctx.restore();
+}
 drawTrailLine(th,lo,tick){
 const ctx=this.ctx;
 const{cellSize,gap}=this.style;
 const baseWidth=Math.max(1.5,(cellSize-gap)*0.34);
+const spec=this.fadeSpec();
 const runs=this.trailRunsUpTo(lo,tick);
 ctx.save();
 ctx.lineCap='round';
 ctx.lineJoin='round';
-for(const run of runs)this.strokePolyline(th,run,baseWidth);
+this.clipTrail();
+for(const run of runs)this.strokeRun(th,run,baseWidth,tick,spec);
+this.strokeSmoothTip(th,lo,tick,baseWidth);
 ctx.restore();
 ctx.globalAlpha=1;
+}
+strokeRun(th,run,baseWidth,tick,spec){
+const ctx=this.ctx;
+const un=this.trailUn;
+const cv=this.trailCv;
+const ft=this.fillFadeRun(run.from,run.to,tick,spec);
+const tab=this.fadeStyleTable(th,baseWidth);
+const cols=tab.cols;
+const end=run.to;
+let start=run.from;
+while(start<=end&&ft[start]<=0)start++;
+if(start>end)return;
+if(start===end){
+const b=this.styleBucket(ft[start],cv?cv[start]:0,cols);
+ctx.globalAlpha=tab.alphas[b];
+ctx.fillStyle=tab.colors[b];
+ctx.beginPath();
+ctx.arc(un[start*2]+run.ox,un[start*2+1]+run.oy,baseWidth*0.5,0,Math.PI*2);
+ctx.fill();
+return;
+}
+let bucket=this.styleBucket((ft[start]+ft[start+1])/2,cv?(cv[start]+cv[start+1])/2:0,cols);
+for(let k=start+1;k<=end;k++){
+const next=k<end
+?this.styleBucket((ft[k]+ft[k+1])/2,cv?(cv[k]+cv[k+1])/2:0,cols)
+:-1;
+if(next===bucket)continue;
+ctx.globalAlpha=tab.alphas[bucket];
+ctx.strokeStyle=tab.colors[bucket];
+ctx.lineWidth=tab.widths[bucket];
+ctx.beginPath();
+ctx.moveTo(un[start*2]+run.ox,un[start*2+1]+run.oy);
+for(let j=start+1;j<=k;j++)ctx.lineTo(un[j*2]+run.ox,un[j*2+1]+run.oy);
+ctx.stroke();
+start=k;
+bucket=next;
+}
 }
 drawTrailAngle(th,lo,tick){
 const ctx=this.ctx;
 const{cellSize,gap}=this.style;
 const baseWidth=Math.max(1.5,(cellSize-gap)*0.34);
+const spec=this.fadeSpec();
 const runs=this.trailRunsUpTo(lo,tick);
 ctx.save();
 ctx.lineCap='round';
 ctx.lineJoin='round';
-for(const run of runs)this.strokePolyline(th,bevelChain(run,this.style.trailAngle),baseWidth);
+this.clipTrail();
+for(const run of runs){
+const pts=this.runPoints(run,tick,spec);
+if(!pts.length)continue;
+this.strokePolyline(th,pts.length===1?pts:bevelChain(pts,this.style.trailAngle),baseWidth);
+}
+this.strokeSmoothTip(th,lo,tick,baseWidth);
 ctx.restore();
 ctx.globalAlpha=1;
 }
 strokePolyline(th,run,baseWidth){
 const ctx=this.ctx;
 const last=run.length-1;
+const tab=this.fadeStyleTable(th,baseWidth);
+const cols=tab.cols;
 if(last===0){
-const st=this.fadeAt(th,run[0].t,baseWidth);
-ctx.globalAlpha=st.alpha;
-ctx.fillStyle=st.color;
+const b=this.styleBucket(run[0].t,run[0].cv,cols);
+ctx.globalAlpha=tab.alphas[b];
+ctx.fillStyle=tab.colors[b];
 ctx.beginPath();
 ctx.arc(run[0].x,run[0].y,baseWidth*0.5,0,Math.PI*2);
 ctx.fill();
 return;
 }
 let start=0;
-let bucket=this.fadeBucket((run[0].t+run[1].t)/2);
+let bucket=this.styleBucket((run[0].t+run[1].t)/2,(run[0].cv+run[1].cv)/2,cols);
 for(let k=1;k<=last;k++){
-const next=k<last?this.fadeBucket((run[k].t+run[k+1].t)/2):-1;
+const next=k<last
+?this.styleBucket((run[k].t+run[k+1].t)/2,(run[k].cv+run[k+1].cv)/2,cols)
+:-1;
 if(next===bucket)continue;
-const st=this.fadeAt(th,(run[start].t+run[k].t)/2,baseWidth);
-ctx.globalAlpha=st.alpha;
-ctx.strokeStyle=st.color;
-ctx.lineWidth=st.width;
+ctx.globalAlpha=tab.alphas[bucket];
+ctx.strokeStyle=tab.colors[bucket];
+ctx.lineWidth=tab.widths[bucket];
 ctx.beginPath();
 ctx.moveTo(run[start].x,run[start].y);
 for(let j=start+1;j<=k;j++)ctx.lineTo(run[j].x,run[j].y);
@@ -6141,25 +6467,32 @@ drawTrailCurve(th,lo,tick){
 const ctx=this.ctx;
 const{cellSize,gap}=this.style;
 const baseWidth=Math.max(1.5,(cellSize-gap)*0.34);
+const spec=this.fadeSpec();
 const runs=this.trailRunsUpTo(lo,tick);
 ctx.save();
 ctx.lineCap='round';
 ctx.lineJoin='round';
+this.clipTrail();
 for(const run of runs){
-if(run.length===1){
-this.strokePolyline(th,run,baseWidth);
+const run_=this.runPoints(run,tick,spec);
+if(!run_.length)continue;
+if(run_.length===1){
+this.strokePolyline(th,run_,baseWidth);
 continue;
 }
-const segs=bezierSegments(run);
+const segs=bezierSegments(run_);
+const tab=this.fadeStyleTable(th,baseWidth);
+const cols=tab.cols;
 let start=0;
-let bucket=this.fadeBucket((run[0].t+run[1].t)/2);
+let bucket=this.styleBucket((run_[0].t+run_[1].t)/2,(run_[0].cv+run_[1].cv)/2,cols);
 for(let k=1;k<=segs.length;k++){
-const next=k<segs.length?this.fadeBucket((run[k].t+run[k+1].t)/2):-1;
+const next=k<segs.length
+?this.styleBucket((run_[k].t+run_[k+1].t)/2,(run_[k].cv+run_[k+1].cv)/2,cols)
+:-1;
 if(next===bucket)continue;
-const st=this.fadeAt(th,(run[start].t+run[k].t)/2,baseWidth);
-ctx.globalAlpha=st.alpha;
-ctx.strokeStyle=st.color;
-ctx.lineWidth=st.width;
+ctx.globalAlpha=tab.alphas[bucket];
+ctx.strokeStyle=tab.colors[bucket];
+ctx.lineWidth=tab.widths[bucket];
 ctx.beginPath();
 ctx.moveTo(segs[start].p0.x,segs[start].p0.y);
 for(let j=start;j<k;j++){
@@ -6171,6 +6504,7 @@ start=k;
 bucket=next;
 }
 }
+this.strokeSmoothTip(th,lo,tick,baseWidth);
 ctx.restore();
 ctx.globalAlpha=1;
 }
@@ -7087,9 +7421,9 @@ return d>1e-6?{x:dx/d,y:dy/d}:{x:0,y:0};
 const BEVEL_CUT=0.45;
 function bevelChain(pts,angleDeg){
 const n=pts.length;
-if(n<3)return pts.map((p)=>({x:p.x,y:p.y,gi:p.gi,t:p.t}));
+if(n<3)return pts.map((p)=>({x:p.x,y:p.y,gi:p.gi,t:p.t,cv:p.cv}));
 const A=Math.max(0.02,Math.min(Math.PI*0.47,(angleDeg*Math.PI)/180));
-const out=[{x:pts[0].x,y:pts[0].y,gi:pts[0].gi,t:pts[0].t}];
+const out=[{x:pts[0].x,y:pts[0].y,gi:pts[0].gi,t:pts[0].t,cv:pts[0].cv}];
 for(let i=1;i<n-1;i++){
 const prev=pts[i-1];
 const p=pts[i];
@@ -7101,7 +7435,7 @@ const d2=unit(next.x-p.x,next.y-p.y);
 const cosT=Math.max(-1,Math.min(1,d1.x*d2.x+d1.y*d2.y));
 const T=Math.acos(cosT);
 if(lenIn<1e-6||lenOut<1e-6||T<0.06||A>=T-0.06){
-out.push({x:p.x,y:p.y,gi:p.gi,t:p.t});
+out.push({x:p.x,y:p.y,gi:p.gi,t:p.t,cv:p.cv});
 continue;
 }
 const sinDa=Math.sin(T-A);
@@ -7109,10 +7443,10 @@ const uCapIn=lenIn*BEVEL_CUT;
 const uCapOut=(lenOut*BEVEL_CUT*sinDa)/Math.sin(A);
 const u=Math.min(uCapIn,uCapOut);
 const s=(u*Math.sin(A))/sinDa;
-out.push({x:p.x-d1.x*u,y:p.y-d1.y*u,gi:prev.gi,t:prev.t});
-out.push({x:p.x+d2.x*s,y:p.y+d2.y*s,gi:p.gi,t:p.t});
+out.push({x:p.x-d1.x*u,y:p.y-d1.y*u,gi:prev.gi,t:prev.t,cv:prev.cv});
+out.push({x:p.x+d2.x*s,y:p.y+d2.y*s,gi:p.gi,t:p.t,cv:p.cv});
 }
-out.push({x:pts[n-1].x,y:pts[n-1].y,gi:pts[n-1].gi,t:pts[n-1].t});
+out.push({x:pts[n-1].x,y:pts[n-1].y,gi:pts[n-1].gi,t:pts[n-1].t,cv:pts[n-1].cv});
 return out;
 }
 function splitRuns(pts,maxDist){
@@ -7133,7 +7467,7 @@ return{Renderer};
 })();
 __MODULES["src/core/exporters.js"]=(function(){
 const{dirNames}=__MODULES["src/core/grid.js"];
-const{buildTrail}=__MODULES["src/core/trail.js"];
+const{buildTrail,unwrapTrail}=__MODULES["src/core/trail.js"];
 function toJSON(obj,pretty=true){
 return JSON.stringify(obj,null,pretty?2:0);
 }
@@ -7330,7 +7664,6 @@ const trailA=style.darkMode?'#1d4e89':'#a9c8e8';
 const trailB=style.darkMode?'#63b3ed':'#2b6cb0';
 const trail=buildTrail(grid,result.frames);
 const spec=svgFadeSpec(style);
-const pitch=style.cellSize+style.gap;
 const parts=[];
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${size.width.toFixed(1)}" height="${size.height.toFixed(1)}" viewBox="0 0 ${size.width.toFixed(1)} ${size.height.toFixed(1)}" font-family="system-ui, sans-serif">`);
 parts.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
@@ -7343,10 +7676,11 @@ parts.push(cellShape(grid,style,p.x,p.y,gridLine,'none',1));
 }
 }
 const baseWidth=Math.max(1.5,(style.cellSize-style.gap)*0.4);
-for(const run of svgTrailRuns(grid,trail.path,trail.maxTick,style,pitch)){
+const fadeStyle=(t)=>svgFadeStyle(spec.on?(svgFadeBucket(t)+0.5)/SVG_FADE_BUCKETS:1,trailA,trailB,baseWidth);
+for(const run of svgTrailRuns(grid,trail.path,trail.maxTick,style)){
 if(!run.length)continue;
 if(run.length===1){
-const st=svgFadeStyle(run[0].t,trailA,trailB,baseWidth);
+const st=fadeStyle(run[0].t);
 parts.push(`<circle cx="${run[0].x.toFixed(1)}" cy="${run[0].y.toFixed(1)}" r="${(baseWidth*0.5).toFixed(1)}" fill="${st.color}" fill-opacity="${st.alpha.toFixed(3)}"/>`);
 continue;
 }
@@ -7355,7 +7689,7 @@ let bucket=svgFadeBucket((run[0].t+run[1].t)/2);
 for(let k=1;k<run.length;k++){
 const next=k+1<run.length?svgFadeBucket((run[k].t+run[k+1].t)/2):-1;
 if(next===bucket)continue;
-const st=svgFadeStyle((run[start].t+run[k].t)/2,trailA,trailB,baseWidth);
+const st=fadeStyle((run[start].t+run[k].t)/2);
 const pts=[];
 for(let j=start;j<=k;j++)pts.push(`${run[j].x.toFixed(1)},${run[j].y.toFixed(1)}`);
 parts.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="${st.color}" stroke-width="${st.width.toFixed(2)}" stroke-opacity="${st.alpha.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`);
@@ -7404,32 +7738,35 @@ color:lerpColor(a,b,k),
 width:Math.max(0.5,baseWidth*(0.45+0.55*k)),
 };
 }
-function svgTrailRuns(grid,path,maxTick,style,pitch){
+function svgTrailRuns(grid,path,maxTick,style){
 const spec=svgFadeSpec(style);
-const runs=[];
-let run=[];
-let prev=null;
-for(let i=0;i<path.length;i++){
-const p=path[i];
-const t=svgFadeProgress(maxTick-p.tick,spec);
-if(spec.on&&t<=0){
-if(run.length)runs.push(run);
-run=[];
-prev=null;
-continue;
+const out=[];
+if(!path.length)return out;
+const{col,row,runs}=unwrapTrail(grid,path);
+const zero=grid.toPixel({col:0,row:0},style.cellSize,style.gap);
+const xr=grid.toPixel({col:grid.width,row:0},style.cellSize,style.gap);
+const yr=grid.toPixel({col:0,row:grid.height},style.cellSize,style.gap);
+const ax=xr.x-zero.x;
+const ay=xr.y-zero.y;
+const bx=yr.x-zero.x;
+const by=yr.y-zero.y;
+for(const run of runs){
+let from=run.from;
+const to=run.to;
+if(spec.on){
+while(from<=to&&maxTick-path[from].tick>=spec.len)from++;
+if(from>to)continue;
 }
-const px=grid.toPixel({col:p.index%grid.width,row:Math.floor(p.index/grid.width)},style.cellSize,style.gap);
-const brk=prev&&(p.tick-prev.tick!==1||p.agent!==prev.agent
-||Math.hypot(px.x-prev.x,px.y-prev.y)>pitch*1.7);
-if(brk&&run.length){
-runs.push(run);
-run=[];
+const dx= -(run.kx*ax+run.ky*bx);
+const dy= -(run.kx*ay+run.ky*by);
+const pts=[];
+for(let k=from;k<=to;k++){
+const px=grid.toPixel({col:col[k],row:row[k]},style.cellSize,style.gap);
+pts.push({x:px.x+dx,y:px.y+dy,t:spec.on?svgFadeProgress(maxTick-path[k].tick,spec):1});
 }
-run.push({x:px.x,y:px.y,t:spec.on?t:1});
-prev={x:px.x,y:px.y,tick:p.tick,agent:p.agent};
+if(pts.length)out.push(pts);
 }
-if(run.length)runs.push(run);
-return runs;
+return out;
 }
 function downloadText(filename,text,mime='text/plain;charset=utf-8'){
 const blob=new Blob([text],{type:mime});
@@ -7796,6 +8133,11 @@ const JOIN_OPTIONS=[
 {value:'line',label:'直线'},
 {value:'angle',label:'预设角度切角'},
 ];
+const TRAIL_COLOR_OPTIONS=[
+{value:'fade',label:'按新旧渐隐（默认）'},
+{value:'visit',label:'按经过次数（热度）'},
+{value:'order',label:'按经过次序'},
+];
 const state={
 cfg:null,
 result:null,
@@ -7820,6 +8162,7 @@ adaptive:false,
 score:null,
 highScore:0,
 showScore:false,
+showRankToast:false,
 cfgBaseline:null,
 cfgHistory:[],
 cfgSearch:'',
@@ -8069,7 +8412,7 @@ if(entry.statMode)setStatMode(entry.statMode);
 draw();
 }
 let renderSaveList=()=>{};
-function savesGroup(){
+function savesSection(){
 const nameInput=textInput('',()=>{},{placeholder:'存档名称（留空则按时间命名）'});
 const host=h('div',{class:'save-list'});
 renderSaveList=()=>{
@@ -8092,7 +8435,8 @@ renderSaveList();
 }
 };
 renderSaveList();
-return group('状态存档',[
+return[
+h('div',{class:'sub-title'},'状态存档'),
 field('存档名称',nameInput),
 row(
 button('保存当前状态',()=>saveState(nameInput.value),'primary'),
@@ -8114,7 +8458,7 @@ renderSaveList();
 ),
 h('div',{class:'hint'},`存档保存在浏览器本地（最多 ${SAVE_LIMIT} 条）：记录配置、播放位置与统计口径，读取后立即重算并跳回同一帧；自定义皮肤图片体积过大时会被省略。`),
 host,
-],{open:false});
+];
 }
 const AUTO_SAVE_KEY='gridsneaker:autosave';
 let autoSaveTimer=null;
@@ -8175,7 +8519,7 @@ syncStatModeUI();
 gotoFrame(idx);
 return true;
 }
-function autosaveGroup(){
+function autosaveSection(){
 const host=h('div',{class:'save-list'});
 const sync=()=>{
 clear(host);
@@ -8199,10 +8543,11 @@ sync();
 };
 sync();
 renderAutosaveList=sync;
-return group('配置自动存档',[
-h('div',{class:'hint'},'自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用上方「状态存档」。'),
+return[
+h('div',{class:'sub-title'},'配置自动存档'),
+h('div',{class:'hint'},'自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「状态存档」。'),
 host,
-],{open:false});
+];
 }
 const SCOREBOARD_KEY='gridsneaker:scoreboard';
 const SCOREBOARD_LIMIT=20;
@@ -8283,6 +8628,7 @@ const TRAIL_PRESET_KEY='gridsneaker:trail-presets';
 const ADAPTIVE_KEY='gridsneaker:adaptive-speed';
 const HIGH_SCORE_KEY='gridsneaker:high-score';
 const SHOW_SCORE_KEY='gridsneaker:show-score';
+const RANK_TOAST_KEY='gridsneaker:rank-toast';
 const TRAIL_PRESET_LIMIT=20;
 const CONFIG_HISTORY_LIMIT=12;
 const CONFIG_CHANGE_DISPLAY_LIMIT=40;
@@ -8311,6 +8657,7 @@ if(mode==='realtime'||mode==='total')state.statMode=mode;
 state.trailPresets=loadTrailPresets();
 state.adaptive=loadAdaptive();
 state.showScore=loadShowScore();
+state.showRankToast=loadShowRankToast();
 }
 function gridSignature(grid){
 if(!grid)return'unknown';
@@ -8374,6 +8721,24 @@ saveShowScore(state.showScore);
 applyScoreVisibility();
 renderStageStats();
 toast(state.showScore?'已显示「得分 / 评级 / 难度」':'已隐藏「得分 / 评级 / 难度」','info');
+}
+function loadShowRankToast(){
+try{
+return localStorage.getItem(RANK_TOAST_KEY)==='1';
+}catch(e){
+return false;
+}
+}
+function saveShowRankToast(v){
+try{
+localStorage.setItem(RANK_TOAST_KEY,v?'1':'0');
+}catch(e){
+}
+}
+function setShowRankToast(v){
+state.showRankToast= !!v;
+saveShowRankToast(state.showRankToast);
+toast(state.showRankToast?'已开启「排行榜第 1 名」提示':'已关闭「排行榜第 1 名」提示','info');
 }
 function applyScoreVisibility(){
 if(els.evalLine)els.evalLine.classList.toggle('hidden',!state.showScore);
@@ -8555,7 +8920,7 @@ if(state.score){
 brokeRecord=saveHighScore(result.grid,state.score.total);
 if(brokeRecord)state.highScore=state.score.total;
 const rank=recordScore(result);
-if(rank===1)toast('本轮成绩进入本地排行榜第 1 名','success');
+if(rank===1&&state.showRankToast)toast('本轮成绩进入本地排行榜第 1 名','success');
 }
 saveLocalConfig(cfg);
 writeAutoSave();
@@ -8721,8 +9086,8 @@ els.adaptiveChk=checkbox(state.adaptive,(v)=>{
 state.adaptive=v;
 saveAdaptive(v);
 updateControls();
-toast(v?'已开启自适应难度：拥挤时自动放慢播放':'已关闭自适应难度','info');
-},'自适应难度');
+toast(v?'已开启自适应速度：拥挤时自动放慢播放':'已关闭自适应速度','info');
+},'自适应速度');
 els.adaptiveChk.title='拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面';
 const speedBtns=[0.5,2,8,30,120].map((v)=>{
 const b=button(String(v),()=>setSpeed(v),'ghost small');
@@ -9229,8 +9594,11 @@ button('撤销上次变更',undoConfigReplace,'ghost'),
 ),
 h('div',{class:'hint'},'载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
 ],{open:false}));
-side.appendChild(autosaveGroup());
-side.appendChild(savesGroup());
+side.appendChild(group('配置 / 状态存档',[
+...autosaveSection(),
+h('div',{class:'divider'}),
+...savesSection(),
+],{open:false}));
 side.appendChild(group('配置导入导出',[
 row(
 button('复制 JSON',()=>copyText(configToJSON(state.cfg),'配置 JSON 已复制')),
@@ -11321,18 +11689,26 @@ field('轨迹衰减模式',selBind(s,'fadeMode',()=>onStyleChange(),[
 {value:'linear',label:'线性（等速变暗）'},
 {value:'exponential',label:'指数（先急后缓）'},
 ]),'轨迹亮度按「离开头部的步数」衰减；未勾选「轨迹渐隐」时此项不生效'),
+field('轨迹颜色分级',selBind(s,'trailColorMode',()=>onStyleChange(),TRAIL_COLOR_OPTIONS),
+'按新旧渐隐：颜色随轨迹亮度变化；按经过次数 / 次序：整条轨迹按色带分级染色（与「轨迹渐隐」的亮度衰减叠加）'),
 field('衰减步长（步）',rangeBind(s,'fadeLength',()=>onStyleChange(),{
 min:FADE_LENGTH_LIMIT.min,max:FADE_LENGTH_LIMIT.max,step:1,number:true,
 }),'轨迹点离开头部多少步后完全淡出；步长越大尾巴拖得越长，越小则越快消失'),
 field('渲染效果',row(
 checkbox(s.trailFade,(v)=>{s.trailFade=v;onStyleChange();},'轨迹渐隐'),
+checkbox(s.trailSmooth,(v)=>{s.trailSmooth=v;onStyleChange();},'轨迹尖端平滑'),
+checkbox(s.showCrossings,(v)=>{s.showCrossings=v;onStyleChange();},'边界穿越标记'),
 checkbox(s.showEffects,(v)=>{s.showEffects=v;onStyleChange();},'交互特效'),
 checkbox(s.glow,(v)=>{s.glow=v;onStyleChange();},'蛇身发光'),
 checkbox(s.showEyes,(v)=>{s.showEyes=v;onStyleChange();},'蛇头眼睛'),
-),'蛇头眼睛默认隐藏，勾选后显示'),
+),'「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；「边界穿越标记」在接缝两侧标出滑出 / 滑入点；蛇头眼睛默认隐藏，勾选后显示'),
+field('穿越事件日志',row(
+checkbox(cfg.events.logCrossings,(v)=>{cfg.events.logCrossings=v;onSimChange();},'记录边界穿越到规则日志'),
+),'开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
 field('界面配置',row(
 checkbox(state.showScore,(v)=>setShowScore(v),'得分 / 评级 / 难度 / 拥挤度'),
-),'默认隐藏；勾选后在控制条与统计面板显示得分、评分等级、难度与拥挤度（地图最高分记录始终照常保存）'),
+checkbox(state.showRankToast,(v)=>setShowRankToast(v),'排行榜第 1 名提示'),
+),'均默认关闭；前者控制得分 / 评级 / 难度 / 拥挤度读数（地图最高分记录始终照常保存），后者控制本轮成绩进入本地排行榜第 1 名时的提示条（榜单本身照常记录）'),
 ],{open:false});
 }
 function swap(arr,i,j){

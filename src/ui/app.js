@@ -92,6 +92,13 @@ const JOIN_OPTIONS = [
   { value: 'angle', label: '预设角度切角' },
 ];
 
+/** 轨迹颜色分级映射选项（与 config.js 的 TRAIL_COLOR_MODES 对应） */
+const TRAIL_COLOR_OPTIONS = [
+  { value: 'fade', label: '按新旧渐隐（默认）' },
+  { value: 'visit', label: '按经过次数（热度）' },
+  { value: 'order', label: '按经过次序' },
+];
+
 /* ------------------------------------------------------------------ */
 /* 状态                                                                */
 /* ------------------------------------------------------------------ */
@@ -125,7 +132,7 @@ const state = {
   trailSnapshot: null,
   /** 多轨迹对比：基准快照与当前运行结果的坐标差异 */
   compareDiff: null,
-  /** 自适应难度：拥挤时自动放慢播放速度 */
+  /** 自适应速度：拥挤时自动放慢播放速度 */
   adaptive: false,
   /** 本轮运行的得分（总分 / 等级），由 summary.score 得到 */
   score: null,
@@ -136,6 +143,11 @@ const state = {
    * 默认隐藏，可在「展示样式 → 界面配置」开启，选择结果本地持久化。
    */
   showScore: false,
+  /**
+   * 排行榜「本轮成绩进入本地排行榜第 1 名」提示开关。
+   * 默认关闭，可在「展示样式 → 界面配置」按需开启，选择结果本地持久化。
+   */
+  showRankToast: false,
   /** 模板基准配置：用于检测「载入模板」前的用户自定义改动 */
   cfgBaseline: null,
   /** 配置撤销栈：记录被模板 / 导入替换掉的配置，支持 Ctrl+Z 回退 */
@@ -452,7 +464,8 @@ function loadState(name) {
 /** 仅重绘存档列表（保存 / 删除后避免整块侧栏重建） */
 let renderSaveList = () => {};
 
-function savesGroup() {
+/** 状态存档区域（内联在「配置 / 状态存档」分组中） */
+function savesSection() {
   const nameInput = textInput('', () => {}, { placeholder: '存档名称（留空则按时间命名）' });
   const host = h('div', { class: 'save-list' });
   renderSaveList = () => {
@@ -475,7 +488,8 @@ function savesGroup() {
     }
   };
   renderSaveList();
-  return group('状态存档', [
+  return [
+    h('div', { class: 'sub-title' }, '状态存档'),
     field('存档名称', nameInput),
     row(
       button('保存当前状态', () => saveState(nameInput.value), 'primary'),
@@ -497,7 +511,7 @@ function savesGroup() {
     ),
     h('div', { class: 'hint' }, `存档保存在浏览器本地（最多 ${SAVE_LIMIT} 条）：记录配置、播放位置与统计口径，读取后立即重算并跳回同一帧；自定义皮肤图片体积过大时会被省略。`),
     host,
-  ], { open: false });
+  ];
 }
 
 /* ---------------- 配置自动存档 ---------------- */
@@ -578,7 +592,8 @@ function restoreAutoSave() {
   return true;
 }
 
-function autosaveGroup() {
+/** 配置自动存档区域（内联在「配置 / 状态存档」分组中） */
+function autosaveSection() {
   const host = h('div', { class: 'save-list' });
   const sync = () => {
     clear(host);
@@ -602,10 +617,11 @@ function autosaveGroup() {
   };
   sync();
   renderAutosaveList = sync;
-  return group('配置自动存档', [
-    h('div', { class: 'hint' }, '自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用上方「状态存档」。'),
+  return [
+    h('div', { class: 'sub-title' }, '配置自动存档'),
+    h('div', { class: 'hint' }, '自动存档只保留最近一次进度（配置 + 播放位置 + 统计口径）。刷新页面后配置由本地自动恢复，播放位置在配置一致时自动跳回；需要保留多个局面时请使用下方「状态存档」。'),
     host,
-  ], { open: false });
+  ];
 }
 
 /* ---------------- 本地得分排行榜 ---------------- */
@@ -701,12 +717,14 @@ function scoreboardGroup() {
 const TRAIL_QUERY_KEY = 'gridsneaker:trail-query';
 const TRAIL_MODE_KEY = 'gridsneaker:stat-mode';
 const TRAIL_PRESET_KEY = 'gridsneaker:trail-presets';
-/** 自适应难度开关 */
+/** 自适应速度开关 */
 const ADAPTIVE_KEY = 'gridsneaker:adaptive-speed';
 /** 最高分记录：按地图指纹分别保存，避免不同网格尺寸互相覆盖 */
 const HIGH_SCORE_KEY = 'gridsneaker:high-score';
 /** 「得分 / 评分等级」模块的显示偏好（默认隐藏） */
 const SHOW_SCORE_KEY = 'gridsneaker:show-score';
+/** 排行榜「进入第 1 名」提示偏好（默认关闭，按需开启） */
+const RANK_TOAST_KEY = 'gridsneaker:rank-toast';
 /** 预设数量上限，超出后按保存顺序淘汰最早的 */
 const TRAIL_PRESET_LIMIT = 20;
 /** 配置撤销栈上限 */
@@ -745,9 +763,10 @@ function loadTrailState() {
   state.trailPresets = loadTrailPresets();
   state.adaptive = loadAdaptive();
   state.showScore = loadShowScore();
+  state.showRankToast = loadShowRankToast();
 }
 
-/* ---------------- 得分系统：最高分与自适应难度的本地持久化 ---------------- */
+/* ---------------- 得分系统：最高分与自适应速度的本地持久化 ---------------- */
 
 /** 地图指纹：同一张地图（类型 / 尺寸 / 边界策略）共用一份最高分记录 */
 function gridSignature(grid) {
@@ -828,6 +847,34 @@ function setShowScore(v) {
   applyScoreVisibility();
   renderStageStats();
   toast(state.showScore ? '已显示「得分 / 评级 / 难度」' : '已隐藏「得分 / 评级 / 难度」', 'info');
+}
+
+/* ---------------- 界面显示偏好：排行榜「进入第 1 名」提示（默认关闭） ---------------- */
+
+function loadShowRankToast() {
+  try {
+    return localStorage.getItem(RANK_TOAST_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveShowRankToast(v) {
+  try {
+    localStorage.setItem(RANK_TOAST_KEY, v ? '1' : '0');
+  } catch (e) {
+    /* 隐私模式静默忽略 */
+  }
+}
+
+/**
+ * 切换排行榜「本轮成绩进入本地排行榜第 1 名」提示。
+ * 默认关闭：榜单列表照常刷新，只是不再弹出提示条。
+ */
+function setShowRankToast(v) {
+  state.showRankToast = !!v;
+  saveShowRankToast(state.showRankToast);
+  toast(state.showRankToast ? '已开启「排行榜第 1 名」提示' : '已关闭「排行榜第 1 名」提示', 'info');
 }
 
 /**
@@ -1058,7 +1105,8 @@ function recompute(opts = {}) {
     if (brokeRecord) state.highScore = state.score.total;
     // 本地得分排行榜：同一轮运行（去重指纹相同）反复重算不会重复入榜
     const rank = recordScore(result);
-    if (rank === 1) toast('本轮成绩进入本地排行榜第 1 名', 'success');
+    // 「排行榜第 1 名」提示默认关闭（可在「展示样式 → 界面配置」开启），榜单本身照常记录
+    if (rank === 1 && state.showRankToast) toast('本轮成绩进入本地排行榜第 1 名', 'success');
   }
   saveLocalConfig(cfg);
   writeAutoSave();
@@ -1154,7 +1202,7 @@ function loopTick(ts) {
   lastTs = ts;
   acc += dt;
   const baseMs = 1000 / Math.max(0.5, state.cfg.speed);
-  // 自适应难度：拥挤度升高时按难度倍率放慢播放（倍率 0.3~1），给观察留出余量
+  // 自适应速度：拥挤度升高时按倍率放慢播放（倍率 0.3~1），给观察留出余量
   const stepMs = state.adaptive ? baseMs / Math.max(0.05, currentDifficulty().speedScale) : baseMs;
   let guard = 0;
   while (acc >= stepMs && guard++ < 400) {
@@ -1254,13 +1302,13 @@ function buildControls() {
   // 动态难度：拥挤度与难度等级指示
   els.diffLabel = h('span', { class: 'hint' }, '');
   els.evalLine = h('div', { class: 'controls-line' }, els.scoreLabel, els.diffLabel);
-  // 自适应难度：拥挤时自动放慢播放
+  // 自适应速度：拥挤时自动放慢播放
   els.adaptiveChk = checkbox(state.adaptive, (v) => {
     state.adaptive = v;
     saveAdaptive(v);
     updateControls();
-    toast(v ? '已开启自适应难度：拥挤时自动放慢播放' : '已关闭自适应难度', 'info');
-  }, '自适应难度');
+    toast(v ? '已开启自适应速度：拥挤时自动放慢播放' : '已关闭自适应速度', 'info');
+  }, '自适应速度');
   els.adaptiveChk.title = '拥挤度升高时自动放慢播放速度（倍率 0.3~1），便于观察拥挤局面';
 
   // 速度档位：一键切换到常用播放速度
@@ -1867,9 +1915,12 @@ function renderSidePanel() {
     h('div', { class: 'hint' }, '载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
   ], { open: false }));
 
-  side.appendChild(autosaveGroup());
-
-  side.appendChild(savesGroup());
+  // 配置自动存档与状态存档合并到同一分组，便于统一管理「进度」与「局面」
+  side.appendChild(group('配置 / 状态存档', [
+    ...autosaveSection(),
+    h('div', { class: 'divider' }),
+    ...savesSection(),
+  ], { open: false }));
 
   side.appendChild(group('配置导入导出', [
     row(
@@ -4304,18 +4355,26 @@ function styleGroup(cfg) {
       { value: 'linear', label: '线性（等速变暗）' },
       { value: 'exponential', label: '指数（先急后缓）' },
     ]), '轨迹亮度按「离开头部的步数」衰减；未勾选「轨迹渐隐」时此项不生效'),
+    field('轨迹颜色分级', selBind(s, 'trailColorMode', () => onStyleChange(), TRAIL_COLOR_OPTIONS),
+      '按新旧渐隐：颜色随轨迹亮度变化；按经过次数 / 次序：整条轨迹按色带分级染色（与「轨迹渐隐」的亮度衰减叠加）'),
     field('衰减步长（步）', rangeBind(s, 'fadeLength', () => onStyleChange(), {
       min: FADE_LENGTH_LIMIT.min, max: FADE_LENGTH_LIMIT.max, step: 1, number: true,
     }), '轨迹点离开头部多少步后完全淡出；步长越大尾巴拖得越长，越小则越快消失'),
     field('渲染效果', row(
       checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
+      checkbox(s.trailSmooth, (v) => { s.trailSmooth = v; onStyleChange(); }, '轨迹尖端平滑'),
+      checkbox(s.showCrossings, (v) => { s.showCrossings = v; onStyleChange(); }, '边界穿越标记'),
       checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
       checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
       checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛'),
-    ), '蛇头眼睛默认隐藏，勾选后显示'),
+    ), '「轨迹尖端平滑」让轨迹随蛇头平滑滑动（而非逐格跳变）；「边界穿越标记」在接缝两侧标出滑出 / 滑入点；蛇头眼睛默认隐藏，勾选后显示'),
+    field('穿越事件日志', row(
+      checkbox(cfg.events.logCrossings, (v) => { cfg.events.logCrossings = v; onSimChange(); }, '记录边界穿越到规则日志'),
+    ), '开启后每次穿越边界都写入一条「边界穿越」日志（含滑出 / 滑入坐标），可在日志面板按规则过滤查看'),
     field('界面配置', row(
       checkbox(state.showScore, (v) => setShowScore(v), '得分 / 评级 / 难度 / 拥挤度'),
-    ), '默认隐藏；勾选后在控制条与统计面板显示得分、评分等级、难度与拥挤度（地图最高分记录始终照常保存）'),
+      checkbox(state.showRankToast, (v) => setShowRankToast(v), '排行榜第 1 名提示'),
+    ), '均默认关闭；前者控制得分 / 评级 / 难度 / 拥挤度读数（地图最高分记录始终照常保存），后者控制本轮成绩进入本地排行榜第 1 名时的提示条（榜单本身照常记录）'),
   ], { open: false });
 }
 

@@ -2,6 +2,7 @@
  * 核心引擎冒烟测试（Node 环境，无外部依赖）
  * 运行：node tests/core.test.mjs
  */
+import { readFileSync } from 'node:fs';
 import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
@@ -9,10 +10,10 @@ import {
   normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
   buildShareUrl, isBodyEnabled, isSkinImage, stripSkinAssets,
   JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
-  LIFE_MIN, LIFE_MAX,
+  LIFE_MIN, LIFE_MAX, TRAIL_COLOR_MODES,
 } from '../src/core/config.js';
 import {
-  buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
+  buildTrail, unwrapTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
   trailQueryLabel, trailCellsToCSV, trailCellsToText,
   trailQueryBounds, validateTrailQuery, reconcileTrailQuery, sliceTrailUpToTick, TRAIL_RANGE_FIELDS,
   snapshotTrail, snapshotMatchesGrid, compareSnapshots, compareToCSV, compareToText,
@@ -2781,6 +2782,355 @@ section('生命机制：多生命 / 扣命重生 / 生命耗尽 / 死亡即停 /
     eq(r0.stats.steps, 2, '未启用生命机制时第 1 次撞墙即结束运行（对照）');
     eq(r0.endReason.code, 'wall', '未启用生命机制时按「撞墙」结束');
   }
+}
+
+/* ---------- 本轮：边界穿越轨迹缺陷修复 ---------- */
+
+/** 固定直行的环绕场景：每走满一圈（width 步）必然穿越一次边界 */
+function wrapRun(patch = {}) {
+  const c = defaultConfig();
+  c.grid = { type: 'square', width: 10, height: 8, boundary: 'wrap' };
+  c.start = { col: 0, row: 4, direction: 'left' };
+  c.body.initialLength = 8;
+  c.moveRules = { left: 0, straight: 1, right: 0 };
+  c.endConditions = { ...c.endConditions, maxSteps: 90, wall: false, noMove: false, ruleEnd: false };
+  return applyPatch(c, patch);
+}
+
+section('边界网格轨迹覆盖率（100%）与跨缝段连续性');
+{
+  const result = new Simulation(wrapRun()).run();
+  const trail = buildTrail(result.grid, result.frames);
+  const path = trail.path;
+  const n = path.length;
+  ok(n > 40, '穿越场景产生了足够长的轨迹（后续断言才有意义）', `轨迹点数 ${n}`);
+
+  // 1) 解算层：展开坐标把「瞬移到对侧」的两点接成相邻一步，接缝处用整圈平移量衔接
+  const { col, row, runs, crossings } = unwrapTrail(result.grid, path);
+  eq(col.length, n, '展开列坐标与轨迹点数一致');
+  eq(runs.length, crossings.length + 1, '段数 = 穿越次数 + 1（每次跨缝切成一段）');
+  ok(crossings.length >= 8, '固定直行 90 步至少跨缝 8 次', `实际 ${crossings.length}`);
+
+  let stepViolations = 0;
+  for (const run of runs) {
+    for (let i = run.from + 1; i <= run.to; i++) {
+      const dc = Math.abs(col[i] - col[i - 1]);
+      const dr = Math.abs(row[i] - row[i - 1]);
+      if (dc + dr !== 1) stepViolations++;
+    }
+  }
+  eq(stepViolations, 0, '段内相邻两点在展开坐标下恒差 1 步（跨缝处不再出现整图瞬移）');
+
+  let seamViolations = 0;
+  for (let k = 0; k < crossings.length; k++) {
+    const cr = crossings[k];
+    const outSide = runs[k];      // 滑出侧：带上跨缝点，一直画到边界
+    const inSide = runs[k + 1];   // 滑入侧：与上一段重叠一个点，从对侧接着画
+    if (!outSide || !inSide || outSide.to !== cr.i || inSide.from !== cr.i - 1) seamViolations++;
+  }
+  eq(seamViolations, 0, '每个跨缝点都被滑出侧与滑入侧两段同时覆盖（接缝两侧都有轨迹）');
+
+  // 2) 渲染层：每个轨迹点都能折回网格区域内，且段内像素间距不超过一格
+  const { r } = headlessRenderer({ cellSize: 20, gap: 2, trailFade: false });
+  attachResult(r, result);
+  r.pixDirty = true;
+  r.ensureTrailPix();
+  const rect = r.gridRect();
+  const pitch = r.center({ col: 1, row: 0 }).x - r.center({ col: 0, row: 0 }).x;
+  const un = r.trailUn;
+  const segs = r.trailRuns;
+  eq(segs.length, runs.length, '渲染段的切分与解算层完全一致');
+  eq(r.trailCrossings.length, crossings.length, '穿越标记与解算层的穿越次数一致');
+
+  const inRect = (x, y) => x >= rect.left - 1e-6 && x <= rect.right + 1e-6 && y >= rect.top - 1e-6 && y <= rect.bottom + 1e-6;
+  // 每个轨迹点至少要有一段能把它画在网格区域内（跨缝点在滑出侧是界外虚拟点、滑入侧才是网格内真实位置）
+  const covered = new Uint8Array(n);
+  for (let s = 0; s < segs.length; s++) {
+    const sg = segs[s];
+    for (let i = sg.from; i <= sg.to; i++) {
+      if (covered[i]) continue;
+      if (inRect(un[i * 2] + sg.ox, un[i * 2 + 1] + sg.oy)) covered[i] = 1;
+    }
+  }
+
+  let uncovered = 0;
+  for (let i = 0; i < n; i++) if (!covered[i]) uncovered++;
+  eq(uncovered, 0, '全部轨迹点都能折回网格区域内绘制（不再有落到留白区的点）');
+
+  let edgePoints = 0;
+  let edgeCovered = 0;
+  for (let i = 0; i < n; i++) {
+    const c = result.grid.coord(path[i].index);
+    const onEdge = c.col === 0 || c.col === result.grid.width - 1 || c.row === 0 || c.row === result.grid.height - 1;
+    if (!onEdge) continue;
+    edgePoints++;
+    if (covered[i]) edgeCovered++;
+  }
+  ok(edgePoints > 0, '轨迹确实走过边界网格（覆盖率断言才有意义）', `边界网格轨迹点 ${edgePoints}`);
+  eq(edgeCovered, edgePoints, '边界网格的轨迹显示覆盖率达到 100%（每个边缘点都被绘制）');
+
+  // 跨缝点在两段里的位置相差整圈，正是「滑出侧画到边界、滑入侧从对侧接着画」的平移量
+  let circleViolations = 0;
+  for (let k = 0; k < crossings.length; k++) {
+    const cr = crossings[k];
+    const outRun = segs[k];
+    const inRun = segs[k + 1];
+    const gap = Math.hypot((un[cr.i * 2] + inRun.ox) - (un[cr.i * 2] + outRun.ox),
+      (un[cr.i * 2 + 1] + inRun.oy) - (un[cr.i * 2 + 1] + outRun.oy));
+    if (Math.abs(gap - pitch * result.grid.width) > 0.01) circleViolations++;
+  }
+  eq(circleViolations, 0, '跨缝点在两段中的位置恰相差整圈（接缝两侧完美衔接）');
+
+  let drawnMaxGap = 0;
+  for (const sg of segs) {
+    for (let i = sg.from + 1; i <= sg.to; i++) {
+      const d = Math.hypot(un[i * 2] - un[(i - 1) * 2], un[i * 2 + 1] - un[(i - 1) * 2 + 1]);
+      if (d > drawnMaxGap) drawnMaxGap = d;
+    }
+  }
+  ok(drawnMaxGap <= pitch * 1.05, '任意段内相邻两点的像素间距不超过一格（不会连出横穿画面的长条）',
+    `最大间距 ${drawnMaxGap.toFixed(2)} / 一步 ${pitch}`);
+
+  // 3) 端到端：真实 draw() 下轨迹描边连续且完整
+  const { r: rr, calls } = headlessRenderer({
+    cellSize: 20, gap: 2, trailFade: false, showGrid: false, showBody: false, showEffects: false,
+    highlightRules: false, showStartEnd: false, showCrossings: false,
+  });
+  attachResult(rr, result);
+  rr.draw(result.frames.length - 1, 0);
+
+  const paths = [];
+  let cur = null;
+  for (const c of calls) {
+    if (c.name === 'beginPath') { cur = { xs: [], ys: [] }; paths.push(cur); continue; }
+    if (c.name === 'stroke' || c.name === 'fill') { cur = null; continue; }
+    if (!cur) continue;
+    if (c.name === 'moveTo' || c.name === 'lineTo') { cur.xs.push(c.args[0]); cur.ys.push(c.args[1]); }
+  }
+  const lines = paths.filter((p) => p.xs.length >= 2);
+  ok(lines.length > 0, 'draw() 实际产生了轨迹折线描边');
+  let drawnPoints = 0;
+  let worstSeg = 0;
+  for (const p of lines) {
+    drawnPoints += p.xs.length;
+    for (let k = 1; k < p.xs.length; k++) {
+      worstSeg = Math.max(worstSeg, Math.hypot(p.xs[k] - p.xs[k - 1], p.ys[k] - p.ys[k - 1]));
+    }
+  }
+  ok(drawnPoints >= n, '实际绘制的轨迹点数覆盖全部轨迹点（没有缺失的轨迹段）', `已绘制 ${drawnPoints} / 共 ${n}`);
+  ok(worstSeg <= pitch * 1.05, '实际绘制中不存在跨越整图的线段（跨缝轨迹连续、无横穿长条）',
+    `最大线段 ${worstSeg.toFixed(2)}`);
+}
+
+/* ---------- 本轮新增：轨迹颜色分级映射 ---------- */
+
+section('新增：轨迹颜色分级映射（渐隐 / 热度 / 次序）');
+{
+  eq(TRAIL_COLOR_MODES.join(','), 'fade,visit,order', '颜色分级枚举为 渐隐 / 热度 / 次序');
+  const d = defaultConfig();
+  eq(d.style.trailColorMode, 'fade', '默认按新旧渐隐取色（与旧版本视觉一致）');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailColorMode: 'visit' } }).style.trailColorMode, 'visit', '可切换为按经过次数（热度）取色');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailColorMode: 'order' } }).style.trailColorMode, 'order', '可切换为按经过次序取色');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailColorMode: 'rainbow' } }).style.trailColorMode, 'fade', '非法取色模式回退为默认渐隐');
+  eq(decodeConfigFromToken(encodeConfigToToken(normalizeConfig({ ...d, style: { ...d.style, trailColorMode: 'order' } }))).style.trailColorMode,
+    'order', '分享链接保留颜色分级设置');
+
+  const result = new Simulation(wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 60 } })).run();
+  const mk = (style) => {
+    const { r } = headlessRenderer({ cellSize: 20, gap: 2, ...style });
+    attachResult(r, result);
+    r.pixDirty = true;
+    r.ensureTrailPix();
+    return r;
+  };
+
+  // 渐隐模式：不引入色带，样式表只有亮度一维
+  const rf = mk({ trailColorMode: 'fade' });
+  eq(rf.ensureTrailCv(), null, '渐隐模式不额外构建分级取值缓冲');
+  eq(rf.colorRamp(), null, '渐隐模式不启用色带');
+  eq(rf.fadeStyleTable(rf.theme(), 6).cols, 1, '渐隐模式的样式表只按亮度分档（cols = 1）');
+
+  // 热度模式：取值 = (经过次数 - 1) / (最大次数 - 1)
+  const rv = mk({ trailColorMode: 'visit' });
+  const cvv = rv.ensureTrailCv();
+  ok(cvv instanceof Float32Array && cvv.length === rv.trail.path.length, '热度模式为每个轨迹点构建分级取值');
+  let maxVisits = 1;
+  for (const cell of rv.trail.info.values()) if (cell.visits > maxVisits) maxVisits = cell.visits;
+  const vDen = Math.max(1, maxVisits - 1);
+  let vMismatch = 0;
+  for (let i = 0; i < rv.trail.path.length; i++) {
+    const cell = rv.trail.info.get(rv.trail.path[i].index);
+    const expect = (cell.visits - 1) / vDen;
+    if (Math.abs(cvv[i] - expect) > 1e-6) vMismatch++;
+  }
+  eq(vMismatch, 0, '热度取值与「(经过次数-1)/最大次数」严格一致');
+  ok(cvv.every((v) => v >= 0 && v <= 1), '热度取值归一化到 [0,1]');
+  const tv = rv.fadeStyleTable(rv.theme(), 6);
+  ok(tv.cols > 1, '热度模式样式表扩展出颜色维度（亮度档 × 颜色档）');
+  ok(new Set(tv.colors).size > 4, '色带为不同颜色档给出不同颜色');
+
+  // 次序模式：取值 = (经过次序 - 1) / (格数 - 1)，且与热度使用不同色带
+  const ro = mk({ trailColorMode: 'order' });
+  const cvo = ro.ensureTrailCv();
+  const oDen = Math.max(1, ro.trail.order.length - 1);
+  let oMismatch = 0;
+  for (let i = 0; i < ro.trail.path.length; i++) {
+    const cell = ro.trail.info.get(ro.trail.path[i].index);
+    const expect = (cell.order - 1) / oDen;
+    if (Math.abs(cvo[i] - expect) > 1e-6) oMismatch++;
+  }
+  eq(oMismatch, 0, '次序取值与「(经过次序-1)/(格数-1)」严格一致');
+  ok(oMismatch === 0 && cvo[0] === 0, '第一个经过的格取色档为 0');
+  ok(ro.fadeStyleTable(ro.theme(), 6).colors.join() !== tv.colors.join(), '次序与热度使用不同色带');
+  ok(ro.ensureTrailCv() === cvo, '分级取值按模式与长度缓存复用（不逐帧重建）');
+  ro.pixDirty = true;
+  ro.ensureTrailPix();
+  eq(ro.trailCv, null, '轨迹更新后分级取值缓存失效，下一帧按新轨迹重建');
+}
+
+/* ---------- 本轮新增：轨迹尖端平滑过渡 ---------- */
+
+section('新增：轨迹尖端平滑过渡（帧间插值补画头部）');
+{
+  const d = defaultConfig();
+  eq(d.style.trailSmooth, true, '默认开启轨迹尖端平滑过渡');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailSmooth: false } }).style.trailSmooth, false, '可关闭平滑过渡');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailSmooth: 0 } }).style.trailSmooth, false, '兼容 0 / 1 形式的布尔值');
+  eq(normalizeConfig({ ...d, style: { ...d.style, trailSmooth: undefined } }).style.trailSmooth, true, '缺省时回退为开启');
+
+  const result = new Simulation(wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 40 } })).run();
+  const mk = (style) => {
+    const { r, calls } = headlessRenderer({ cellSize: 20, gap: 2, trailFade: false, ...style });
+    attachResult(r, result);
+    r.pixDirty = true;
+    r.ensureTrailPix();
+    r.ensureTrailCv();
+    return { r, calls };
+  };
+  const { r: on } = mk({ trailSmooth: true });
+  const { r: off } = mk({ trailSmooth: false });
+  const pitch = on.center({ col: 1, row: 0 }).x - on.center({ col: 0, row: 0 }).x;
+  const path = on.trail.path;
+
+  let paired = 0;
+  let missing = 0;
+  let tooLong = 0;
+  let firstPair = -1;
+  for (let i = 1; i < path.length - 1; i++) {
+    if (path[i].tick - path[i - 1].tick !== 1 || path[i].agent !== path[i - 1].agent) continue;
+    paired++;
+    if (firstPair < 0) firstPair = i;
+    const tip = on.smoothHead(i + 1, path[i].tick + 0.5);
+    if (!tip) { missing++; continue; }
+    if (Math.hypot(tip.x1 - tip.x0, tip.y1 - tip.y0) > pitch * 1.05) tooLong++;
+  }
+  ok(paired > 20, '存在大量可补画的相邻步', `可补画 ${paired} 处`);
+  eq(missing, 0, '所有相邻步之间都能补出平滑尖端（含跨缝的两步）');
+  eq(tooLong, 0, '补画的尖端长度不超过一格（永远不会横穿画面）');
+  eq(on.smoothHead(2, path[1].tick), null, '步内进度为 0 时不补画（避免与已绘制的头部重复）');
+  eq(off.smoothHead(2, path[1].tick + 0.5), null, '关闭平滑后不再补画尖端');
+
+  // 直接检查描边：步内进度 0.5 时补出的长度应恰为半格
+  const { r: tipR, calls: tipCalls } = mk({ trailSmooth: true });
+  tipCalls.length = 0;
+  tipR.strokeSmoothTip(tipR.theme(), firstPair + 1, path[firstPair].tick + 0.5, 6);
+  const mv = tipCalls.find((c) => c.name === 'moveTo');
+  const ln = tipCalls.find((c) => c.name === 'lineTo');
+  ok(!!mv && !!ln && tipCalls.some((c) => c.name === 'stroke'), '尖端平滑确实追加了一段描边');
+  if (mv && ln) {
+    near(Math.hypot(ln.args[0] - mv.args[0], ln.args[1] - mv.args[1]), pitch / 2, 0.01,
+      '尖端长度恰为半格（与体节的帧间插值同步）');
+  }
+}
+
+/* ---------- 本轮新增：边界穿越标记与事件日志 ---------- */
+
+section('新增：边界穿越标记与事件日志');
+{
+  const d = defaultConfig();
+  eq(d.style.showCrossings, true, '默认在轨迹接缝处标出边界穿越点');
+  eq(normalizeConfig({ ...d, style: { ...d.style, showCrossings: false } }).style.showCrossings, false, '可关闭穿越标记');
+  eq(d.events.logCrossings, true, '默认记录边界穿越事件日志');
+  eq(normalizeConfig({ ...d, events: { logCrossings: false } }).events.logCrossings, false, '穿越日志开关可关闭');
+  eq(normalizeConfig({ ...d, events: {} }).events.logCrossings, true, '缺省时穿越日志回退为开启');
+  eq(decodeConfigFromToken(encodeConfigToToken(normalizeConfig({ ...d, events: { logCrossings: false } }))).events.logCrossings,
+    false, '分享链接保留穿越日志开关');
+
+  const on = new Simulation(wrapRun({ endConditions: { ...defaultConfig().endConditions, maxSteps: 40 } })).run();
+  const off = new Simulation(wrapRun({
+    endConditions: { ...defaultConfig().endConditions, maxSteps: 40 },
+    events: { logCrossings: false },
+  })).run();
+
+  ok(on.stats.wrapCrossings > 0, '开启日志时统计到边界穿越次数');
+  const wrapLogs = on.logs.filter((l) => l.ruleId === 'boundary');
+  eq(wrapLogs.length, on.stats.wrapCrossings, '穿越日志条数与统计的穿越次数一致');
+  eq(on.summary.wrapCrossings, on.stats.wrapCrossings, '摘要中的穿越次数与统计一致');
+  const e0 = wrapLogs[0];
+  ok(!!e0, '产生了可回溯的边界穿越日志');
+  if (e0) {
+    eq(e0.ruleName, '边界穿越', '穿越日志归属「边界穿越」事件');
+    eq(e0.trigger, 'wrap', '穿越日志标记触发方式为 wrap');
+    ok(/穿越边界/.test(e0.text || ''), '穿越日志文本可直接阅读');
+    ok(/滑出边界/.test(e0.condition || '') && /滑入/.test(e0.actions || ''), '穿越日志说明「从何处滑出、从何处滑入」');
+    ok(on.grid.inBounds(e0.coord), '穿越日志落点为网格内坐标（滑入侧）');
+  }
+
+  eq(off.logs.filter((l) => l.ruleId === 'boundary').length, 0, '关闭开关后不再产生穿越日志');
+  eq(off.stats.wrapCrossings, 0, '关闭开关后不再累计穿越次数');
+  eq(off.stats.steps, on.stats.steps, '关闭穿越日志不影响运行步数');
+  eq(off.frames.length, on.frames.length, '关闭穿越日志不影响帧序列');
+
+  // 渲染层：接缝两侧各画一个标记（滑出侧空心环 + 滑入侧实心点）
+  const base = {
+    cellSize: 20, gap: 2, trailFade: false, showGrid: false, showBody: false, showEffects: false,
+    highlightRules: false, showStartEnd: false, showObstacles: false, showMarkers: false,
+  };
+  const { r, calls } = headlessRenderer({ ...base, showCrossings: true });
+  attachResult(r, on);
+  r.draw(on.frames.length - 1, 0);
+  const { r: r2, calls: calls2 } = headlessRenderer({ ...base, showCrossings: false });
+  attachResult(r2, on);
+  r2.draw(on.frames.length - 1, 0);
+
+  const rect = r.gridRect();
+  const pitch = r.center({ col: 1, row: 0 }).x - r.center({ col: 0, row: 0 }).x;
+  const marks = r.trailCrossings;
+  ok(marks.length > 0, '渲染层解算出边界穿越标记');
+  const inRect = (x, y) => x >= rect.left - 1e-6 && x <= rect.right + 1e-6 && y >= rect.top - 1e-6 && y <= rect.bottom + 1e-6;
+  let outside = 0;
+  let tooClose = 0;
+  for (const m of marks) {
+    if (!inRect(m.outX, m.outY) || !inRect(m.inX, m.inY)) outside++;
+    if (Math.hypot(m.inX - m.outX, m.inY - m.outY) < pitch * 3) tooClose++;
+  }
+  eq(outside, 0, '穿越标记都落在网格区域内（不会画到留白区）');
+  eq(tooClose, 0, '穿越标记分处接缝两侧（滑出侧与滑入侧各一个）');
+  const arcsWith = calls.filter((c) => c.name === 'arc').length;
+  const arcsWithout = calls2.filter((c) => c.name === 'arc').length;
+  eq(arcsWith - arcsWithout, marks.length * 2, '每个穿越点在接缝两侧各绘制一个标记（关闭时完全不画）');
+  ok(calls2.some((c) => c.name === 'stroke'), '关闭穿越标记后轨迹仍正常描边');
+}
+
+/* ---------- 本轮：默认配置与界面措辞 ---------- */
+
+section('默认关闭：排行榜第 1 名提示（保留开关）；界面措辞与存档分组');
+{
+  const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  ok(/showRankToast:\s*false/.test(app), '排行榜第 1 名提示默认关闭（state.showRankToast 初始为 false）');
+  ok(/state\.showRankToast\s*\)\s*toast\(/.test(app), '弹出提示前检查开关，关闭时不弹出');
+  ok(/RANK_TOAST_KEY/.test(app), '保留本地开关持久化键');
+  ok(/setShowRankToast/.test(app), '保留开关的读写与设置入口');
+  ok(/排行榜第 1 名提示/.test(app), '「界面配置」中保留可开启该提示的开关项');
+
+  ok(/group\('配置 \/ 状态存档'/.test(app), '配置自动存档与状态存档整合在同一分组');
+  ok(/sub-title' \}, '配置自动存档'/.test(app) && /sub-title' \}, '状态存档'/.test(app), '同一分组内两块内容各有小标题区分');
+  ok(!/\bsavesGroup\(/.test(app) && !/\bautosaveGroup\(/.test(app), '旧的独立存档分组入口已全部移除');
+
+  ok(/自适应速度/.test(app), '「自适应难度」已更正为「自适应速度」');
+  ok(!/自适应难度/.test(app), '界面代码中不再残留「自适应难度」措辞');
+  const diff = readFileSync(new URL('../src/core/difficulty.js', import.meta.url), 'utf8');
+  ok(!/自适应难度/.test(diff), '动态难度模块注释同样使用「自适应速度」措辞');
 }
 
 /* ---------- 结果 ---------- */

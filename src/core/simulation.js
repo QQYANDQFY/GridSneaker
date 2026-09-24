@@ -5,7 +5,7 @@
  * - 支持多蛇生成与交互（碰撞 / 融合 / 排斥 / 穿行）
  * - 随机全部来自种子化 RNG，保证可复现
  */
-import { Grid, parseDir } from './grid.js';
+import { Grid, parseDir, dirNames } from './grid.js';
 import { RNG } from './rng.js';
 import { World, Agent } from './world.js';
 import { CAEngine } from './ca.js';
@@ -226,6 +226,8 @@ export class Simulation {
       obstacleCount: 0,
       markerCount: 0,
       logsDropped: 0,
+      /** 边界穿越次数（环绕边界下每穿越一次 +1，与穿越日志同步累计） */
+      wrapCrossings: 0,
     };
 
     const initStateIdx = new Set();
@@ -378,6 +380,8 @@ export class Simulation {
         transformDeaths: stats.transformDeaths,
         transformedCells: stats.transformedCells,
         collisionWarnings: stats.collisionWarnings,
+        /** 边界穿越次数（环绕边界下「穿越到另一侧」的累计次数） */
+        wrapCrossings: stats.wrapCrossings,
         // 生命机制：剩余 / 生命增减 / 重生 / 生命耗尽最终死亡 / 低生命预警
         lives: stats.lives,
         maxLives: stats.maxLives,
@@ -532,6 +536,22 @@ export class Simulation {
           dir,
           agentId: agent.id,
         });
+        // 事件日志：穿越不是规则触发，但值得回溯（可由 cfg.events.logCrossings 关闭）
+        if (cfg.events?.logCrossings) {
+          ctx.stats.wrapCrossings = (ctx.stats.wrapCrossings || 0) + 1;
+          ctx.log({
+            tick: ctx.tick,
+            ruleId: 'boundary',
+            ruleName: '边界穿越',
+            trigger: 'wrap',
+            subject: agent.label || agent.id,
+            coord: { col: target.col, row: target.row },
+            priority: 0,
+            condition: `从 (${exit.col}, ${exit.row}) 沿${dirNames(grid.type)[dir] || dir}滑出边界`,
+            actions: `从对侧 (${target.col}, ${target.row}) 滑入`,
+            text: `「${agent.label || agent.id}」第 ${ctx.tick} 步穿越边界：(${exit.col}, ${exit.row}) → (${target.col}, ${target.row})`,
+          });
+        }
       } else if (mode === 'bounce') {
         dir = grid.opposite(dir);
         const t2 = grid.step(agent.head, dir);

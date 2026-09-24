@@ -260,6 +260,11 @@ export function defaultConfig() {
     },
     selfCollisionPolicy: { action: 'stop', n: 2, maxConsecutive: 5 },
     /**
+     * 过程性事件记录：把边界穿越这类「不是规则触发、但值得回溯」的事件写入规则日志。
+     * 关闭后不影响运行结果，只是不再产生对应日志条目。
+     */
+    events: { logCrossings: true },
+    /**
      * 蛇死亡转化：自撞致死后，按概率把身体节点并入元胞自动机（写入目标状态）。
      *
      * 与既有「自撞处理」的关系：
@@ -402,6 +407,14 @@ export function defaultConfig() {
        */
       fadeMode: 'linear',
       fadeLength: 60,
+      /**
+       * 轨迹颜色分级映射：fade 按新旧渐隐 · visit 按经过次数（热度）· order 按经过次序
+       */
+      trailColorMode: 'fade',
+      /** 轨迹尖端平滑过渡：播放到两帧之间时补出头部所在的一小段，让轨迹跟随蛇头平滑滑动 */
+      trailSmooth: true,
+      /** 在轨迹接缝处标出边界穿越点 */
+      showCrossings: true,
       /** 蛇头眼睛默认隐藏，需在「展示样式 → 渲染效果」中主动开启 */
       showEyes: false,
       showEffects: true,
@@ -707,6 +720,9 @@ export const JOIN_MODES = ['curve', 'line', 'angle'];
 /** 轨迹亮度衰减模式：线性 / 指数 */
 export const FADE_MODES = ['linear', 'exponential'];
 
+/** 轨迹颜色分级映射：fade 按新旧渐隐 · visit 按经过次数（热度）· order 按经过次序 */
+export const TRAIL_COLOR_MODES = ['fade', 'visit', 'order'];
+
 /** 轨迹衰减步长的允许范围（步） */
 export const FADE_LENGTH_LIMIT = { min: 2, max: 2000 };
 
@@ -743,6 +759,9 @@ function normalizeStyle(raw = {}) {
     trailFade: bool(raw.trailFade, d.trailFade),
     fadeMode: FADE_MODES.includes(raw.fadeMode) ? raw.fadeMode : d.fadeMode,
     fadeLength: clamp(num(raw.fadeLength, d.fadeLength), FADE_LENGTH_LIMIT.min, FADE_LENGTH_LIMIT.max),
+    trailColorMode: TRAIL_COLOR_MODES.includes(raw.trailColorMode) ? raw.trailColorMode : d.trailColorMode,
+    trailSmooth: bool(raw.trailSmooth, d.trailSmooth),
+    showCrossings: bool(raw.showCrossings, d.showCrossings),
     axisLabels: bool(raw.axisLabels, d.axisLabels),
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),
@@ -1015,6 +1034,7 @@ export function normalizeConfig(rawInput = {}) {
     advancedRules: normAdvancedRules(raw.advancedRules),
     collision,
     selfCollisionPolicy,
+    events: { logCrossings: bool((raw.events || {}).logCrossings, d.events.logCrossings) },
     environmentRules,
     caMode,
     endConditions,

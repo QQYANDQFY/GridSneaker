@@ -5,7 +5,7 @@
  */
 import { dirLabel } from '../core/grid.js';
 import { stateLabel } from '../core/world.js';
-import { buildTrail } from '../core/trail.js';
+import { buildTrail, unwrapTrail } from '../core/trail.js';
 
 export const STYLE_DEFAULTS = {
   cellSize: 26,
@@ -27,6 +27,14 @@ export const STYLE_DEFAULTS = {
    */
   fadeMode: 'linear',
   fadeLength: 60,
+  /**
+   * 轨迹颜色分级映射：fade 随新旧渐隐（默认）· visit 按该格经过次数（热度）· order 按经过次序
+   */
+  trailColorMode: 'fade',
+  /** 轨迹尖端平滑过渡：播放到两帧之间时把轨迹头部补到步内位置，随蛇头平滑滑动而非逐格跳变 */
+  trailSmooth: true,
+  /** 在轨迹接缝处标出边界穿越点（滑出 / 滑入两侧各一个标记） */
+  showCrossings: true,
   /** 蛇头眼睛默认隐藏，仅在用户主动开启「展示样式 → 蛇头眼睛」时按朝向绘制 */
   showEyes: false,
   /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
@@ -75,6 +83,19 @@ const FADE_MAX_ALPHA = 0.62;
 /** 指数衰减的陡峭度：越大越「先急后缓」；两端归一后仍然精确到 0 */
 const EXP_FADE_K = 6;
 
+/**
+ * 轨迹颜色分级色带（visit / order 模式下按热度 / 次序取色）。
+ * fade 模式没有色带：颜色仍由亮度（新旧）唯一决定。
+ */
+const TRAIL_COLOR_RAMPS = {
+  visit: ['#4dabf7', '#51cf66', '#ffd43b', '#ff922b', '#ff6b6b'],
+  order: ['#9775fa', '#4dabf7', '#38d9a9', '#ffd43b', '#ff8787'],
+};
+
+/** 边界穿越标记：滑出点（空心环）与滑入点（实心点）的配色 */
+const CROSSING_OUT = 'rgba(255, 212, 59, 0.9)';
+const CROSSING_IN = 'rgba(77, 171, 247, 0.95)';
+
 /** 坐标筛选高亮的填充与描边色 */
 const FILTER_FILL = 'rgba(255, 212, 59, 0.20)';
 const FILTER_COLOR = 'rgba(255, 212, 59, 0.95)';
@@ -101,10 +122,21 @@ export class Renderer {
     /** 轨迹模型：按经过时间升序的路径 + 逐格聚合信息（经过次序 / 次数 / 首末步） */
     this.trail = { path: [], order: [], info: new Map(), maxTick: 0 };
     this.trailInfo = new Map();
-    /** 轨迹像素坐标与分段缓存（仅在结果 / 尺寸 / 样式变化时重算） */
-    this.trailPix = null;
+    /** 轨迹的连续展开像素坐标：穿越边界时相邻点仍只差一步（配合 trailRuns 的整圈平移绘制） */
+    this.trailUn = null;
     this.trailRuns = [];
+    /** 边界穿越标记（滑出 / 滑入两侧的像素坐标），与 trailUn 一起重建 */
+    this.trailCrossings = [];
+    /** 当前绘制到的轨迹点下标（供穿越标记按播放进度筛选） */
+    this.trailLo = 0;
     this.pixDirty = true;
+    /** 颜色分级取值缓冲（按轨迹点下标）；fade 模式下为 null */
+    this.trailCv = null;
+    this.trailCvMode = '';
+    /** 渐隐亮度进度缓冲（按段复用，避免每帧逐点分配） */
+    this._fadeT = null;
+    /** 渐隐档样式表缓存（主题 / 线宽 / 渐隐开关 / 颜色分级变化时重建） */
+    this._fadeTable = null;
     /** 网格线离屏层：网格 / 尺寸 / 样式变化时重建 */
     this.gridLayer = null;
     this.gridDirty = true;
@@ -217,38 +249,72 @@ export class Renderer {
   /**
    * 轨迹像素坐标 + 连续段缓存的惰性重建。
    * 播放时每帧都需要大量坐标换算，缓存后可避免重复的坐标计算与对象分配（长轨迹下的主要卡顿来源）。
+   *
+   * 边界穿越（wrap）时相邻两步的格坐标会「瞬移」到对侧，两个真实像素点相隔整张画面：
+   * 旧实现按像素间距断段，跨缝的轨迹整段丢失（边缘格只显示半条轨迹）。
+   * 这里改为与体节渲染同一套解算（见 unwrapTrail）：先沿轨迹累加环绕最短位移得到
+   * 「连续展开坐标」，再把展开坐标按整圈平移折回网格区域附近，
+   * 每段记录自己的整圈平移量 —— 段内相邻点恒差一步，跨缝处由前后两段的平移量衔接。
    */
   ensureTrailPix() {
-    if (!this.pixDirty && this.trailPix && this.trailPix.length === this.trail.path.length * 2) return;
+    if (!this.pixDirty && this.trailUn && this.trailUn.length === this.trail.path.length * 2) return;
     const path = this.trail.path;
     const n = path.length;
-    const pix = new Float32Array(n * 2);
+    const un = new Float32Array(n * 2);
+    // 轨迹变了，颜色分级取值缓冲随之失效
+    this.trailCv = null;
+    this.trailCvMode = '';
+    if (!n) {
+      this.trailUn = un;
+      this.trailRuns = [];
+      this.trailCrossings = [];
+      this.pixDirty = false;
+      return;
+    }
+    const grid = this.grid;
+    const width = grid.width;
+    const height = grid.height;
+    const { col, row, runs, crossings } = unwrapTrail(grid, path);
+    // 整圈平移量（横向 width 格 / 纵向 height 格）对应的像素位移，用于把展开坐标折回网格区域
+    const origin = this.center({ col: 0, row: 0 });
+    const ax = this.center({ col: width, row: 0 }).x - origin.x;
+    const ay = this.center({ col: width, row: 0 }).y - origin.y;
+    const bx = this.center({ col: 0, row: height }).x - origin.x;
+    const by = this.center({ col: 0, row: height }).y - origin.y;
+
     const scratch = this._scratchA;
     for (let i = 0; i < n; i++) {
-      const index = path[i].index;
-      scratch.col = index % this.grid.width;
-      scratch.row = (index / this.grid.width) | 0;
-      const p = this.center(scratch);
-      pix[i * 2] = p.x;
-      pix[i * 2 + 1] = p.y;
+      // 连续展开坐标：相邻点恒差一步，跨缝处也不会瞬移
+      scratch.col = col[i];
+      scratch.row = row[i];
+      const u = this.center(scratch);
+      un[i * 2] = u.x;
+      un[i * 2 + 1] = u.y;
     }
-    // 连续段：步数不连续、移动体切换或跨度过大时断开
-    const runs = [];
-    const maxDist = (this.style.cellSize + this.style.gap) * RUN_GAP_CELLS;
-    let start = 0;
-    for (let i = 1; i < n; i++) {
-      const a = path[i - 1];
-      const b = path[i];
-      const dx = pix[i * 2] - pix[i * 2 - 2];
-      const dy = pix[i * 2 + 1] - pix[i * 2 - 1];
-      if (b.tick - a.tick !== 1 || b.agent !== a.agent || Math.hypot(dx, dy) > maxDist) {
-        runs.push([start, i - 1]);
-        start = i;
-      }
+    const segs = new Array(runs.length);
+    for (let r = 0; r < runs.length; r++) {
+      const run = runs[r];
+      segs[r] = { from: run.from, to: run.to, ox: -(run.kx * ax + run.ky * bx), oy: -(run.kx * ay + run.ky * by) };
     }
-    if (n) runs.push([start, n - 1]);
-    this.trailPix = pix;
-    this.trailRuns = runs;
+    // 边界穿越标记：滑出侧取跨缝点的前一点（仍在网格内），滑入侧取跨缝点本身
+    const marks = new Array(crossings.length);
+    for (let c = 0; c < crossings.length; c++) {
+      const cr = crossings[c];
+      const oox = -(cr.okx * ax + cr.oky * bx);
+      const ooy = -(cr.okx * ay + cr.oky * by);
+      const nox = -(cr.nkx * ax + cr.nky * bx);
+      const noy = -(cr.nkx * ay + cr.nky * by);
+      marks[c] = {
+        i: cr.i,
+        outX: un[(cr.i - 1) * 2] + oox,
+        outY: un[(cr.i - 1) * 2 + 1] + ooy,
+        inX: un[cr.i * 2] + nox,
+        inY: un[cr.i * 2 + 1] + noy,
+      };
+    }
+    this.trailUn = un;
+    this.trailRuns = segs;
+    this.trailCrossings = marks;
     this.pixDirty = false;
   }
 
@@ -318,6 +384,7 @@ export class Renderer {
     if (s.showGrid) this.drawGrid();
     this.drawCells(frame, th);
     if (s.showTrail) this.drawTrail(frame, th, tickF);
+    if (s.showTrail && s.showCrossings) this.drawTrailCrossings();
     this.drawCompare();
     this.drawFilterHighlight();
     if (s.showEffects) this.drawEffects(i0);
@@ -446,6 +513,8 @@ export class Renderer {
     }
     if (lo < 1) return;
     this.ensureTrailPix();
+    this.ensureTrailCv();
+    this.trailLo = lo;
     const mode = this.style.trailJoin;
     if (mode === 'curve' && lo > 1) this.drawTrailCurve(th, lo, tick);
     else if (mode === 'angle' && lo > 1) this.drawTrailAngle(th, lo, tick);
@@ -454,7 +523,8 @@ export class Renderer {
 
   /**
    * 取 [0, lo) 范围内的轨迹点，并按连续段切分。
-   * 段内保证步数连续、同一移动体、像素间距不过大（跨边界 / 换体时断开，避免连出穿图直线）。
+   * 段内保证步数连续、同一移动体，且坐标已按「展开坐标 + 整圈平移」给出连续折线
+   * —— 跨边界处不再断开，穿越前后与接缝两侧的轨迹都能完整绘制。
    *
    * 亮度按「离开头部走过的步数 age = tick - 该点步数」衰减，而非按整段运行时长归一化：
    *   - 无论总步数是 50 还是 5000，尾巴都在固定 fadeLength 步内完整淡出；
@@ -462,21 +532,22 @@ export class Renderer {
    *     高步数下不会再去遍历、量化、描边上万个早已看不见的点。
    */
   trailRunsUpTo(lo, tick) {
-    const runs = [];
+    const out = [];
     const src = this.trailRuns;
     const spec = this.fadeSpec();
     const minTick = spec.on ? tick - spec.len : -Infinity;
     const path = this.trail.path;
     for (let ri = 0; ri < src.length; ri++) {
-      const a = src[ri][0];
-      if (a >= lo) break;
-      const b = Math.min(src[ri][1], lo - 1);
-      if (path[b].tick < minTick) continue; // 整段都已淡出，整段跳过
-      let from = a;
+      const run = src[ri];
+      if (run.from >= lo) break;
+      const to = Math.min(run.to, lo - 1);
+      if (to < run.from) continue;
+      if (path[to].tick < minTick) continue; // 整段都已淡出，整段跳过
+      let from = run.from;
       if (spec.on) {
         // 段内二分：第一个 age ≤ fadeLength 的点
-        let loI = a;
-        let hiI = b + 1;
+        let loI = from;
+        let hiI = to + 1;
         while (loI < hiI) {
           const mid = (loI + hiI) >> 1;
           if (path[mid].tick >= minTick) hiI = mid;
@@ -484,15 +555,41 @@ export class Renderer {
         }
         from = loI;
       }
-      const run = [];
-      for (let k = from; k <= b; k++) {
-        const t = this.fadeProgress(tick - path[k].tick, spec);
-        if (t <= 0) continue; // 已完全淡出，不产生任何绘制
-        run.push({ x: this.trailPix[k * 2], y: this.trailPix[k * 2 + 1], gi: k, t });
-      }
-      if (run.length) runs.push(run);
+      if (from > to) continue;
+      out.push({ from, to, ox: run.ox, oy: run.oy });
     }
-    return runs;
+    return out;
+  }
+
+  /**
+   * 计算段内各点的亮度进度，写入复用缓冲（下标与轨迹路径对齐）。
+   * 逐点分配临时对象是长轨迹每帧的主要开销之一，这里改为按段复用的扁平数组。
+   */
+  fillFadeRun(from, to, tick, spec) {
+    const path = this.trail.path;
+    let ft = this._fadeT;
+    if (!ft || ft.length < path.length) ft = this._fadeT = new Float32Array(path.length);
+    // 关闭渐隐时整条轨迹统一亮度（全为 1），也就不必按亮度分桶
+    if (!spec.on) {
+      for (let k = from; k <= to; k++) ft[k] = 1;
+      return ft;
+    }
+    for (let k = from; k <= to; k++) ft[k] = this.fadeProgress(tick - path[k].tick, spec);
+    return ft;
+  }
+
+  /** 把段内下标物化为点列 {x,y,gi,t,cv}（供切角 / 贝塞尔几何复用既有实现） */
+  runPoints(run, tick, spec) {
+    const un = this.trailUn;
+    const cv = this.trailCv;
+    const path = this.trail.path;
+    const pts = [];
+    for (let k = run.from; k <= run.to; k++) {
+      const t = spec.on ? this.fadeProgress(tick - path[k].tick, spec) : 1;
+      if (t <= 0) continue;
+      pts.push({ x: un[k * 2] + run.ox, y: un[k * 2 + 1] + run.oy, gi: k, t, cv: cv ? cv[k] : 0 });
+    }
+    return pts;
   }
 
   /** 轨迹渐隐参数（衰减开关 / 步长 / 模式） */
@@ -532,18 +629,227 @@ export class Renderer {
     return Math.max(0, Math.min(FADE_BUCKETS - 1, Math.floor(t * FADE_BUCKETS)));
   }
 
-  /** 直线型轨迹（line / angle：angle 已由 bevelChain 生成切角折线） */
+  /** 当前颜色分级色带（fade 模式返回 null：颜色只由新旧亮度决定） */
+  colorRamp() {
+    return TRAIL_COLOR_RAMPS[this.style.trailColorMode] || null;
+  }
+
+  /**
+   * 颜色分级取值缓冲（按轨迹点下标，∈ [0,1]）：visit 用经过次数热度，order 用经过次序。
+   * 只与轨迹模型有关，因此一次构建、逐帧复用；fade 模式下不构建。
+   */
+  ensureTrailCv() {
+    const mode = TRAIL_COLOR_RAMPS[this.style.trailColorMode] ? this.style.trailColorMode : 'fade';
+    if (mode === 'fade') {
+      this.trailCv = null;
+      this.trailCvMode = '';
+      return null;
+    }
+    const n = this.trail.path.length;
+    if (this.trailCv && this.trailCvMode === mode && this.trailCv.length === n) return this.trailCv;
+    const cv = new Float32Array(n);
+    const info = this.trail.info;
+    let maxVisits = 1;
+    for (const cell of info.values()) if (cell.visits > maxVisits) maxVisits = cell.visits;
+    const vDen = Math.max(1, maxVisits - 1);
+    const oDen = Math.max(1, this.trail.order.length - 1);
+    const path = this.trail.path;
+    for (let i = 0; i < n; i++) {
+      const cell = info.get(path[i].index);
+      if (!cell) continue;
+      cv[i] = mode === 'visit' ? (cell.visits - 1) / vDen : (cell.order - 1) / oDen;
+    }
+    this.trailCv = cv;
+    this.trailCvMode = mode;
+    return cv;
+  }
+
+  /**
+   * 描边样式组合档 = 亮度档 × 颜色档。
+   * fade 模式没有色带（cols = 1），颜色由亮度唯一决定，组合档退化回单一亮度档。
+   */
+  styleBucket(t, cv, cols) {
+    const ab = this.fadeBucket(t);
+    return cols === 1 ? ab : ab * cols + this.fadeBucket(cv);
+  }
+
+  /**
+   * 渐隐档样式表：把每一档的描边参数（颜色 / 不透明度 / 线宽）预先算好。
+   * 逐段重新插值配色并拼接颜色字符串是每帧描边的主要开销，
+   * 按档量化后每帧只需一次查表（主题 / 线宽 / 渐隐开关 / 颜色分级变化时才重建）。
+   */
+  fadeStyleTable(th, baseWidth) {
+    const ramp = this.colorRamp();
+    const cols = ramp ? FADE_BUCKETS : 1;
+    const c = this._fadeTable;
+    if (c && c.th === th && c.baseWidth === baseWidth && c.fade === !!this.style.trailFade && c.cols === cols) return c;
+    const size = FADE_BUCKETS * cols;
+    const alphas = new Float64Array(size);
+    const widths = new Float64Array(size);
+    const colors = new Array(size);
+    for (let ab = 0; ab < FADE_BUCKETS; ab++) {
+      const base = this.fadeAt(th, (ab + 0.5) / FADE_BUCKETS, baseWidth);
+      for (let cb = 0; cb < cols; cb++) {
+        const i = ab * cols + cb;
+        alphas[i] = base.alpha;
+        widths[i] = base.width;
+        colors[i] = ramp ? paletteColor(ramp, (cb + 0.5) / FADE_BUCKETS) : base.color;
+      }
+    }
+    const table = { th, baseWidth, fade: !!this.style.trailFade, cols, alphas, widths, colors };
+    this._fadeTable = table;
+    return table;
+  }
+
+  /**
+   * 轨迹绘制外层：把绘制裁剪到网格区域。
+   * 跨缝时折回对侧的镜像段只应出现在网格内，避免落到四周留白区。
+   */
+  clipTrail() {
+    const ctx = this.ctx;
+    const rect = this.gridRect();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    ctx.clip();
+  }
+
+  /**
+   * 轨迹尖端平滑过渡：播放位置落在两步之间时，把轨迹头部沿展开坐标补到步内位置，
+   * 让轨迹随蛇头平滑滑动（与体节的帧间插值一致），而不是逐格跳变。
+   * 只在头部与下一个轨迹点同属一段（同移动体、步数连续、且落在同一展开段）时补画，
+   * 因此补出的这一小段永远不会横穿画面。
+   * @returns {{x0:number,y0:number,x1:number,y1:number,gi:number}|null}
+   */
+  smoothHead(lo, tick) {
+    if (!this.style.trailSmooth) return null;
+    const path = this.trail.path;
+    if (lo < 1 || lo >= path.length) return null;
+    const a = path[lo - 1];
+    const b = path[lo];
+    if (b.tick - a.tick !== 1 || b.agent !== a.agent) return null;
+    const f = tick - a.tick;
+    if (!(f > 0)) return null;
+    const runs = this.trailRuns;
+    let run = null;
+    for (let i = runs.length - 1; i >= 0; i--) {
+      if (runs[i].from <= lo - 1 && runs[i].to >= lo) {
+        run = runs[i];
+        break;
+      }
+    }
+    if (!run) return null;
+    const un = this.trailUn;
+    const x0 = un[(lo - 1) * 2] + run.ox;
+    const y0 = un[(lo - 1) * 2 + 1] + run.oy;
+    const x1 = un[lo * 2] + run.ox;
+    const y1 = un[lo * 2 + 1] + run.oy;
+    const k = f > 1 ? 1 : f;
+    return { x0, y0, x1: x0 + (x1 - x0) * k, y1: y0 + (y1 - y0) * k, gi: lo };
+  }
+
+  /** 补画轨迹尖端（紧贴头部的最亮一小段），与体节的帧间插值保持同步 */
+  strokeSmoothTip(th, lo, tick, baseWidth) {
+    const tip = this.smoothHead(lo, tick);
+    if (!tip) return;
+    const ctx = this.ctx;
+    const tab = this.fadeStyleTable(th, baseWidth);
+    const cv = this.trailCv;
+    const b = this.styleBucket(1, cv && lo - 1 < cv.length ? cv[lo - 1] : 0, tab.cols);
+    ctx.globalAlpha = tab.alphas[b];
+    ctx.strokeStyle = tab.colors[b];
+    ctx.lineWidth = tab.widths[b];
+    ctx.beginPath();
+    ctx.moveTo(tip.x0, tip.y0);
+    ctx.lineTo(tip.x1, tip.y1);
+    ctx.stroke();
+  }
+
+  /**
+   * 边界穿越标记：在接缝两侧各画一个标记 ——
+   * 滑出侧为空心环（仍位于网格内的最后一点），滑入侧为实心点（从对侧出现的第一点）。
+   * 只标记已经绘制到的穿越事件（下标小于当前轨迹上界），标记随播放推进依次出现。
+   */
+  drawTrailCrossings() {
+    const marks = this.trailCrossings;
+    if (!marks || !marks.length) return;
+    const ctx = this.ctx;
+    const lo = this.trailLo;
+    const r = Math.max(2, this.style.cellSize * 0.12);
+    ctx.save();
+    this.clipTrail();
+    ctx.lineWidth = Math.max(1.2, r * 0.55);
+    for (const m of marks) {
+      if (m.i >= lo) continue;
+      ctx.strokeStyle = CROSSING_OUT;
+      ctx.beginPath();
+      ctx.arc(m.outX, m.outY, r * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = CROSSING_IN;
+      ctx.beginPath();
+      ctx.arc(m.inX, m.inY, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** 直线型轨迹：直接在展开坐标缓存上描边，不物化点对象 */
   drawTrailLine(th, lo, tick) {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
+    const spec = this.fadeSpec();
     const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const run of runs) this.strokePolyline(th, run, baseWidth);
+    this.clipTrail();
+    for (const run of runs) this.strokeRun(th, run, baseWidth, tick, spec);
+    this.strokeSmoothTip(th, lo, tick, baseWidth);
     ctx.restore();
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * 段描边（无分配）：直接读展开坐标缓存与复用亮度缓冲，
+   * 按渐隐档分桶把同档的相邻线段合并为一次描边 —— 长轨迹下显著减少绘制调用。
+   */
+  strokeRun(th, run, baseWidth, tick, spec) {
+    const ctx = this.ctx;
+    const un = this.trailUn;
+    const cv = this.trailCv;
+    const ft = this.fillFadeRun(run.from, run.to, tick, spec);
+    const tab = this.fadeStyleTable(th, baseWidth);
+    const cols = tab.cols;
+    const end = run.to;
+    let start = run.from;
+    while (start <= end && ft[start] <= 0) start++; // 已完全淡出的点直接跳过
+    if (start > end) return;
+    if (start === end) {
+      const b = this.styleBucket(ft[start], cv ? cv[start] : 0, cols);
+      ctx.globalAlpha = tab.alphas[b];
+      ctx.fillStyle = tab.colors[b];
+      ctx.beginPath();
+      ctx.arc(un[start * 2] + run.ox, un[start * 2 + 1] + run.oy, baseWidth * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    let bucket = this.styleBucket((ft[start] + ft[start + 1]) / 2, cv ? (cv[start] + cv[start + 1]) / 2 : 0, cols);
+    for (let k = start + 1; k <= end; k++) {
+      const next = k < end
+        ? this.styleBucket((ft[k] + ft[k + 1]) / 2, cv ? (cv[k] + cv[k + 1]) / 2 : 0, cols)
+        : -1;
+      if (next === bucket) continue;
+      ctx.globalAlpha = tab.alphas[bucket];
+      ctx.strokeStyle = tab.colors[bucket];
+      ctx.lineWidth = tab.widths[bucket];
+      ctx.beginPath();
+      ctx.moveTo(un[start * 2] + run.ox, un[start * 2 + 1] + run.oy);
+      for (let j = start + 1; j <= k; j++) ctx.lineTo(un[j * 2] + run.ox, un[j * 2 + 1] + run.oy);
+      ctx.stroke();
+      start = k;
+      bucket = next;
+    }
   }
 
   /** 按预设角度切角连接的直线型轨迹 */
@@ -551,11 +857,18 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
+    const spec = this.fadeSpec();
     const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const run of runs) this.strokePolyline(th, bevelChain(run, this.style.trailAngle), baseWidth);
+    this.clipTrail();
+    for (const run of runs) {
+      const pts = this.runPoints(run, tick, spec);
+      if (!pts.length) continue;
+      this.strokePolyline(th, pts.length === 1 ? pts : bevelChain(pts, this.style.trailAngle), baseWidth);
+    }
+    this.strokeSmoothTip(th, lo, tick, baseWidth);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -564,24 +877,27 @@ export class Renderer {
   strokePolyline(th, run, baseWidth) {
     const ctx = this.ctx;
     const last = run.length - 1;
+    const tab = this.fadeStyleTable(th, baseWidth);
+    const cols = tab.cols;
     if (last === 0) {
-      const st = this.fadeAt(th, run[0].t, baseWidth);
-      ctx.globalAlpha = st.alpha;
-      ctx.fillStyle = st.color;
+      const b = this.styleBucket(run[0].t, run[0].cv, cols);
+      ctx.globalAlpha = tab.alphas[b];
+      ctx.fillStyle = tab.colors[b];
       ctx.beginPath();
       ctx.arc(run[0].x, run[0].y, baseWidth * 0.5, 0, Math.PI * 2);
       ctx.fill();
       return;
     }
     let start = 0;
-    let bucket = this.fadeBucket((run[0].t + run[1].t) / 2);
+    let bucket = this.styleBucket((run[0].t + run[1].t) / 2, (run[0].cv + run[1].cv) / 2, cols);
     for (let k = 1; k <= last; k++) {
-      const next = k < last ? this.fadeBucket((run[k].t + run[k + 1].t) / 2) : -1;
+      const next = k < last
+        ? this.styleBucket((run[k].t + run[k + 1].t) / 2, (run[k].cv + run[k + 1].cv) / 2, cols)
+        : -1;
       if (next === bucket) continue;
-      const st = this.fadeAt(th, (run[start].t + run[k].t) / 2, baseWidth);
-      ctx.globalAlpha = st.alpha;
-      ctx.strokeStyle = st.color;
-      ctx.lineWidth = st.width;
+      ctx.globalAlpha = tab.alphas[bucket];
+      ctx.strokeStyle = tab.colors[bucket];
+      ctx.lineWidth = tab.widths[bucket];
       ctx.beginPath();
       ctx.moveTo(run[start].x, run[start].y);
       for (let j = start + 1; j <= k; j++) ctx.lineTo(run[j].x, run[j].y);
@@ -596,25 +912,32 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize, gap } = this.style;
     const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
+    const spec = this.fadeSpec();
     const runs = this.trailRunsUpTo(lo, tick);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    this.clipTrail();
     for (const run of runs) {
-      if (run.length === 1) {
-        this.strokePolyline(th, run, baseWidth);
+      const run_ = this.runPoints(run, tick, spec);
+      if (!run_.length) continue;
+      if (run_.length === 1) {
+        this.strokePolyline(th, run_, baseWidth);
         continue;
       }
-      const segs = bezierSegments(run);
+      const segs = bezierSegments(run_);
+      const tab = this.fadeStyleTable(th, baseWidth);
+      const cols = tab.cols;
       let start = 0;
-      let bucket = this.fadeBucket((run[0].t + run[1].t) / 2);
+      let bucket = this.styleBucket((run_[0].t + run_[1].t) / 2, (run_[0].cv + run_[1].cv) / 2, cols);
       for (let k = 1; k <= segs.length; k++) {
-        const next = k < segs.length ? this.fadeBucket((run[k].t + run[k + 1].t) / 2) : -1;
+        const next = k < segs.length
+          ? this.styleBucket((run_[k].t + run_[k + 1].t) / 2, (run_[k].cv + run_[k + 1].cv) / 2, cols)
+          : -1;
         if (next === bucket) continue;
-        const st = this.fadeAt(th, (run[start].t + run[k].t) / 2, baseWidth);
-        ctx.globalAlpha = st.alpha;
-        ctx.strokeStyle = st.color;
-        ctx.lineWidth = st.width;
+        ctx.globalAlpha = tab.alphas[bucket];
+        ctx.strokeStyle = tab.colors[bucket];
+        ctx.lineWidth = tab.widths[bucket];
         ctx.beginPath();
         ctx.moveTo(segs[start].p0.x, segs[start].p0.y);
         for (let j = start; j < k; j++) {
@@ -626,6 +949,7 @@ export class Renderer {
         bucket = next;
       }
     }
+    this.strokeSmoothTip(th, lo, tick, baseWidth);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -1757,9 +2081,9 @@ const BEVEL_CUT = 0.45;
  */
 function bevelChain(pts, angleDeg) {
   const n = pts.length;
-  if (n < 3) return pts.map((p) => ({ x: p.x, y: p.y, gi: p.gi, t: p.t }));
+  if (n < 3) return pts.map((p) => ({ x: p.x, y: p.y, gi: p.gi, t: p.t, cv: p.cv }));
   const A = Math.max(0.02, Math.min(Math.PI * 0.47, (angleDeg * Math.PI) / 180));
-  const out = [{ x: pts[0].x, y: pts[0].y, gi: pts[0].gi, t: pts[0].t }];
+  const out = [{ x: pts[0].x, y: pts[0].y, gi: pts[0].gi, t: pts[0].t, cv: pts[0].cv }];
   for (let i = 1; i < n - 1; i++) {
     const prev = pts[i - 1];
     const p = pts[i];
@@ -1772,7 +2096,7 @@ function bevelChain(pts, angleDeg) {
     const T = Math.acos(cosT);
     // 直线通过（无转角）或预设角度不小于转角时，保持原拐角
     if (lenIn < 1e-6 || lenOut < 1e-6 || T < 0.06 || A >= T - 0.06) {
-      out.push({ x: p.x, y: p.y, gi: p.gi, t: p.t });
+      out.push({ x: p.x, y: p.y, gi: p.gi, t: p.t, cv: p.cv });
       continue;
     }
     const sinDa = Math.sin(T - A);
@@ -1780,10 +2104,10 @@ function bevelChain(pts, angleDeg) {
     const uCapOut = (lenOut * BEVEL_CUT * sinDa) / Math.sin(A);
     const u = Math.min(uCapIn, uCapOut);
     const s = (u * Math.sin(A)) / sinDa;
-    out.push({ x: p.x - d1.x * u, y: p.y - d1.y * u, gi: prev.gi, t: prev.t });
-    out.push({ x: p.x + d2.x * s, y: p.y + d2.y * s, gi: p.gi, t: p.t });
+    out.push({ x: p.x - d1.x * u, y: p.y - d1.y * u, gi: prev.gi, t: prev.t, cv: prev.cv });
+    out.push({ x: p.x + d2.x * s, y: p.y + d2.y * s, gi: p.gi, t: p.t, cv: p.cv });
   }
-  out.push({ x: pts[n - 1].x, y: pts[n - 1].y, gi: pts[n - 1].gi, t: pts[n - 1].t });
+  out.push({ x: pts[n - 1].x, y: pts[n - 1].y, gi: pts[n - 1].gi, t: pts[n - 1].t, cv: pts[n - 1].cv });
   return out;
 }
 
