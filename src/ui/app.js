@@ -86,6 +86,8 @@ const state = {
   cfg: null,
   result: null,
   frameIndex: 0,
+  /** 帧间插值进度 [0,1)：播放时用于蛇身流畅位移 */
+  frameAlpha: 0,
   playing: false,
   loop: true,
   autoRun: true,
@@ -149,7 +151,7 @@ function init() {
   if (legacyHint) legacyHint.className = 'hidden';
 }
 
-/** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧 */
+/** 键盘快捷键：空格播放/暂停，← → 单步，Home / End 跳转首末帧，↑ ↓ 调整播放速度 */
 function bindKeyboard() {
   document.addEventListener('keydown', (e) => {
     const t = e.target;
@@ -171,6 +173,14 @@ function bindKeyboard() {
         pause();
         if (advance()) frameChanged();
         break;
+      case 'ArrowUp':
+        e.preventDefault();
+        nudgeSpeed(1.25);
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        nudgeSpeed(0.8);
+        break;
       case 'Home':
         e.preventDefault();
         pause();
@@ -185,6 +195,34 @@ function bindKeyboard() {
         break;
     }
   });
+}
+
+/** 按倍率微调播放速度，并同步控制条上的滑块与数值框 */
+function nudgeSpeed(factor) {
+  const cur = state.cfg.speed;
+  const next = Math.max(0.5, Math.min(120, Math.round(cur * factor * 2) / 2));
+  if (next === cur) return;
+  state.cfg.speed = next;
+  if (els.speedSlider) els.speedSlider.value = String(next);
+  if (els.speedNum) els.speedNum.value = String(next);
+  updateSpeedLabel();
+}
+
+/**
+ * 跟随移动体：播放 / 跳帧时自动滚动画布容器，让主移动体始终位于视野内。
+ * 仅在大网格下按需开启，默认关闭以免影响手动浏览。
+ */
+function followAgentView() {
+  if (!state.cfg?.style?.followAgent || !state.result) return;
+  const p = renderer.agentHeadPixel(state.frameIndex, 0);
+  const wrap = els.canvasWrap;
+  if (!p || !wrap) return;
+  const x = wrap.querySelector('canvas').offsetLeft + p.x;
+  const y = wrap.querySelector('canvas').offsetTop + p.y;
+  const left = Math.max(0, x - wrap.clientWidth / 2);
+  const top = Math.max(0, y - wrap.clientHeight / 2);
+  if (Math.abs(wrap.scrollLeft - left) > 1) wrap.scrollLeft = left;
+  if (Math.abs(wrap.scrollTop - top) > 1) wrap.scrollTop = top;
 }
 
 function initialConfig() {
@@ -318,7 +356,7 @@ function syncDerived(normalized) {
 
 function draw() {
   if (!state.result) return;
-  renderer.draw(state.frameIndex);
+  renderer.draw(state.frameIndex, state.frameAlpha);
   updateFrameStats();
 }
 
@@ -343,6 +381,7 @@ function play() {
   state.playing = true;
   lastTs = 0;
   acc = 0;
+  state.frameAlpha = 0;
   if (rafId) cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(loopTick);
   updateControls();
@@ -350,9 +389,11 @@ function play() {
 
 function pause() {
   state.playing = false;
+  state.frameAlpha = 0;
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   updateControls();
+  draw();
 }
 
 function loopTick(ts) {
@@ -368,12 +409,15 @@ function loopTick(ts) {
     if (!advance()) break;
     frameChanged();
   }
+  // 剩余时间比例即帧间进度，交由渲染器做体节位置插值，得到流畅的连续位移
+  state.frameAlpha = Math.max(0, Math.min(1, acc / stepMs));
   rafId = requestAnimationFrame(loopTick);
 }
 
 /** 帧变化后的轻量更新（播放中高频调用） */
 function frameChanged() {
   draw();
+  followAgentView();
   updateControls();
   highlightLogs();
 }
@@ -382,6 +426,7 @@ function gotoFrame(i) {
   if (!state.result) return;
   const last = state.result.frames.length - 1;
   state.frameIndex = Math.max(0, Math.min(last, Math.round(i)));
+  state.frameAlpha = 0;
   frameChanged();
 }
 
@@ -416,11 +461,20 @@ function buildControls() {
 
   els.loopChk = checkbox(state.loop, (v) => { state.loop = v; }, '循环');
   els.autoChk = checkbox(state.autoRun, (v) => { state.autoRun = v; }, '自动运行');
+  els.followChk = checkbox(!!state.cfg.style.followAgent, (v) => {
+    state.cfg.style.followAgent = v;
+    saveLocalConfig(state.cfg);
+    onStyleChange();
+    followAgentView();
+  }, '跟随移动体');
+  els.followInput = els.followChk.querySelector('input');
 
   els.speedRange = range(state.cfg.speed, (v) => {
     state.cfg.speed = v;
     updateSpeedLabel();
   }, { min: 0.5, max: 120, step: 0.5, number: true, wrapClass: 'speed-wrap' });
+  els.speedSlider = els.speedRange.querySelector('input[type="range"]');
+  els.speedNum = els.speedRange.querySelector('input[type="number"]');
   els.speedLabel = h('span', { class: 'mini-label' }, '步/秒');
 
   els.seedInput = numberInput(state.cfg.seed, (v) => {
@@ -442,14 +496,14 @@ function buildControls() {
   c.appendChild(h('div', { class: 'controls-line' },
     els.playBtn, els.prevBtn, els.stepBtn, els.resetBtn, els.endBtn, els.runBtn));
   c.appendChild(h('div', { class: 'controls-line' },
-    els.loopChk, els.autoChk,
+    els.loopChk, els.autoChk, els.followChk,
     h('span', { class: 'mini-label' }, '速度'), els.speedRange, els.speedLabel));
   c.appendChild(h('div', { class: 'controls-line' },
     h('span', { class: 'mini-label' }, '种子'), els.seedInput, els.seedDice));
   c.appendChild(h('div', { class: 'controls-line' }, els.timeline, els.frameLabel));
   c.appendChild(h('div', { class: 'controls-line' }, els.endLabel, els.endJumpBtn, els.continueBtn));
   c.appendChild(h('div', { class: 'controls-line' },
-    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← / → 单步 · Home / End 首帧/末帧')));
+    h('span', { class: 'hint' }, '快捷键：空格 播放/暂停 · ← → 单步 · ↑ ↓ 调速 · Home / End 首末帧')));
   updateSpeedLabel();
 }
 
@@ -513,6 +567,35 @@ function updateControls() {
   els.continueBtn.hidden = reason?.code !== 'frameLimit';
 }
 
+/** 隐藏悬浮提示 */
+function hideTooltip() {
+  if (els.tooltip) els.tooltip.classList.remove('show');
+}
+
+/**
+ * 悬浮提示定位：跟随光标并做边界翻转（右侧不足则左移、下方不足则上移），
+ * 提示浮层固定在视口层，因此不会被画布容器裁剪或被下方 UI 元素遮挡。
+ */
+function placeTooltip(clientX, clientY) {
+  const tip = els.tooltip;
+  const pad = 12;
+  const off = 14;
+  // 先回到左上角再测量：否则上一次的 left 会通过 shrink-to-fit 约束宽度，
+  // 使同一段文案在不同位置测出不同宽度（换行行数 / 翻转时机随之漂移）
+  tip.style.left = '0px';
+  tip.style.top = '0px';
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  let left = clientX + off;
+  if (left + w > window.innerWidth - pad) left = clientX - off - w;
+  left = Math.max(pad, Math.min(left, Math.max(pad, window.innerWidth - pad - w)));
+  let top = clientY + off;
+  if (top + h > window.innerHeight - pad) top = clientY - off - h;
+  top = Math.max(pad, Math.min(top, Math.max(pad, window.innerHeight - pad - h)));
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+}
+
 function bindCanvasEvents() {
   els.canvas.addEventListener('mousemove', (e) => {
     if (!state.result) return;
@@ -520,20 +603,21 @@ function bindCanvasEvents() {
     renderer.hover = c;
     draw();
     if (!c) {
-      els.tooltip.classList.remove('show');
+      hideTooltip();
       return;
     }
     els.tooltip.textContent = renderer.describe(state.frameIndex, c);
     els.tooltip.classList.add('show');
-    const rect = els.canvasWrap.getBoundingClientRect();
-    els.tooltip.style.left = `${e.clientX - rect.left + 14}px`;
-    els.tooltip.style.top = `${e.clientY - rect.top + 14}px`;
+    placeTooltip(e.clientX, e.clientY);
   });
   els.canvas.addEventListener('mouseleave', () => {
     renderer.hover = null;
-    els.tooltip.classList.remove('show');
+    hideTooltip();
     draw();
   });
+  // 画布滚动 / 窗口尺寸变化时，如果提示仍在显示则按最后一次光标位置重新定位
+  window.addEventListener('scroll', () => { if (els.tooltip?.classList.contains('show')) hideTooltip(); }, true);
+  window.addEventListener('resize', () => hideTooltip());
   els.canvas.addEventListener('click', (e) => {
     if (!state.result) return;
     const c = renderer.hitTest(e.clientX, e.clientY);
@@ -977,9 +1061,18 @@ function safeName(name) {
 
 function rebuildAll() {
   state.dirty = true; // 配置即将变化：隐藏上一轮的运行期诊断，避免渲染顺序造成残留
+  syncControlBar();   // 载入模板 / 恢复配置后，控制条上的速度与「跟随移动体」同步为新配置
   renderConfigPanel();
   renderSidePanel();
   recompute({ immediate: true });
+}
+
+/** 把配置中的播放相关取值同步回控制条控件 */
+function syncControlBar() {
+  if (els.speedSlider) els.speedSlider.value = String(state.cfg.speed);
+  if (els.speedNum) els.speedNum.value = String(state.cfg.speed);
+  if (els.followInput) els.followInput.checked = !!state.cfg.style.followAgent;
+  updateSpeedLabel();
 }
 
 function renderConfigPanel() {
@@ -989,18 +1082,14 @@ function renderConfigPanel() {
   const cfg = state.cfg;
   root.appendChild(sceneGroup(cfg));
   root.appendChild(gridGroup(cfg));
-  root.appendChild(bodyGroup(cfg));
-  root.appendChild(moveGroup(cfg));
-  root.appendChild(advancedGroup(cfg));
-  root.appendChild(safetyGroup(cfg));
-  root.appendChild(multiSnakeGroup(cfg));
+  root.appendChild(bodyGroup(cfg));      // 起点 · 移动体 · 长度策略
+  root.appendChild(moveRulesGroup(cfg)); // 基础权重 · 条件概率 · 安全避撞
   root.appendChild(collisionGroup(cfg));
-  root.appendChild(lengthGroup(cfg));
+  root.appendChild(multiSnakeGroup(cfg));
   root.appendChild(envRulesGroup(cfg));
   root.appendChild(caGroup(cfg));
   root.appendChild(endGroup(cfg));
   root.appendChild(styleGroup(cfg));
-  root.appendChild(guideGroup(cfg));
 }
 
 function sceneGroup(cfg) {
@@ -1058,7 +1147,7 @@ function bodyGroup(cfg) {
     bodyStateLabel.textContent = isBodyEnabled(cfg) ? '当前：蛇形实体已启用' : '当前：不生成蛇形实体';
   };
   syncBodyState();
-  return group('起点与移动体', [
+  return group('移动体与身体', [
     row(
       field('起点 col/x', numBind(cfg.start, 'col', () => onSimChange(), { min: 0, max: cfg.grid.width - 1 })),
       field('起点 row/y', numBind(cfg.start, 'row', () => onSimChange(), { min: 0, max: cfg.grid.height - 1 })),
@@ -1066,14 +1155,13 @@ function bodyGroup(cfg) {
     field('起始方向', selBind(cfg.start, 'direction', () => onSimChange(), [
       ...dirNames(cfg.grid.type).map((n) => ({ value: n, label: DIR_LABELS[n] || n })),
       { value: 'random', label: '任意（每次运行随机）' },
-    ]), '选择「任意」时，起始方向由随机种子决定，同一种子结果可复现'),
+    ]), '选择「任意」时由随机种子决定，同一种子结果可复现'),
     field('蛇形实体开关', row(
       chkBind(b, 'enabled', () => { syncBodyState(); onSimChange(0); }, '生成蛇形实体'),
       bodyStateLabel,
-    ), '关闭后地图上不会生成任何蛇形实体，可配合元胞自动机做「纯环境演化」场景；也可把初始长度设为 0 达成同样效果'),
+    )),
     row(
-      field('初始长度', numBind(b, 'initialLength', () => { syncBodyState(); onSimChange(); }, { min: 0, max: 100000 }),
-        '设为 0 与关闭开关等效，均表示不生成蛇形实体'),
+      field('初始长度', numBind(b, 'initialLength', () => { syncBodyState(); onSimChange(); }, { min: 0, max: 100000 })),
       field('体节尺寸', row(
         sizeInput,
         button('重置', () => {
@@ -1081,7 +1169,7 @@ function bodyGroup(cfg) {
           sizeInput.value = defaultSegmentSize;
           onStyleChange();
         }, 'ghost small'),
-      ), '相对格子的比例，与长度无关'),
+      )),
     ),
     row(
       field('体节形状', selBind(b, 'shape', () => onStyleChange(), [
@@ -1107,9 +1195,10 @@ function bodyGroup(cfg) {
           toast('请至少填写一个合法的十六进制颜色，如 #ff5d5d', 'warn');
         }
       }, { placeholder: '#ff5d5d, #ffd166, #51cf66' }),
-        '逗号分隔的十六进制颜色序列，从头到尾沿体节渐变')
+        '逗号分隔的十六进制颜色，从头到尾沿体节渐变')
       : null,
-  ]);
+    lengthSection(cfg),
+  ], { open: true });
 }
 
 /** 解析逗号/空格分隔的颜色列表，仅保留合法的十六进制颜色 */
@@ -1127,21 +1216,13 @@ function weightSummary(m) {
   return `概率：左 ${(m.left / sum * 100).toFixed(1)}% · 直 ${(m.straight / sum * 100).toFixed(1)}% · 右 ${(m.right / sum * 100).toFixed(1)}%`;
 }
 
-function moveGroup(cfg) {
+/* ---------------- 移动规则：基础权重 · 条件概率 · 安全避撞 ---------------- */
+
+function moveRulesGroup(cfg) {
   const m = cfg.moveRules;
-  const hint = h('div', { class: 'hint' }, weightSummary(m));
-  const upd = () => { onSimChange(); hint.textContent = weightSummary(m); };
-  return group('基础移动规则', [
-    field('左转权重', rangeBind(m, 'left', upd, { min: 0, max: 1, step: 0.01, number: true })),
-    field('直行权重', rangeBind(m, 'straight', upd, { min: 0, max: 1, step: 0.01, number: true })),
-    field('右转权重', rangeBind(m, 'right', upd, { min: 0, max: 1, step: 0.01, number: true })),
-    hint,
-  ], { open: true });
-}
+  const weightHint = h('div', { class: 'hint' }, weightSummary(m));
+  const upd = () => { onSimChange(); weightHint.textContent = weightSummary(m); };
 
-/* ---------------- 高级规则（条件概率） ---------------- */
-
-function advancedGroup(cfg) {
   const list = h('div', { class: 'rule-list' });
   cfg.advancedRules.forEach((r, index) => {
     const hint = h('div', { class: 'hint' }, weightSummary(r.moves));
@@ -1163,8 +1244,14 @@ function advancedGroup(cfg) {
     ];
     list.appendChild(group(r.name || '条件概率规则', body, { open: index === 0, badge: r.enabled ? '' : '停用', key: `adv:${r.id}` }));
   });
-  return group('高级移动规则（条件概率）', [
-    h('div', { class: 'hint' }, '按优先级匹配，命中后使用该规则的左/直/右权重；未命中则使用基础权重。'),
+
+  return group('移动规则', [
+    h('div', { class: 'sub-title' }, '基础权重'),
+    field('左转权重', rangeBind(m, 'left', upd, { min: 0, max: 1, step: 0.01, number: true })),
+    field('直行权重', rangeBind(m, 'straight', upd, { min: 0, max: 1, step: 0.01, number: true })),
+    field('右转权重', rangeBind(m, 'right', upd, { min: 0, max: 1, step: 0.01, number: true })),
+    weightHint,
+    h('div', { class: 'sub-title' }, '条件概率规则（按优先级匹配，命中后改用其权重）'),
     list,
     button('+ 添加条件概率规则', () => {
       cfg.advancedRules.push({
@@ -1177,31 +1264,29 @@ function advancedGroup(cfg) {
       });
       rebuildAll();
     }, 'ghost'),
-  ], { open: false });
+    safetySection(cfg),
+  ], { open: true });
 }
 
 /* ---------------- 安全避撞预设（方向选择的条件概率增强） ---------------- */
 
-function safetyGroup(cfg) {
+function safetySection(cfg) {
   const s = cfg.safety;
   const note = h('div', { class: 'hint' });
   const syncNote = () => {
-    const on = s.avoidBody || s.avoidObstacle || s.avoidOtherAgents;
-    note.textContent = on
-      ? '已启用：方向选择前会先剔除被阻塞的候选方向，只在「所有可行方向都被阻塞」时才回落到原始权重并触发原本的碰撞逻辑。'
-      : '未启用任何规避项：方向选择完全按基础 / 条件概率权重进行（与旧版本结果完全一致）。';
+    note.textContent = (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents)
+      ? '已启用：方向选择前先剔除被阻塞的候选方向，全部可行方向都被阻塞时才回落到原始权重。'
+      : '未启用：方向选择完全按基础 / 条件概率权重进行。';
   };
   syncNote();
   const bind = (key, label) => chkBind(s, key, () => { syncNote(); onSimChange(); }, label);
   return group('安全避撞预设（方向选择）', [
-    h('div', { class: 'hint' }, '作为「高级移动规则（条件概率）」的前置过滤：命中过滤后仍按条件概率权重挑选方向，因此权重占比含义不变。'),
     field('规避对象', h('div', { class: 'chips-line' },
       bind('avoidBody', '自身身体'),
       bind('avoidObstacle', '障碍物'),
       bind('avoidOtherAgents', '其它移动体')),
-      '优先规避自身身体：只有当所有可行方向都被自身身体阻塞时，才会触发自碰撞逻辑'),
+      '规避是「择优」而非「禁止」：仍有可行方向时按权重择优，从而降低自撞概率'),
     note,
-    h('div', { class: 'hint' }, '说明：规避是「择优」而非「禁止」。若某方向被阻塞后仍存在其它可行方向，蛇会从可行方向中按权重选择，从而大幅降低自撞概率。'),
   ], { open: false, badge: (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents) ? '已启用' : '' });
 }
 
@@ -1223,7 +1308,7 @@ function multiSnakeGroup(cfg) {
 
   const bodies = [
     field('启用多蛇系统', chkBind(m, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用'),
-      '开启后可同时存在多条独立蛇；主移动体（初始那条）终止时整场运行结束，其它蛇终止只会计入「移动体消失」'),
+      '主移动体终止时整场结束，其它蛇终止只计入「移动体消失」'),
     row(
       field('生成方式', selBind(sp, 'mode', () => { onSimChange(); rebuildAll(); }, Object.entries(SPAWN_LABELS).map(([value, label]) => ({ value, label })))),
       field('最大同时存在', numBind(sp, 'maxAgents', () => onSimChange(), { min: 1, max: 64 })),
@@ -1262,11 +1347,11 @@ function multiSnakeGroup(cfg) {
   );
 
   if (it.mode === 'repel') {
-    bodies.push(h('div', { class: 'hint' }, '排斥模式下会自动启用「安全避撞 → 其它移动体」，两条蛇相遇时回退到上一步位置并计为一次排斥（画面上有黄色脉冲反馈）。'));
+    bodies.push(h('div', { class: 'hint' }, '排斥：两蛇相遇时回退到上一步并计为一次排斥。'));
   } else if (it.mode === 'merge') {
-    bodies.push(h('div', { class: 'hint' }, '融合模式：蛇头撞上另一条蛇时，较短的一条被并入较长的一条（主移动体优先保留），长度叠加（受地图格子总数限制），画面上有紫色脉冲反馈。'));
+    bodies.push(h('div', { class: 'hint' }, '融合：较短的蛇并入较长的一条，长度叠加。'));
   } else if (it.mode === 'collide') {
-    bodies.push(h('div', { class: 'hint' }, '碰撞模式：两条蛇头对头相遇时双方消失。若涉及主移动体则整场运行结束；否则只损失其它蛇，运行继续。'));
+    bodies.push(h('div', { class: 'hint' }, '碰撞：两蛇头对头相遇时双方消失；涉及主移动体则整场结束。'));
   }
 
   return group('多蛇生成与交互系统', bodies, { open: false, badge: m.enabled ? '已启用' : '' });
@@ -1314,9 +1399,9 @@ function collisionGroup(cfg) {
   ], { open: false });
 }
 
-/* ---------------- 长度策略 ---------------- */
+/* ---------------- 长度策略（并入「移动体与身体」） ---------------- */
 
-function lengthGroup(cfg) {
+function lengthSection(cfg) {
   const lp = cfg.body.lengthPolicy;
   const subEditor = (sub, title) => [
     h('div', { class: 'sub-title' }, title),
@@ -1390,7 +1475,7 @@ function envRulesGroup(cfg) {
   });
 
   return group('环境感知—条件—后果规则', [
-    h('div', { class: 'hint' }, '当蛇头 / 蛇身 / 二者在满足周围环境条件时，触发对应后果（产生障碍物、标记物、强制转向等）。'),
+    h('div', { class: 'hint' }, '蛇头 / 蛇身 / 二者满足周围环境条件时，触发对应后果动作。'),
     list,
     row(
       button('+ 添加环境规则', () => {
@@ -1680,7 +1765,7 @@ function caGroup(cfg) {
   const ca = cfg.caMode;
   const body = [
     field('启用元胞自动机', chkBind(ca, 'enabled', () => { onSimChange(0); rebuildAll(); }, '启用')),
-    h('div', { class: 'hint' }, '启用后，环境单元按状态转移规则演化；移动体规则与环境规则可同时生效，形成混合模式。'),
+    h('div', { class: 'hint' }, '环境单元按状态转移规则演化，可与移动体 / 环境规则同时生效（混合模式）。'),
     field('环境状态集合', stateListEditor(ca.states)),
     row(
       field('邻域', selBind(ca, 'neighborhood', () => onSimChange(), NEIGHBORHOODS)),
@@ -2060,7 +2145,7 @@ function endGroup(cfg) {
     }, rowChildren));
   });
   return group('结束规则（按优先级）', [
-    h('div', { class: 'hint' }, `自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。步数上限最大可设 10^15；单次运行超过 ${MAX_STORED_FRAMES} 步时画面帧按步长抽样缓存，步数与各项统计仍为逐步精确累计。`),
+    h('div', { class: 'hint' }, '自上而下依次判断，命中第一条满足条件的规则即结束运行；可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条继续运行）。'),
     ...rows,
   ], { open: false });
 }
@@ -2089,78 +2174,15 @@ function styleGroup(cfg) {
       checkbox(s.showObstacles, (v) => { s.showObstacles = v; onStyleChange(); }, '障碍物'),
       checkbox(s.showMarkers, (v) => { s.showMarkers = v; onStyleChange(); }, '标记物'),
       checkbox(s.highlightRules, (v) => { s.highlightRules = v; onStyleChange(); }, '规则高亮'),
-      checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
     )),
-    field('视觉升级', row(
-      checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛（朝向感）'),
-      checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效波纹'),
+    field('渲染效果', row(
+      checkbox(s.smoothTrail, (v) => { s.smoothTrail = v; onStyleChange(); }, '轨迹平滑曲线'),
+      checkbox(s.smoothBody, (v) => { s.smoothBody = v; onStyleChange(); }, '蛇身曲线连接'),
+      checkbox(s.trailFade, (v) => { s.trailFade = v; onStyleChange(); }, '轨迹渐隐'),
+      checkbox(s.showEffects, (v) => { s.showEffects = v; onStyleChange(); }, '交互特效'),
       checkbox(s.glow, (v) => { s.glow = v; onStyleChange(); }, '蛇身发光'),
-    ), '眼睛让蛇头朝向一目了然；交互特效为融合 / 排斥 / 生成 / 标记物反馈提供画面反馈；发光可突出蛇所在位置'),
-  ], { open: false });
-}
-
-/* ---------------- 新增功能使用说明 ---------------- */
-
-function guideGroup() {
-  const item = (title, lines) => h('div', { class: 'field' },
-    h('span', { class: 'field-label' }, title),
-    h('div', { class: 'field-control' }, h('div', { class: 'hint' }, ...lines.map((t) => h('div', {}, t)))));
-
-  return group('新增功能使用说明', [
-    h('div', { class: 'hint' }, '本版本新增 / 强化了以下能力。以下按功能逐条说明开启方式与可观察到的效果。'),
-
-    item('1. 禁用蛇形实体（纯环境 / 纯 CA 模式）', [
-      '位置：「起点与移动体 → 蛇形实体开关」。',
-      '两种等效做法：① 取消勾选「生成蛇形实体」；② 把「初始长度」设为 0。',
-      '效果：地图上不再生成任何蛇形实体，只剩元胞自动机与环境规则演化；统计中的「当前长度」保持 0。',
-      '典型用法：配合「元胞自动机模式 → 稳定即收尾」做纯 CA 实验（生命游戏、森林火灾等），或只观察环境规则对地形的影响。',
-    ]),
-
-    item('2. 元胞自动机标记物交互机制', [
-      '位置：「元胞自动机模式 → 标记物交互机制」。',
-      '第一步：在上方「环境状态集合」里定义状态（例如 marker），或直接使用内置的 marker 状态。',
-      '第二步：勾选「启用标记物交互」，并在「交互标记物状态」中点击选中参与交互的状态（可多选）。',
-      '第三步：在「反馈规则表」中逐条配置：作用状态、变化方式（增减固定长度 / 按当前长度百分比 / 直接设定长度）、变化量、触发概率、是否消耗标记物、消耗后的状态、反馈变色。',
-      '注意：长度变化需要「长度策略」为「可变」（长度策略为「固定」时长度恒等于初始长度，增减会被忽略）。',
-      '效果：蛇头进入被选中的格子时按规则产生长度增减或变色；「消耗」会把该格改写成指定状态（例如 empty），实现「吃掉标记物」。画面上会有该格的高亮反馈波纹。',
-      '参数化示例：变化量 +1（伸长）、-1（缩短）、百分比 -20（缩短两成）、直接设定 5（定长）。',
-    ]),
-
-    item('3. 安全避撞预设（方向选择条件概率）', [
-      '位置：「安全避撞预设（方向选择）」。',
-      '勾选「自身身体」：方向选择前先剔除会撞到自身身体（不含蛇头当前格）的候选方向；',
-      '只有当所有可行方向都被自身身体阻塞时，才回落到原始权重并按既有碰撞规则触发自撞逻辑。',
-      '另可选「障碍物」「其它移动体」一并规避。',
-      '注意：全部三项都不勾选时，方向选择与旧版本完全一致（结果可复现）；只要开启任意一项，就会优先择优，显著降低自撞概率。',
-    ]),
-
-    item('4. 多蛇生成与交互系统', [
-      '位置：「多蛇生成与交互系统」。',
-      '开启后先选「生成方式」：',
-      '　· 按预定时间点：填写逗号分隔的步数（如 20, 60, 120），到点生成一条新蛇；',
-      '　· 按随机时间间隔：在 [最小, 最大] 步之间随机抽取下一次生成时刻（受种子控制，可复现）；',
-      '　· 按特殊事件：勾选「吃到标记物 / 触碰交互标记物 / 发生自撞 / 撞墙越界 / 撞到障碍物 / 发生融合」，事件当步生成新蛇。',
-      '再设「最大同时存在」「新蛇长度」「新蛇方向」「生成概率」「逐个体配色」。',
-      '「交互结果」决定蛇相遇时的行为：碰撞（头对头双方消失，涉及主移动体则整场结束）、融合（短蛇并入长蛇、长度叠加）、排斥（回退并彼此避让，不结束运行）、穿行（互不影响）。',
-      '视觉反馈：生成 = 紫色脉冲 + 新蛇配色；融合 = 紫色波纹与日志；排斥 = 黄色脉冲；所有事件都会记入「规则触发日志」与帧事件。',
-      '规则联动：可用「移动体数量」条件子句配合「生成新移动体 / 移除移动体」后果动作编写种群控制规则。',
-    ]),
-
-    item('5. 结束规则扩展', [
-      '新增「元胞自动机稳定」（连续 N 次演化无任何单元变化）与「所有移动体均已消失」。',
-      '两者都可在「结束规则（按优先级）」中勾选、排序；「CA 稳定即收尾」开关会同步打开前者。',
-    ]),
-
-    item('6. 视觉与体验升级', [
-      '「展示样式 → 视觉升级」：蛇头眼睛（按方向绘制，朝向一目了然）、交互特效波纹、蛇身发光。',
-      '多蛇场景下每条蛇使用「逐个体配色」中的颜色，画面上一眼可区分；主移动体与其它蛇的差异在悬停提示与日志中给出。',
-      '帧缓存自适应抽样：步数上限可设到 10^15，超长运行时画面帧按步长抽样缓存，而步数与各项统计仍逐步精确累计，界面不会被拖慢。',
-    ]),
-
-    item('7. 新预设模板', [
-      '侧边栏「预设模板」中新增：纯元胞自动机（蛇形实体禁用）、标记物交互（吃标记物增长 / 消耗）、多蛇生态（多蛇生成 + 融合 / 排斥）、安全避撞（高密度自撞规避）。',
-      '载入后可在配置面板看到各新增配置项的取值，便于对照修改。',
-    ]),
+      checkbox(s.showEyes, (v) => { s.showEyes = v; onStyleChange(); }, '蛇头眼睛'),
+    ), '轨迹与蛇身默认按贝塞尔曲线平滑渲染；蛇头眼睛默认隐藏，勾选后显示'),
   ], { open: false });
 }
 

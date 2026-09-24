@@ -85,19 +85,24 @@ html, body {
 }
 #canvas { display: block; border-radius: 6px; }
 
+/* 坐标格悬浮提示：固定定位在视口层，确保不被画布容器裁剪、也不被下方 UI 遮挡 */
 .tooltip {
-  position: absolute;
+  position: fixed;
+  left: 0;
+  top: 0;
   display: none;
-  max-width: 260px;
+  max-width: min(300px, 60vw);
   white-space: pre-line;
   padding: 6px 9px;
   border-radius: 6px;
-  background: rgba(10, 14, 20, 0.94);
+  background: rgba(10, 14, 20, 0.96);
   border: 1px solid var(--line);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   color: var(--text);
   font-size: 12px;
+  line-height: 1.55;
   pointer-events: none;
-  z-index: 20;
+  z-index: 9000;
 }
 .tooltip.show { display: block; }
 

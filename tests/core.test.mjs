@@ -1169,14 +1169,19 @@ section('规则与结束条件扩展');
 /* ---------- 新增：视觉与配色配置 ---------- */
 section('视觉升级与配色配置');
 {
-  const st = normalizeConfig({ style: { showEyes: false, showEffects: false, glow: true } }).style;
-  eq(st.showEyes, false, '蛇头眼睛可关闭');
+  const st = normalizeConfig({ style: { showEyes: true, showEffects: false, glow: true } }).style;
+  eq(st.showEyes, true, '蛇头眼睛可主动开启');
   eq(st.showEffects, false, '交互特效波纹可关闭');
   eq(st.glow, true, '蛇身发光可开启');
   const d = normalizeConfig({}).style;
-  eq(d.showEyes, true, '默认开启蛇头眼睛');
+  eq(d.showEyes, false, '默认隐藏蛇头眼睛');
   eq(d.showEffects, true, '默认开启交互特效');
   eq(d.glow, false, '默认不发光');
+  eq(d.smoothTrail, true, '默认启用轨迹贝塞尔平滑');
+  eq(d.smoothBody, true, '默认启用蛇身曲线连接');
+  const st2 = normalizeConfig({ style: { smoothTrail: false, smoothBody: false } }).style;
+  eq(st2.smoothTrail, false, '轨迹平滑可关闭');
+  eq(st2.smoothBody, false, '蛇身曲线连接可关闭');
 
   const pal = normalizeConfig({ multiSnake: { interaction: { colorPalette: ['#112233', 'bad', '#445566'] } } }).multiSnake.interaction.colorPalette;
   eq(pal.length, 2, '非法配色被过滤');

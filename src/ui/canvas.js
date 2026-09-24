@@ -19,12 +19,16 @@ export const STYLE_DEFAULTS = {
   highlightRules: true,
   showStartEnd: true,
   trailFade: true,
-  /** 蛇头按朝向绘制双眼，让方向一目了然 */
-  showEyes: true,
+  /** 蛇头眼睛默认隐藏，仅在用户主动开启「展示样式 → 蛇头眼睛」时按朝向绘制 */
+  showEyes: false,
   /** 融合 / 排斥 / 生成 / 标记物反馈等交互特效波纹 */
   showEffects: true,
   /** 蛇身发光，突出移动体位置 */
   glow: false,
+  /** 轨迹用贝塞尔曲线平滑连接，形成连续顺畅的运动轨迹 */
+  smoothTrail: true,
+  /** 蛇身用曲线连接各体节节点，替代逐格拼接的生硬效果 */
+  smoothBody: true,
 };
 
 /** 交互特效在画面上保留的步数（越近越亮，形成脉冲感） */
@@ -128,13 +132,23 @@ export class Renderer {
 
   /* ------------------------------------------------------------------ */
 
-  draw(frameIndex) {
+  /**
+   * @param {number} frameIndex 帧下标（可为小数，用于帧间插值）
+   * @param {number} alpha 帧间进度 [0,1)：0 表示正好停在该帧
+   */
+  draw(frameIndex, alpha = 0) {
     if (!this.result) return;
     const ctx = this.ctx;
     const s = this.style;
     const th = this.theme();
-    const frame = this.result.frames[Math.max(0, Math.min(frameIndex, this.result.frames.length - 1))];
+    const frames = this.result.frames;
+    const i0 = Math.max(0, Math.min(frames.length - 1, Math.floor(frameIndex)));
+    const frame = frames[i0];
     if (!frame) return;
+    // 仅当相邻帧在时间轴上连续（步长 1）时才做插值；抽样缓存时按帧对齐，避免出现穿格直线
+    const next = frames[i0 + 1];
+    const t = next && next.tick - frame.tick === 1 ? Math.max(0, Math.min(0.999, alpha)) : 0;
+    const tickF = frame.tick + (t > 0 && next ? next.tick - frame.tick : 0) * t;
 
     ctx.save();
     ctx.clearRect(0, 0, this.size.width, this.size.height);
@@ -143,10 +157,10 @@ export class Renderer {
 
     if (s.showGrid) this.drawGrid(th);
     this.drawCells(frame, th);
-    if (s.showTrail) this.drawTrail(frame, th);
-    if (s.showEffects) this.drawEffects(frameIndex);
+    if (s.showTrail) this.drawTrail(frame, th, tickF);
+    if (s.showEffects) this.drawEffects(i0);
     if (s.highlightRules) this.drawHighlights(frame);
-    if (s.showBody) this.drawAgents(frame);
+    if (s.showBody) this.drawAgents(frame, t > 0 ? next : null, t);
     if (s.showStartEnd) this.drawStartEnd(frame);
     this.drawCollisions(frame);
     if (s.showCoords || s.axisLabels) this.drawAxis(th);
@@ -217,12 +231,13 @@ export class Renderer {
     }
   }
 
-  drawTrail(frame, th) {
-    const ctx = this.ctx;
-    const { cellSize, gap, trailFade } = this.style;
-    const half = cellSize / 2 - gap / 2;
-    const tick = frame.tick;
+  /**
+   * 轨迹绘制：按行进顺序绘制访问过的格子。
+   * 平滑模式下把所有格心用贝塞尔曲线串联成连续轨迹；关闭时退化为逐格色块。
+   */
+  drawTrail(frame, th, tickF) {
     const order = this.trailOrder;
+    const tick = tickF === undefined ? frame.tick : tickF;
     // 二分查找当前步之前已访问的格
     let lo = 0;
     let hi = order.length;
@@ -231,6 +246,58 @@ export class Renderer {
       if (this.trailInfo.get(order[mid]).first <= tick) lo = mid + 1;
       else hi = mid;
     }
+    if (this.style.smoothTrail) this.drawTrailCurve(th, lo, tick);
+    else this.drawTrailCells(th, order, lo, frame.tick);
+  }
+
+  /** 轨迹平滑：把已访问格心按行进顺序用贝塞尔曲线串联，形成连续平滑的轨迹 */
+  drawTrailCurve(th, lo, tick) {
+    if (lo < 1) return;
+    const ctx = this.ctx;
+    const { cellSize, gap, trailFade } = this.style;
+    const span = Math.max(1, tick);
+    const pts = [];
+    for (let k = 0; k < lo; k++) {
+      const index = this.trailOrder[k];
+      const info = this.trailInfo.get(index);
+      const p = this.center(this.grid.coord(index));
+      pts.push({ x: p.x, y: p.y, t: Math.max(0, Math.min(1, info ? info.first / span : 0)) });
+    }
+    const baseWidth = Math.max(1.5, (cellSize - gap) * 0.34);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const run of splitRuns(pts, (cellSize + gap) * 1.7)) {
+      if (run.length === 1) {
+        ctx.globalAlpha = trailFade ? 0.16 + 0.38 * run[0].t : 0.34;
+        ctx.fillStyle = trailFade ? lerpColor(th.trailA, th.trailB, run[0].t) : th.trailB;
+        ctx.beginPath();
+        ctx.arc(run[0].x, run[0].y, baseWidth * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+      const segs = bezierSegments(run);
+      for (let k = 0; k < segs.length; k++) {
+        const s = segs[k];
+        const tt = (run[k].t + run[k + 1].t) / 2;
+        ctx.globalAlpha = trailFade ? 0.16 + 0.38 * tt : 0.34;
+        ctx.strokeStyle = trailFade ? lerpColor(th.trailA, th.trailB, tt) : th.trailB;
+        ctx.lineWidth = baseWidth * (trailFade ? 0.7 + 0.5 * tt : 1);
+        ctx.beginPath();
+        ctx.moveTo(s.p0.x, s.p0.y);
+        ctx.bezierCurveTo(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.p1.x, s.p1.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  /** 逐格色块轨迹（关闭「轨迹平滑曲线」时使用） */
+  drawTrailCells(th, order, lo, tick) {
+    const ctx = this.ctx;
+    const { cellSize, gap, trailFade } = this.style;
+    const half = cellSize / 2 - gap / 2;
     const span = Math.max(1, tick);
     for (let k = 0; k < lo; k++) {
       const index = order[k];
@@ -269,82 +336,167 @@ export class Renderer {
     }
   }
 
-  drawAgents(frame) {
+  /**
+   * 蛇身绘制：
+   *  1) 用相邻帧对体节位置做插值，得到亚步坐标，实现体节节点的流畅位移；
+   *  2) 用贝塞尔曲线把相邻体节连成一条连续蛇身（带弧度的曲线连接，替代生硬的逐格拼接）。
+   * 关闭「蛇身曲线连接」时退化为逐节圆/方块的拼接画法。
+   */
+  drawAgents(frame, nextFrame, alpha = 0) {
     const ctx = this.ctx;
     const cfgBody = this.body || this.result.config.body;
-    const { cellSize } = this.style;
+    const { cellSize, gap } = this.style;
     const half = cellSize / 2;
     const scale = Math.max(0.1, Math.min(1.6, cfgBody?.segmentSize ?? 0.82));
-    const mode = cfgBody?.colorMode || 'gradient';
-    const palette = (mode === 'custom' && Array.isArray(cfgBody?.colors?.custom)) ? cfgBody.colors.custom : null;
     const shape = cfgBody?.shape || 'round';
 
     for (let ai = frame.agents.length - 1; ai >= 0; ai--) {
       const a = frame.agents[ai];
-      // 逐个体配色：生成出来的蛇自带 color；未指定时沿用配置的头/尾/单色
-      const own = a.color || null;
-      const headColor = own || cfgBody?.colors?.head || '#ff5d5d';
-      const tailColor = own || cfgBody?.colors?.tail || '#7a4dff';
-      const solidColor = own || cfgBody?.colors?.solid || '#ff5d5d';
-      for (let i = a.segments.length - 1; i >= 0; i--) {
-        const [col, row] = a.segments[i];
-        const p = this.center({ col, row });
-        const t = a.segments.length > 1 ? i / (a.segments.length - 1) : 0;
-        let color;
-        if (own) {
-          // 独立配色：单色 → 深色尾端渐变，便于区分不同个体
-          color = mode === 'solid' ? solidColor : lerpColor(headColor, shadeColor(headColor, 0.45), t);
-        } else if (mode === 'solid') {
-          color = solidColor;
-        } else {
-          color = (palette && palette.length) ? paletteColor(palette, t) : lerpColor(headColor, tailColor, t);
-        }
-        const r = half * scale * (i === 0 ? 1 : 0.94);
-        ctx.save();
-        ctx.fillStyle = color;
-        if (this.style.glow) {
-          ctx.shadowColor = i === 0 ? headColor : color;
-          ctx.shadowBlur = cellSize * (i === 0 ? 0.9 : 0.5);
-        }
-        ctx.globalAlpha = a.alive ? 1 : 0.45;
-        drawShape(ctx, p.x, p.y, r, this.grid.type, shape);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = 0.55;
-        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-        ctx.lineWidth = 1;
-        drawShape(ctx, p.x, p.y, r, this.grid.type, shape);
-        ctx.stroke();
-        ctx.restore();
-      }
-      if (this.style.showArrows && a.segments.length) {
-        this.drawArrow(a, cellSize);
-      }
-      if (a.segments.length) {
-        const [hc, hr] = a.segments[0];
-        const p = this.center({ col: hc, row: hr });
-        if (this.style.showEyes) {
-          this.drawEyes(p, a, half * scale);
-        } else {
+      if (!a.segments.length) continue;
+      const n = a.segments.length;
+      const b = nextFrame ? nextFrame.agents.find((x) => x.id === a.id) : null;
+      const pts = this.agentPoints(a, b, alpha);
+      const colorAt = (i) => segmentColor(a, i, n, cfgBody);
+      const radius = half * scale;
+
+      if (this.style.smoothBody && pts.length > 1) {
+        this.strokeRibbon(a, pts, colorAt, radius, cfgBody);
+      } else {
+        for (let i = n - 1; i >= 0; i--) {
+          const p = pts[i];
+          const r = radius * (i === 0 ? 1 : 0.94);
           ctx.save();
-          ctx.fillStyle = 'rgba(255,255,255,0.92)';
-          ctx.globalAlpha = 0.5;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.max(1.2, half * 0.16), 0, Math.PI * 2);
+          ctx.fillStyle = colorAt(i);
+          if (this.style.glow) {
+            ctx.shadowColor = i === 0 ? (a.color || cfgBody?.colors?.head || '#ff5d5d') : colorAt(i);
+            ctx.shadowBlur = cellSize * (i === 0 ? 0.9 : 0.5);
+          }
+          ctx.globalAlpha = a.alive ? 1 : 0.45;
+          drawShape(ctx, p.x, p.y, r, this.grid.type, shape);
           ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+          ctx.lineWidth = 1;
+          drawShape(ctx, p.x, p.y, r, this.grid.type, shape);
+          ctx.stroke();
           ctx.restore();
         }
+      }
+      if (this.style.showArrows) this.drawArrow(a, cellSize);
+      const head = pts[0];
+      if (this.style.showEyes) {
+        this.drawEyes(head, this.headAngle(a, b, alpha), radius);
+      } else {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.arc(head.x, head.y, Math.max(1.2, radius * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
     }
   }
 
-  /** 蛇头双眼：沿当前朝向前移，双眼垂直于前进方向左右分布 */
-  drawEyes(p, a, r) {
+  /** 体节中心坐标：b 为下一帧的同一移动体，alpha ∈ [0,1) 为帧间进度 */
+  agentPoints(a, b, alpha) {
+    const pts = [];
+    const segsA = a.segments;
+    const segsB = b && b.segments.length ? b.segments : null;
+    for (let i = 0; i < segsA.length; i++) {
+      const pa = this.center({ col: segsA[i][0], row: segsA[i][1] });
+      let x = pa.x;
+      let y = pa.y;
+      if (segsB && alpha > 0) {
+        const s = segsB[Math.min(i, segsB.length - 1)];
+        const pb = this.center({ col: s[0], row: s[1] });
+        x += (pb.x - x) * alpha;
+        y += (pb.y - y) * alpha;
+      }
+      pts.push({ x, y, gi: i });
+    }
+    return pts;
+  }
+
+  /** 蛇头朝向角：播放时取真实位移方向，静止时取当前朝向的前方格方向 */
+  headAngle(a, b, alpha) {
+    const from = this.center({ col: a.segments[0][0], row: a.segments[0][1] });
+    let to = null;
+    if (b && b.segments.length && alpha > 0) {
+      const h = this.center({ col: b.segments[0][0], row: b.segments[0][1] });
+      if (Math.abs(h.x - from.x) > 0.01 || Math.abs(h.y - from.y) > 0.01) to = h;
+    }
+    if (!to) {
+      const nxt = this.grid.step({ col: a.segments[0][0], row: a.segments[0][1] }, a.dir);
+      const raw = this.grid.toPixel(nxt, this.style.cellSize, this.style.gap);
+      to = { x: raw.x + this.size.margin, y: raw.y + this.size.margin };
+    }
+    return Math.atan2(to.y - from.y, to.x - from.x);
+  }
+
+  /** 指定移动体在指定帧的蛇头像素坐标（供「跟随移动体」滚动定位，坐标不含容器边距） */
+  agentHeadPixel(frameIndex, agentIndex = 0) {
+    if (!this.result) return null;
+    const frames = this.result.frames;
+    const f = frames[Math.max(0, Math.min(frames.length - 1, Math.round(frameIndex)))];
+    const a = f?.agents?.[agentIndex];
+    if (!a || !a.segments?.length) return null;
+    return this.center({ col: a.segments[0][0], row: a.segments[0][1] });
+  }
+
+  /** 把插值后的体节中心连成一条平滑曲线带状蛇身 */
+  strokeRibbon(a, pts, colorAt, radius, cfgBody) {
     const ctx = this.ctx;
-    const nxt = this.grid.step({ col: a.segments[0][0], row: a.segments[0][1] }, a.dir);
-    const raw = this.grid.toPixel(nxt, this.style.cellSize, this.style.gap);
-    const q = { x: raw.x + this.size.margin, y: raw.y + this.size.margin };
-    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    const { cellSize, gap } = this.style;
+    const headColor = a.color || cfgBody?.colors?.head || '#ff5d5d';
+    const alpha = a.alive ? 1 : 0.45;
+    const last = Math.max(1, pts.length - 1);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const run of splitRuns(pts, (cellSize + gap) * 1.7)) {
+      if (run.length === 1) {
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = colorAt(run[0].gi);
+        ctx.beginPath();
+        ctx.arc(run[0].x, run[0].y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+      const segs = bezierSegments(run);
+      // 第一遍：深色轮廓，保证蛇身在任意背景上都清晰
+      ctx.globalAlpha = alpha * 0.45;
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      for (let k = 0; k < segs.length; k++) {
+        ctx.lineWidth = Math.max(2, radius * 2 * (1 - 0.16 * (run[k].gi / last)) + 2);
+        traceBezier(ctx, segs[k]);
+        ctx.stroke();
+      }
+      // 第二遍：按体节配色描边，头粗尾细
+      ctx.globalAlpha = alpha;
+      for (let k = 0; k < segs.length; k++) {
+        const gi = run[k].gi;
+        const t = gi / last;
+        ctx.strokeStyle = colorAt(gi);
+        ctx.lineWidth = Math.max(1.5, radius * 2 * (1 - 0.16 * t));
+        if (this.style.glow) {
+          ctx.shadowColor = gi === 0 ? headColor : colorAt(gi);
+          ctx.shadowBlur = cellSize * (gi === 0 ? 0.8 : 0.45);
+        } else {
+          ctx.shadowBlur = 0;
+        }
+        traceBezier(ctx, segs[k]);
+        ctx.stroke();
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  /** 蛇头双眼：ang 为前进方向角，双眼沿前进方向前移并左右分布 */
+  drawEyes(p, ang, r) {
+    const ctx = this.ctx;
     const fx = Math.cos(ang);
     const fy = Math.sin(ang);
     const px = -fy;
@@ -642,4 +794,64 @@ function hexToRgb(hex) {
   const s = String(hex || '#888888').replace('#', '');
   const full = s.length === 3 ? s.split('').map((c) => c + c).join('') : s;
   return [0, 2, 4].map((i) => parseInt(full.substr(i, 2), 16) || 0);
+}
+
+/** 体节配色：逐个体配色优先，其次按配置的配色模式（渐变 / 单色 / 自定义多色） */
+function segmentColor(a, i, n, cfgBody) {
+  const own = a.color || null;
+  const headColor = own || cfgBody?.colors?.head || '#ff5d5d';
+  const tailColor = own || cfgBody?.colors?.tail || '#7a4dff';
+  const solidColor = own || cfgBody?.colors?.solid || '#ff5d5d';
+  const mode = cfgBody?.colorMode || 'gradient';
+  const t = n > 1 ? i / (n - 1) : 0;
+  if (own) {
+    // 独立配色：单色 → 深色尾端渐变，便于区分不同个体
+    return mode === 'solid' ? solidColor : lerpColor(headColor, shadeColor(headColor, 0.45), t);
+  }
+  if (mode === 'solid') return solidColor;
+  const palette = (mode === 'custom' && Array.isArray(cfgBody?.colors?.custom)) ? cfgBody.colors.custom : null;
+  return (palette && palette.length) ? paletteColor(palette, t) : lerpColor(headColor, tailColor, t);
+}
+
+/**
+ * Catmull-Rom → 三次贝塞尔：把点列转成逐段贝塞尔控制点，
+ * 使折线变成经过每个节点的平滑曲线（逐段返回，便于按段着色与断点切分）。
+ */
+function bezierSegments(pts) {
+  const segs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    segs.push({
+      p0: p1,
+      c1: { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 },
+      c2: { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 },
+      p1: p2,
+    });
+  }
+  return segs;
+}
+
+function traceBezier(ctx, s) {
+  ctx.beginPath();
+  ctx.moveTo(s.p0.x, s.p0.y);
+  ctx.bezierCurveTo(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.p1.x, s.p1.y);
+}
+
+/** 把点列按「相邻点距离 ≤ maxDist」切成若干连续段，避免在断点（如穿越边界）之间画出跨图直线 */
+function splitRuns(pts, maxDist) {
+  const runs = [];
+  let cur = [];
+  for (const p of pts) {
+    const prev = cur[cur.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) > maxDist) {
+      runs.push(cur);
+      cur = [];
+    }
+    cur.push(p);
+  }
+  if (cur.length) runs.push(cur);
+  return runs;
 }

@@ -323,9 +323,15 @@ export function defaultConfig() {
       highlightRules: true,
       showStartEnd: true,
       trailFade: true,
-      showEyes: true,
+      /** 蛇头眼睛默认隐藏，需在「展示样式 → 渲染效果」中主动开启 */
+      showEyes: false,
       showEffects: true,
       glow: false,
+      /** 轨迹 / 蛇身默认使用贝塞尔曲线平滑渲染 */
+      smoothTrail: true,
+      smoothBody: true,
+      /** 播放时自动滚动视图跟随首个移动体，默认关闭 */
+      followAgent: false,
       background: null,
       gridLine: null,
       axisLabels: true,
@@ -614,6 +620,9 @@ function normalizeStyle(raw = {}) {
     showEyes: bool(raw.showEyes, d.showEyes),
     showEffects: bool(raw.showEffects, d.showEffects),
     glow: bool(raw.glow, d.glow),
+    smoothTrail: bool(raw.smoothTrail, d.smoothTrail),
+    smoothBody: bool(raw.smoothBody, d.smoothBody),
+    followAgent: bool(raw.followAgent, d.followAgent),
   };
 }
 
