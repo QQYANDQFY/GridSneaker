@@ -136,7 +136,7 @@ export class RuleEngine {
     if (!subjects.length) return null;
     if (rule.probability <= 0) return null;
     if (rule.probability < 1 && ctx.rng.next() >= rule.probability) {
-      ctx.logs.push({
+      ctx.log({
         tick: ctx.tick,
         ruleId: rule.id,
         ruleName: rule.name,
@@ -233,7 +233,7 @@ export class RuleEngine {
       st.triggers++;
       st.lastTick = ctx.tick;
       fired++;
-      ctx.logs.push({
+      ctx.log({
         tick: ctx.tick,
         ruleId: rule.id,
         ruleName: rule.name,

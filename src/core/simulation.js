@@ -17,8 +17,22 @@ import { evaluateCondition } from './conditions.js';
 export const DEFAULT_FRAME_CAP = 20000;
 /** 单次运行的绝对帧上限，防止无限运行拖垮浏览器 */
 export const MAX_FRAME_CAP = 200000;
+/**
+ * 单次运行最多缓存的画面帧数。
+ * 「达到步数上限」可设到 1e15，逐步全量缓存不可能（内存与时间都不允许），
+ * 因此超过此数量时按步长抽样缓存：可回放的画面被抽样，统计量仍逐步精确累计。
+ */
+export const MAX_STORED_FRAMES = MAX_FRAME_CAP;
+/** 单次运行最多缓存的环境规则日志条数，超出后只计数不留存，避免长跑时内存膨胀 */
+export const MAX_LOGS = 50000;
 /** 兼容旧名称 */
 export const HARD_FRAME_CAP = DEFAULT_FRAME_CAP;
+
+/** 原地保留每 2 项中的第 1 项（用于帧缓存降采样，始终保留首项） */
+function halveInPlace(list) {
+  for (let i = 0, j = 0; i < list.length; i += 2, j++) list[j] = list[i];
+  list.length = Math.ceil(list.length / 2);
+}
 
 /** 把外部传入的帧上限收敛到 [1, MAX_FRAME_CAP] */
 function clampFrameCap(v) {
@@ -89,6 +103,7 @@ export class Simulation {
       lengthOverTime: [mainAgent.length],
       obstacleCount: 0,
       markerCount: 0,
+      logsDropped: 0,
     };
 
     const initStateIdx = new Set();
@@ -98,12 +113,23 @@ export class Simulation {
 
     const logs = [];
     const frames = [];
+    /** 日志缓存上限保护：超限的日志不再留存，只累计条数 */
+    const pushLog = (entry) => {
+      if (logs.length < MAX_LOGS) logs.push(entry);
+      else stats.logsDropped++;
+    };
     // 「达到步数上限」结束条件启用时，实际步数上限就是用户设定值（不再被安全帧上限截断）；
     // 未启用时使用安全帧上限，达到后给出可「继续运行」的结束原因。
     const maxStepsEnabled = !!cfg.endConditions.maxSteps;
     const maxFrames = maxStepsEnabled
-      ? Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(cfg.endConditions.maxSteps)))
+      ? Math.max(1, Math.round(cfg.endConditions.maxSteps))
       : this.frameCap;
+    // 步数上限可设到 1e15，画面帧无法逐步全量缓存。这里按「帧数达到缓存上限即剔除一半并把采样步长加倍」
+    // 的方式自适应降采样：短跑（不超过上限步数）仍是逐步全帧，长跑则自动降采样；
+    // 统计量（步数 / 碰撞 / 长度 / 覆盖 / 转向等）始终逐步精确累计，不受采样影响。
+    let frameStride = 1;
+    let nextStoreTick = 1;
+    let lastStoredTick = 0;
     let storedCells = world.cells.slice();
     let endReason = null;
     let tick = 0;
@@ -129,6 +155,7 @@ export class Simulation {
         tick,
         pending: { forcedTurns: [], lengthDelta: 0, setLength: null, end: null },
         logs,
+        log: pushLog,
         highlights: [],
         events: [],
         cellsDirty: false,
@@ -139,7 +166,6 @@ export class Simulation {
       const outcome = this.stepOnce(ctx, engine, ca, tickEvents);
       stats.steps = tick;
       stats.length = mainAgent.length;
-      stats.lengthHistory.push(mainAgent.length);
       stats.agents = agents.length;
       stats.obstacleCount = world.countState('obstacle');
       stats.markerCount = world.countState('marker');
@@ -147,18 +173,30 @@ export class Simulation {
       if (ctx.cellsDirty) {
         storedCells = world.cells.slice();
       }
-      frames.push(this.captureFrame(
-        tick,
-        agents,
-        storedCells,
-        ctx.highlights,
-        stats,
-        logs,
-        logFrom,
-        logs.length,
-        outcome.turn,
-        tickEvents,
-      ));
+      // 首帧 / 结束帧必定缓存，其余按当前采样步长抽样
+      const isLast = outcome.ended || tick === maxFrames;
+      if ((isLast || tick >= nextStoreTick) && lastStoredTick !== tick) {
+        if (!isLast && frames.length >= MAX_STORED_FRAMES) {
+          frameStride *= 2;
+          halveInPlace(frames);
+          halveInPlace(stats.lengthHistory);
+        }
+        stats.lengthHistory.push(mainAgent.length);
+        frames.push(this.captureFrame(
+          tick,
+          agents,
+          storedCells,
+          ctx.highlights,
+          stats,
+          logs,
+          logFrom,
+          logs.length,
+          outcome.turn,
+          tickEvents,
+        ));
+        lastStoredTick = tick;
+        nextStoreTick = tick + frameStride;
+      }
 
       if (outcome.ended) {
         endReason = outcome.reason;
@@ -172,6 +210,7 @@ export class Simulation {
       grid,
       states,
       frames,
+      frameStride,
       logs,
       stats,
       endReason,

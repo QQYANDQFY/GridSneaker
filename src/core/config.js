@@ -5,6 +5,9 @@ import { normalizeStates } from './world.js';
 
 export const CONFIG_VERSION = '1.1';
 
+/** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
+export const MAX_STEPS_LIMIT = 1e15;
+
 export const END_PRIORITY_DEFAULT = [
   'wall',
   'outOfBounds',
@@ -582,7 +585,7 @@ export function normalizeConfig(rawInput = {}) {
   // 否则会被当作 0 收敛成 1，导致取消勾选后只走一步就停止。
   endConditions.maxSteps = endRaw.maxSteps === false
     ? false
-    : clamp(Math.round(num(endRaw.maxSteps, d.endConditions.maxSteps)), 1, 1000000);
+    : clamp(Math.round(num(endRaw.maxSteps, d.endConditions.maxSteps)), 1, MAX_STEPS_LIMIT);
   endConditions.maxTimeMs = clamp(num(endRaw.maxTimeMs, d.endConditions.maxTimeMs), 1, 3600000);
   endConditions.selfCollisionTotalN = clamp(Math.round(num(endRaw.selfCollisionTotalN, 3)), 1, 100000);
   endConditions.selfCollisionConsecutiveN = clamp(Math.round(num(endRaw.selfCollisionConsecutiveN, 3)), 1, 100000);

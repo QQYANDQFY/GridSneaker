@@ -3,10 +3,10 @@
  */
 import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
-  validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS,
+  validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
 } from '../core/config.js';
 import { PRESETS, buildPresetConfig } from '../core/presets.js';
-import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP } from '../core/simulation.js';
+import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
 import { Renderer } from './canvas.js';
 import { dirNames } from '../core/grid.js';
 import { ACTION_LABELS, TURN_LABELS } from '../core/actions.js';
@@ -242,8 +242,9 @@ function recompute(opts = {}) {
   state.frameCap = frameCap;
   const effCap = cfg.endConditions.maxSteps === false
     ? frameCap
-    : Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(cfg.endConditions.maxSteps)));
-  const est = cfg.grid.width * cfg.grid.height * effCap;
+    : Math.max(1, Math.round(cfg.endConditions.maxSteps));
+  // 画面帧超限时按步长抽样缓存，内存占用取决于缓存的帧数而非总步数
+  const est = cfg.grid.width * cfg.grid.height * Math.min(effCap, MAX_STORED_FRAMES);
   if (est > 4e8) {
     toast('当前网格与步数组合数据量较大，可能占用较多内存与时间', 'warn');
   }
@@ -360,6 +361,20 @@ function gotoFrame(i) {
   frameChanged();
 }
 
+/** 步数 → 帧下标：步数上限很大时帧按步长抽样，二者不再一一对应，取不大于该步数的最后一帧 */
+function frameIndexForTick(tick) {
+  const frames = state.result ? state.result.frames : null;
+  if (!frames || !frames.length) return 0;
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (frames[mid].tick <= tick) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 /* ------------------------------------------------------------------ */
 /* 播放控制条                                                          */
 /* ------------------------------------------------------------------ */
@@ -459,7 +474,11 @@ function updateControls() {
   els.playBtn.textContent = state.playing ? '⏸ 暂停' : '▶ 播放';
   els.timeline.max = last;
   els.timeline.value = state.frameIndex;
-  els.frameLabel.textContent = `第 ${state.frameIndex} / ${last} 步`;
+  // 步数上限很大时帧按步长抽样，滑条走的是「帧下标」，标签显示真实步数
+  const frame = state.result ? state.result.frames[state.frameIndex] : null;
+  const lastTick = state.result ? state.result.frames[last].tick : 0;
+  const strideNote = state.result && state.result.frameStride > 1 ? ` · 抽样 1/${state.result.frameStride}` : '';
+  els.frameLabel.textContent = `第 ${frame ? frame.tick : 0} / ${lastTick} 步${strideNote}`;
   els.endBtn.disabled = !state.result;
   const reason = state.result?.endReason;
   els.endLabel.textContent = reason
@@ -498,7 +517,7 @@ function bindCanvasEvents() {
     const info = renderer.trailInfo.get(state.result.grid.idx(c.col, c.row));
     if (!info) return;
     pause();
-    gotoFrame(info.first);
+    gotoFrame(frameIndexForTick(info.first));
     toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`, 'info');
   });
 }
@@ -508,7 +527,7 @@ function bindCanvasEvents() {
 /* ------------------------------------------------------------------ */
 
 const STAT_KEYS = [
-  ['steps', '步数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['length', '当前长度'],
+  ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
@@ -523,6 +542,7 @@ function renderStageStats() {
   const s = r.summary;
   const values = {
     steps: s.steps,
+    frames: r.frameStride > 1 ? `${r.frames.length}（抽样 1/${r.frameStride}）` : r.frames.length,
     endReason: s.endReason,
     collisions: s.collisions,
     length: '-',
@@ -650,10 +670,11 @@ function renderLog() {
   } else if (state.logFilter !== 'all') {
     list = all.filter((l) => l.ruleId === state.logFilter);
   }
-  els.logCount.textContent = `${list.length} 条 / 共 ${all.length} 条`;
+  const dropped = r.stats.logsDropped || 0;
+  els.logCount.textContent = `${list.length} 条 / 共 ${all.length} 条${dropped ? `（另有 ${dropped} 条超出日志缓存上限未记录）` : ''}`;
   const shown = list.slice(0, state.logLimit);
   els.logItems = shown.map((l) => {
-    const item = h('div', { class: 'log-item', onclick: () => { pause(); gotoFrame(l.tick); } },
+    const item = h('div', { class: 'log-item', onclick: () => { pause(); gotoFrame(frameIndexForTick(l.tick)); } },
       h('span', { class: 'log-tick' }, `#${l.tick}`),
       h('span', { class: 'log-rule' }, l.ruleName),
       h('span', { class: 'log-sub' }, `${l.subject}${l.coord ? ` (${l.coord.col},${l.coord.row})` : ''}`),
@@ -1637,7 +1658,7 @@ function endGroup(cfg) {
     wall: [], outOfBounds: [], selfCollision: [], obstacle: [],
     selfCollisionTotal: [['selfCollisionTotalN', '累计次数 n', { min: 1 }]],
     selfCollisionConsecutive: [['selfCollisionConsecutiveN', '连续次数 n', { min: 1 }]],
-    maxSteps: [['maxSteps', '步数上限', { min: 1, max: MAX_FRAME_CAP }]],
+    maxSteps: [['maxSteps', '步数上限', { min: 1, max: MAX_STEPS_LIMIT }]],
     lengthReached: [['lengthTarget', '目标长度', { min: 1 }]],
     coverage: [['coveragePercent', '覆盖率阈值 %', { min: 1, max: 100 }]],
     maxTime: [['maxTimeMs', '时间上限 ms', { min: 1 }]],
@@ -1683,7 +1704,7 @@ function endGroup(cfg) {
     }, rowChildren));
   });
   return group('结束规则（按优先级）', [
-    h('div', { class: 'hint' }, '自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。'),
+    h('div', { class: 'hint' }, `自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。步数上限最大可设 10^15（远超 10^12）；单次运行超过 ${MAX_STORED_FRAMES} 步时画面帧按步长抽样缓存，步数与各项统计仍为逐步精确累计。`),
     ...rows,
   ], { open: false });
 }

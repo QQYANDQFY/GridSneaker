@@ -4,7 +4,7 @@
  */
 import { RNG, normalizeWeights } from '../src/core/rng.js';
 import { Grid, parseDir } from '../src/core/grid.js';
-import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP } from '../src/core/simulation.js';
+import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import { normalizeConfig, defaultConfig, validateConfig, encodeConfigToToken, decodeConfigFromToken } from '../src/core/config.js';
 
 let pass = 0;
@@ -390,6 +390,26 @@ section('步数上限与安全帧上限');
   const r = new Simulation(limited).run();
   eq(r.stats.steps, 25000, '启用步数上限时可超过 20000 步');
   eq(r.endReason.code, 'maxSteps', '启用时按用户设定步数结束');
+
+  // 步数上限可远超帧缓存能力：画面帧自适应降采样，统计仍按真实步数累计
+  eq(normalizeConfig({ endConditions: { maxSteps: 1e15 } }).endConditions.maxSteps, 1e15, '步数上限可设到 1e15 量级');
+  const huge = mk();
+  huge.endConditions.maxSteps = 500000;
+  const rh = new Simulation(huge).run();
+  eq(rh.stats.steps, 500000, '极大步数上限可跑满设定步数');
+  eq(rh.frames[rh.frames.length - 1].tick, 500000, '末帧对应最后一步');
+  ok(rh.frameStride > 1, '超出帧缓存上限后自动降采样', `实际步长 ${rh.frameStride}`);
+  ok(rh.frames.length <= MAX_STORED_FRAMES + 2, '帧缓存被限制在安全范围内', `实际 ${rh.frames.length}`);
+  ok(rh.stats.lengthHistory.length <= MAX_STORED_FRAMES + 2, '长度曲线同步降采样，不随步数膨胀', `实际 ${rh.stats.lengthHistory.length}`);
+
+  // 步数上限极大但实际很快结束时，仍保留逐步全帧（不会因上限过大而丢掉画面）
+  const early = mk();
+  early.endConditions.maxSteps = 1e15;
+  early.endConditions.wall = true;
+  early.grid = { type: 'square', width: 8, height: 8, boundary: 'stop' };
+  const re = new Simulation(early).run();
+  ok(re.stats.steps < 10, '撞墙提前结束', `实际 ${re.stats.steps} 步`);
+  ok(re.frameStride === 1 && re.frames.length === re.stats.steps + 1, '极大步数上限下的短跑仍逐步全帧', `步长 ${re.frameStride}，帧 ${re.frames.length} / 步 ${re.stats.steps}`);
 }
 
 /* ---------- 结果 ---------- */

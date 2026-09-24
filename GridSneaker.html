@@ -644,6 +644,9 @@ const { normalizeStates } = __MODULES["src/core/world.js"];
 
 const CONFIG_VERSION = '1.1';
 
+/** 「达到步数上限」允许设置的最大步数：远超 10^12，且仍在 Number 精确整数范围内（< 2^53） */
+const MAX_STEPS_LIMIT = 1e15;
+
 const END_PRIORITY_DEFAULT = [
   'wall',
   'outOfBounds',
@@ -1221,7 +1224,7 @@ function normalizeConfig(rawInput = {}) {
   // 否则会被当作 0 收敛成 1，导致取消勾选后只走一步就停止。
   endConditions.maxSteps = endRaw.maxSteps === false
     ? false
-    : clamp(Math.round(num(endRaw.maxSteps, d.endConditions.maxSteps)), 1, 1000000);
+    : clamp(Math.round(num(endRaw.maxSteps, d.endConditions.maxSteps)), 1, MAX_STEPS_LIMIT);
   endConditions.maxTimeMs = clamp(num(endRaw.maxTimeMs, d.endConditions.maxTimeMs), 1, 3600000);
   endConditions.selfCollisionTotalN = clamp(Math.round(num(endRaw.selfCollisionTotalN, 3)), 1, 100000);
   endConditions.selfCollisionConsecutiveN = clamp(Math.round(num(endRaw.selfCollisionConsecutiveN, 3)), 1, 100000);
@@ -1395,7 +1398,7 @@ function readConfigFromLocation() {
     return null;
   }
 }
-return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation };
+return { defaultConfig, defaultRule, defaultClause, normalizeConfig, END_LABELS, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation, MAX_STEPS_LIMIT };
 })();
 
 /* ===== src/core/presets.js ===== */
@@ -3318,7 +3321,7 @@ class RuleEngine {
     if (!subjects.length) return null;
     if (rule.probability <= 0) return null;
     if (rule.probability < 1 && ctx.rng.next() >= rule.probability) {
-      ctx.logs.push({
+      ctx.log({
         tick: ctx.tick,
         ruleId: rule.id,
         ruleName: rule.name,
@@ -3415,7 +3418,7 @@ class RuleEngine {
       st.triggers++;
       st.lastTick = ctx.tick;
       fired++;
-      ctx.logs.push({
+      ctx.log({
         tick: ctx.tick,
         ruleId: rule.id,
         ruleName: rule.name,
@@ -3483,8 +3486,22 @@ const { evaluateCondition } = __MODULES["src/core/conditions.js"];
 const DEFAULT_FRAME_CAP = 20000;
 /** 单次运行的绝对帧上限，防止无限运行拖垮浏览器 */
 const MAX_FRAME_CAP = 200000;
+/**
+ * 单次运行最多缓存的画面帧数。
+ * 「达到步数上限」可设到 1e15，逐步全量缓存不可能（内存与时间都不允许），
+ * 因此超过此数量时按步长抽样缓存：可回放的画面被抽样，统计量仍逐步精确累计。
+ */
+const MAX_STORED_FRAMES = MAX_FRAME_CAP;
+/** 单次运行最多缓存的环境规则日志条数，超出后只计数不留存，避免长跑时内存膨胀 */
+const MAX_LOGS = 50000;
 /** 兼容旧名称 */
 const HARD_FRAME_CAP = DEFAULT_FRAME_CAP;
+
+/** 原地保留每 2 项中的第 1 项（用于帧缓存降采样，始终保留首项） */
+function halveInPlace(list) {
+  for (let i = 0, j = 0; i < list.length; i += 2, j++) list[j] = list[i];
+  list.length = Math.ceil(list.length / 2);
+}
 
 /** 把外部传入的帧上限收敛到 [1, MAX_FRAME_CAP] */
 function clampFrameCap(v) {
@@ -3555,6 +3572,7 @@ class Simulation {
       lengthOverTime: [mainAgent.length],
       obstacleCount: 0,
       markerCount: 0,
+      logsDropped: 0,
     };
 
     const initStateIdx = new Set();
@@ -3564,12 +3582,23 @@ class Simulation {
 
     const logs = [];
     const frames = [];
+    /** 日志缓存上限保护：超限的日志不再留存，只累计条数 */
+    const pushLog = (entry) => {
+      if (logs.length < MAX_LOGS) logs.push(entry);
+      else stats.logsDropped++;
+    };
     // 「达到步数上限」结束条件启用时，实际步数上限就是用户设定值（不再被安全帧上限截断）；
     // 未启用时使用安全帧上限，达到后给出可「继续运行」的结束原因。
     const maxStepsEnabled = !!cfg.endConditions.maxSteps;
     const maxFrames = maxStepsEnabled
-      ? Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(cfg.endConditions.maxSteps)))
+      ? Math.max(1, Math.round(cfg.endConditions.maxSteps))
       : this.frameCap;
+    // 步数上限可设到 1e15，画面帧无法逐步全量缓存。这里按「帧数达到缓存上限即剔除一半并把采样步长加倍」
+    // 的方式自适应降采样：短跑（不超过上限步数）仍是逐步全帧，长跑则自动降采样；
+    // 统计量（步数 / 碰撞 / 长度 / 覆盖 / 转向等）始终逐步精确累计，不受采样影响。
+    let frameStride = 1;
+    let nextStoreTick = 1;
+    let lastStoredTick = 0;
     let storedCells = world.cells.slice();
     let endReason = null;
     let tick = 0;
@@ -3595,6 +3624,7 @@ class Simulation {
         tick,
         pending: { forcedTurns: [], lengthDelta: 0, setLength: null, end: null },
         logs,
+        log: pushLog,
         highlights: [],
         events: [],
         cellsDirty: false,
@@ -3605,7 +3635,6 @@ class Simulation {
       const outcome = this.stepOnce(ctx, engine, ca, tickEvents);
       stats.steps = tick;
       stats.length = mainAgent.length;
-      stats.lengthHistory.push(mainAgent.length);
       stats.agents = agents.length;
       stats.obstacleCount = world.countState('obstacle');
       stats.markerCount = world.countState('marker');
@@ -3613,18 +3642,30 @@ class Simulation {
       if (ctx.cellsDirty) {
         storedCells = world.cells.slice();
       }
-      frames.push(this.captureFrame(
-        tick,
-        agents,
-        storedCells,
-        ctx.highlights,
-        stats,
-        logs,
-        logFrom,
-        logs.length,
-        outcome.turn,
-        tickEvents,
-      ));
+      // 首帧 / 结束帧必定缓存，其余按当前采样步长抽样
+      const isLast = outcome.ended || tick === maxFrames;
+      if ((isLast || tick >= nextStoreTick) && lastStoredTick !== tick) {
+        if (!isLast && frames.length >= MAX_STORED_FRAMES) {
+          frameStride *= 2;
+          halveInPlace(frames);
+          halveInPlace(stats.lengthHistory);
+        }
+        stats.lengthHistory.push(mainAgent.length);
+        frames.push(this.captureFrame(
+          tick,
+          agents,
+          storedCells,
+          ctx.highlights,
+          stats,
+          logs,
+          logFrom,
+          logs.length,
+          outcome.turn,
+          tickEvents,
+        ));
+        lastStoredTick = tick;
+        nextStoreTick = tick + frameStride;
+      }
 
       if (outcome.ended) {
         endReason = outcome.reason;
@@ -3638,6 +3679,7 @@ class Simulation {
       grid,
       states,
       frames,
+      frameStride,
       logs,
       stats,
       endReason,
@@ -4123,7 +4165,7 @@ class Simulation {
     };
   }
 }
-return { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP };
+return { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES };
 })();
 
 /* ===== src/ui/canvas.js ===== */
@@ -5167,9 +5209,9 @@ __MODULES["src/ui/app.js"] = (function () {
 /**
  * 应用主体：配置面板、规则编辑器、播放控制、统计与日志、导入导出
  */
-const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS } = __MODULES["src/core/config.js"];
+const { defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction, validateConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT } = __MODULES["src/core/config.js"];
 const { PRESETS, buildPresetConfig } = __MODULES["src/core/presets.js"];
-const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP } = __MODULES["src/core/simulation.js"];
+const { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } = __MODULES["src/core/simulation.js"];
 const { Renderer } = __MODULES["src/ui/canvas.js"];
 const { dirNames } = __MODULES["src/core/grid.js"];
 const { ACTION_LABELS, TURN_LABELS } = __MODULES["src/core/actions.js"];
@@ -5398,8 +5440,9 @@ function recompute(opts = {}) {
   state.frameCap = frameCap;
   const effCap = cfg.endConditions.maxSteps === false
     ? frameCap
-    : Math.min(MAX_FRAME_CAP, Math.max(1, Math.round(cfg.endConditions.maxSteps)));
-  const est = cfg.grid.width * cfg.grid.height * effCap;
+    : Math.max(1, Math.round(cfg.endConditions.maxSteps));
+  // 画面帧超限时按步长抽样缓存，内存占用取决于缓存的帧数而非总步数
+  const est = cfg.grid.width * cfg.grid.height * Math.min(effCap, MAX_STORED_FRAMES);
   if (est > 4e8) {
     toast('当前网格与步数组合数据量较大，可能占用较多内存与时间', 'warn');
   }
@@ -5516,6 +5559,20 @@ function gotoFrame(i) {
   frameChanged();
 }
 
+/** 步数 → 帧下标：步数上限很大时帧按步长抽样，二者不再一一对应，取不大于该步数的最后一帧 */
+function frameIndexForTick(tick) {
+  const frames = state.result ? state.result.frames : null;
+  if (!frames || !frames.length) return 0;
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (frames[mid].tick <= tick) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 /* ------------------------------------------------------------------ */
 /* 播放控制条                                                          */
 /* ------------------------------------------------------------------ */
@@ -5615,7 +5672,11 @@ function updateControls() {
   els.playBtn.textContent = state.playing ? '⏸ 暂停' : '▶ 播放';
   els.timeline.max = last;
   els.timeline.value = state.frameIndex;
-  els.frameLabel.textContent = `第 ${state.frameIndex} / ${last} 步`;
+  // 步数上限很大时帧按步长抽样，滑条走的是「帧下标」，标签显示真实步数
+  const frame = state.result ? state.result.frames[state.frameIndex] : null;
+  const lastTick = state.result ? state.result.frames[last].tick : 0;
+  const strideNote = state.result && state.result.frameStride > 1 ? ` · 抽样 1/${state.result.frameStride}` : '';
+  els.frameLabel.textContent = `第 ${frame ? frame.tick : 0} / ${lastTick} 步${strideNote}`;
   els.endBtn.disabled = !state.result;
   const reason = state.result?.endReason;
   els.endLabel.textContent = reason
@@ -5654,7 +5715,7 @@ function bindCanvasEvents() {
     const info = renderer.trailInfo.get(state.result.grid.idx(c.col, c.row));
     if (!info) return;
     pause();
-    gotoFrame(info.first);
+    gotoFrame(frameIndexForTick(info.first));
     toast(`已跳转到该格首次经过的步数：第 ${info.first} 步`, 'info');
   });
 }
@@ -5664,7 +5725,7 @@ function bindCanvasEvents() {
 /* ------------------------------------------------------------------ */
 
 const STAT_KEYS = [
-  ['steps', '步数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['length', '当前长度'],
+  ['steps', '步数'], ['frames', '缓存帧数'], ['endReason', '结束原因 / 本步事件'], ['collisions', '碰撞次数'], ['length', '当前长度'],
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
@@ -5679,6 +5740,7 @@ function renderStageStats() {
   const s = r.summary;
   const values = {
     steps: s.steps,
+    frames: r.frameStride > 1 ? `${r.frames.length}（抽样 1/${r.frameStride}）` : r.frames.length,
     endReason: s.endReason,
     collisions: s.collisions,
     length: '-',
@@ -5806,10 +5868,11 @@ function renderLog() {
   } else if (state.logFilter !== 'all') {
     list = all.filter((l) => l.ruleId === state.logFilter);
   }
-  els.logCount.textContent = `${list.length} 条 / 共 ${all.length} 条`;
+  const dropped = r.stats.logsDropped || 0;
+  els.logCount.textContent = `${list.length} 条 / 共 ${all.length} 条${dropped ? `（另有 ${dropped} 条超出日志缓存上限未记录）` : ''}`;
   const shown = list.slice(0, state.logLimit);
   els.logItems = shown.map((l) => {
-    const item = h('div', { class: 'log-item', onclick: () => { pause(); gotoFrame(l.tick); } },
+    const item = h('div', { class: 'log-item', onclick: () => { pause(); gotoFrame(frameIndexForTick(l.tick)); } },
       h('span', { class: 'log-tick' }, `#${l.tick}`),
       h('span', { class: 'log-rule' }, l.ruleName),
       h('span', { class: 'log-sub' }, `${l.subject}${l.coord ? ` (${l.coord.col},${l.coord.row})` : ''}`),
@@ -6793,7 +6856,7 @@ function endGroup(cfg) {
     wall: [], outOfBounds: [], selfCollision: [], obstacle: [],
     selfCollisionTotal: [['selfCollisionTotalN', '累计次数 n', { min: 1 }]],
     selfCollisionConsecutive: [['selfCollisionConsecutiveN', '连续次数 n', { min: 1 }]],
-    maxSteps: [['maxSteps', '步数上限', { min: 1, max: MAX_FRAME_CAP }]],
+    maxSteps: [['maxSteps', '步数上限', { min: 1, max: MAX_STEPS_LIMIT }]],
     lengthReached: [['lengthTarget', '目标长度', { min: 1 }]],
     coverage: [['coveragePercent', '覆盖率阈值 %', { min: 1, max: 100 }]],
     maxTime: [['maxTimeMs', '时间上限 ms', { min: 1 }]],
@@ -6839,7 +6902,7 @@ function endGroup(cfg) {
     }, rowChildren));
   });
   return group('结束规则（按优先级）', [
-    h('div', { class: 'hint' }, '自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。'),
+    h('div', { class: 'hint' }, `自上而下依次判断，命中第一个满足条件的规则即结束运行。可用 ↑ ↓ 调整优先级。取消勾选「达到步数上限」后不再限制步数（仅受安全帧上限保护，可在控制条处继续运行）。步数上限最大可设 10^15（远超 10^12）；单次运行超过 ${MAX_STORED_FRAMES} 步时画面帧按步长抽样缓存，步数与各项统计仍为逐步精确累计。`),
     ...rows,
   ], { open: false });
 }
