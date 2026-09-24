@@ -170,6 +170,7 @@ html, body {
 
 /* ---------------- 分组与字段 ---------------- */
 
+
 /* 多层级选项卡配色
    层级越深：色相沿色环推进 → 饱和度升高 → 亮度升高。
    父级沉稳低调（低饱和深底 + 冷色），子级逐层更鲜明（暖色、更亮的标题与左侧色条），
@@ -217,6 +218,28 @@ html, body {
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .row > .field { flex: 1 1 96px; min-width: 0; }
 .row > .check-wrap { padding-bottom: 4px; min-width: 0; }
+
+/* ---------------- 自定义皮肤上传 ---------------- */
+
+.skin-row { display: flex; align-items: center; gap: 10px; }
+.skin-preview {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #0d1117;
+}
+.skin-preview.has-image { border-style: solid; }
+.skin-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.skin-empty { color: #6f7d8c; font-size: 10px; }
+.skin-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* 原生 file 控件样式各异，统一由「选择图片」按钮触发，这里仅保留一个可访问的入口 */
+.skin-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
 /*
  * 排序 / 删除按钮簇（↑ ↓ ✕）：
@@ -267,6 +290,27 @@ html, body {
 /* ---------------- 规则编辑 ---------------- */
 
 .rule-list { display: flex; flex-direction: column; }
+
+/* ---------------- 游戏状态存档 ---------------- */
+
+.save-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.save-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .condition {
   border-left: 2px solid var(--line);
   padding-left: 8px;

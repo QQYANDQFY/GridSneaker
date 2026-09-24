@@ -47,7 +47,15 @@ export const STYLE_DEFAULTS = {
 const EFFECT_LOOKBACK = 6;
 
 /** 交互特效类型（由模拟层写入 frame.highlights） */
-const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap']);
+const EFFECT_TYPES = new Set(['merge', 'repel', 'spawn', 'markerEffect', 'agentDeath', 'wrap', 'transform', 'warning']);
+
+/** 蛇死亡转化特效的主色调（转化的收束圆环），与目标状态填充色叠加形成过渡 */
+const TRANSFORM_ACCENT = '#7cf5d0';
+/** 碰撞预警特效色（危险格脉冲提示） */
+const WARNING_ACCENT = '#ffb020';
+
+/** 自定义皮肤的两个可上传部位：head 绘制在蛇头，body 绘制在其余体节 */
+const SKIN_KEYS = ['head', 'body'];
 
 /** 轨迹渐隐的色阶数：把连续渐变量化成有限档，合并同档线段一次描边（长轨迹下显著减少绘制调用） */
 const FADE_BUCKETS = 16;
@@ -102,6 +110,12 @@ export class Renderer {
     this.collisionPoints = [];
     this.startCoord = null;
     this.endCoord = null;
+    /** 自定义皮肤：dataURL → Image 缓存；onSkinLoad 用于图片解码完成后触发重绘 */
+    this.skinSrc = { head: '', body: '' };
+    this.skinImg = { head: null, body: null };
+    this.onSkinLoad = null;
+    /** 蛇身皮肤离屏层：与主画布同尺寸，用于「描轮廓 → 图片蒙版填充」的合成 */
+    this.skinLayer = null;
     this.size = { width: 0, height: 0, margin: 16 };
     this._scratchA = { x: 0, y: 0 };
   }
@@ -111,6 +125,7 @@ export class Renderer {
     this.grid = result.grid;
     this.states = result.states;
     this.body = result.config.body;
+    this.syncSkin();
     this.prepare();
     this.resize();
   }
@@ -119,9 +134,37 @@ export class Renderer {
   setStyle(style, body) {
     this.style = { ...STYLE_DEFAULTS, ...(style || {}) };
     if (body) this.body = body;
+    this.syncSkin();
     this.pixDirty = true;
     this.filterDirty = true;
     this.resize();
+  }
+
+  /**
+   * 同步自定义皮肤图片。
+   * 配置中的 dataURL 与缓存不一致时重新解码；解码完成后回调 onSkinLoad 触发一次重绘。
+   * 解码失败（文件损坏 / 非真实图片）时静默退回纯色绘制，不影响其余渲染。
+   */
+  syncSkin() {
+    const skin = (this.body && this.body.skin) || {};
+    for (const key of SKIN_KEYS) {
+      const src = typeof skin[key] === 'string' ? skin[key] : '';
+      if (this.skinSrc[key] === src) continue;
+      this.skinSrc[key] = src;
+      this.skinImg[key] = null;
+      if (!src) continue;
+      const img = new Image();
+      img.onload = () => {
+        if (this.skinSrc[key] !== src) return; // 加载期间皮肤已被替换 / 清除
+        this.skinImg[key] = img;
+        if (typeof this.onSkinLoad === 'function') this.onSkinLoad();
+      };
+      img.onerror = () => {
+        if (this.skinSrc[key] !== src) return;
+        this.skinSrc[key] = '';
+      };
+      img.src = src;
+    }
   }
 
   /** 坐标筛选高亮：传入格下标集合（null / 空集表示关闭） */
@@ -741,7 +784,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { wall: '#ff922b', collision: '#ff5d5d', turn: '#51cf66', cell: '#e5e9f0', spawn: '#c084fc', merge: '#c084fc', repel: '#ffd166', markerEffect: '#ffd166', agentDeath: '#ff5d5d' };
+    const colors = { wall: '#ff922b', collision: '#ff5d5d', turn: '#51cf66', cell: '#e5e9f0', spawn: '#c084fc', merge: '#c084fc', repel: '#ffd166', markerEffect: '#ffd166', agentDeath: '#ff5d5d', transform: TRANSFORM_ACCENT, warning: WARNING_ACCENT };
     for (const h of frame.highlights) {
       if (h.col === undefined || h.row === undefined) continue;
       const p = this.center({ col: h.col, row: h.row });
@@ -792,19 +835,27 @@ export class Renderer {
       const ghostRuns = model.ghosts;
       const colorAt = (i) => segmentColor(a, i, n, cfgBody);
       const radius = half * scale;
+      // 皮肤已解码完成时优先使用皮肤贴图；未设置 / 正在解码 / 解码失败时退回纯色绘制
+      const bodySkin = this.skinImg.body;
+      const headSkin = this.skinImg.head;
 
-      if (pts.length > 1) {
-        this.strokeRibbon(a, pts, colorAt, radius, cfgBody);
-      } else if (pts.length === 1) {
-        ctx.save();
-        ctx.fillStyle = colorAt(pts[0].gi);
-        ctx.globalAlpha = a.alive ? 1 : 0.45;
-        drawShape(ctx, pts[0].x, pts[0].y, radius, this.grid.type, shape);
-        ctx.fill();
-        ctx.restore();
+      if (bodySkin && (pts.length || ghostRuns.length)) {
+        if (pts.length) this.drawSkinRibbon(a, pts, radius, bodySkin);
+        for (const run of ghostRuns) this.drawSkinRibbon(a, run, radius, bodySkin);
+      } else {
+        if (pts.length > 1) {
+          this.strokeRibbon(a, pts, colorAt, radius, cfgBody);
+        } else if (pts.length === 1) {
+          ctx.save();
+          ctx.fillStyle = colorAt(pts[0].gi);
+          ctx.globalAlpha = a.alive ? 1 : 0.45;
+          drawShape(ctx, pts[0].x, pts[0].y, radius, this.grid.type, shape);
+          ctx.fill();
+          ctx.restore();
+        }
+        // 对侧镜像：与本体使用同一套配色与连接方式，保证两侧同步滑入 / 滑出
+        for (const run of ghostRuns) this.strokeRibbon(a, run, colorAt, radius, cfgBody);
       }
-      // 对侧镜像：与本体使用同一套配色与连接方式，保证两侧同步滑入 / 滑出
-      for (const run of ghostRuns) this.strokeRibbon(a, run, colorAt, radius, cfgBody);
       if (this.style.showArrows) this.drawArrow(a, cellSize);
       // 蛇头：跨缝时本体与镜像同时各露出半个，两侧都按同一朝向绘制眼睛 / 白点，
       // 避免滑出的一侧失去「头部」标识、另一侧冒出一个无标识的体节
@@ -815,9 +866,20 @@ export class Renderer {
       if (heads.length) {
         const ang = this.headAngle(a, model.headTarget);
         for (const hd of heads) {
+          // 仅有蛇身皮肤时，用头部配色重绘蛇头节点，避免头尾难以区分
+          if (headSkin) {
+            this.drawSkinHead(hd, radius, cfgBody, headSkin, a.alive);
+          } else if (bodySkin) {
+            ctx.save();
+            ctx.globalAlpha = a.alive ? 1 : 0.45;
+            ctx.fillStyle = colorAt(0);
+            drawShape(ctx, hd.x, hd.y, radius, this.grid.type, shape);
+            ctx.fill();
+            ctx.restore();
+          }
           if (this.style.showEyes) {
             this.drawEyes(hd, ang, radius);
-          } else {
+          } else if (!headSkin) {
             ctx.save();
             ctx.fillStyle = 'rgba(255,255,255,0.92)';
             ctx.globalAlpha = 0.5;
@@ -969,53 +1031,189 @@ export class Renderer {
    */
   strokeRibbon(a, pts, colorAt, radius, cfgBody) {
     const ctx = this.ctx;
-    const { cellSize, gap } = this.style;
-    const mode = this.style.bodyJoin;
+    const { cellSize } = this.style;
     const headColor = a.color || cfgBody?.colors?.head || '#ff5d5d';
     const alpha = a.alive ? 1 : 0.45;
     const last = Math.max(1, pts.length - 1);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const run of splitRuns(pts, (cellSize + gap) * RUN_GAP_CELLS)) {
-      if (run.length === 1) {
+    for (const geo of this.ribbonRuns(pts)) {
+      if (geo.single) {
+        const p = geo.pts[0];
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = colorAt(run[0].gi);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = colorAt(p.gi);
         ctx.beginPath();
-        ctx.arc(run[0].x, run[0].y, radius, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fill();
         continue;
       }
-      const verts = mode === 'angle' ? bevelChain(run, this.style.trailAngle) : run;
-      const segs = mode === 'curve' ? bezierSegments(verts) : null;
-      // 第一遍：深色轮廓
-      ctx.globalAlpha = alpha * 0.45;
-      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-      ctx.lineWidth = Math.max(2, radius * 2 + 2);
-      ctx.shadowBlur = 0;
-      traceChain(ctx, verts, segs);
-      ctx.stroke();
+      this.strokeRibbonOutline(ctx, geo, radius, alpha);
       // 第二遍：按体节配色描边，头粗尾细
-      ctx.globalAlpha = alpha;
-      const count = segs ? segs.length : verts.length - 1;
-      for (let k = 0; k < count; k++) {
-        const gi = verts[k].gi;
+      for (let k = 0; k < geo.count; k++) {
+        const gi = geo.verts[k].gi;
         const t = gi / last;
+        ctx.globalAlpha = alpha;
         ctx.strokeStyle = colorAt(gi);
-        ctx.lineWidth = Math.max(1.5, radius * 2 * (1 - 0.16 * t));
+        ctx.lineWidth = ribbonWidth(radius, t);
         if (this.style.glow) {
           ctx.shadowColor = gi === 0 ? headColor : colorAt(gi);
           ctx.shadowBlur = cellSize * (gi === 0 ? 0.8 : 0.45);
         } else {
           ctx.shadowBlur = 0;
         }
-        if (segs) traceBezier(ctx, segs[k]);
-        else traceLine(ctx, verts[k], verts[k + 1]);
+        this.traceRibbonGeo(ctx, geo, k);
         ctx.stroke();
       }
     }
     ctx.shadowBlur = 0;
     ctx.restore();
+  }
+
+  /** 蛇身深色轮廓：保证体节在任意背景（含亮色皮肤 / 浅色网格）上都清晰可辨 */
+  strokeRibbonOutline(ctx, geo, radius, alpha) {
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = Math.max(2, radius * 2 + 2);
+    ctx.shadowBlur = 0;
+    traceChain(ctx, geo.verts, geo.segs);
+    ctx.stroke();
+  }
+
+  /**
+   * 蛇身链的几何切分：按最大间距拆成若干连续 run（跨边界 / 换移动体处断开），
+   * 再把每个 run 转成「切角折线」或「贝塞尔段」，供描边与蒙版共用同一套几何。
+   */
+  ribbonRuns(pts) {
+    const { cellSize, gap } = this.style;
+    const mode = this.style.bodyJoin;
+    const out = [];
+    for (const run of splitRuns(pts, (cellSize + gap) * RUN_GAP_CELLS)) {
+      if (run.length === 1) {
+        out.push({ pts: run, single: true });
+        continue;
+      }
+      const verts = mode === 'angle' ? bevelChain(run, this.style.trailAngle) : run;
+      const segs = mode === 'curve' ? bezierSegments(verts) : null;
+      out.push({ pts: run, verts, segs, count: segs ? segs.length : verts.length - 1 });
+    }
+    return out;
+  }
+
+  /** 描出几何体的第 k 段（直线 / 切角折线 / 贝塞尔由 verts / segs 决定） */
+  traceRibbonGeo(ctx, geo, k) {
+    if (geo.segs) traceBezier(ctx, geo.segs[k]);
+    else traceLine(ctx, geo.verts[k], geo.verts[k + 1]);
+  }
+
+  /**
+   * 蛇身皮肤：把上传的图片平铺作为蛇身填充。
+   *
+   * 实现为「离屏蒙版」——先在离屏层按体节线宽描出蛇身轮廓，再用 source-in 让图片
+   * 只保留在轮廓内，最后整层贴回主画布。相比逐体节贴图，轮廓连续无接缝，
+   * 且形状（含头粗尾细的收束）与纯色绘制完全一致。
+   */
+  drawSkinRibbon(a, pts, radius, img) {
+    const ctx = this.ctx;
+    const alpha = a.alive ? 1 : 0.45;
+    const geoList = this.ribbonRuns(pts);
+    const last = Math.max(1, pts.length - 1);
+
+    // 1) 主画布先描深色轮廓，避免皮肤贴到背景上缺少边界
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const geo of geoList) {
+      if (!geo.single) this.strokeRibbonOutline(ctx, geo, radius, alpha);
+    }
+    ctx.restore();
+
+    // 2) 离屏层描出蛇身轮廓（与纯色绘制使用同一套线宽，保证形态一致）
+    const sctx = this.ensureSkinLayer();
+    sctx.save();
+    sctx.globalAlpha = 1;
+    sctx.lineCap = 'round';
+    sctx.lineJoin = 'round';
+    sctx.fillStyle = '#fff';
+    sctx.strokeStyle = '#fff';
+    for (const geo of geoList) {
+      if (geo.single) {
+        const p = geo.pts[0];
+        sctx.beginPath();
+        sctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        sctx.fill();
+        continue;
+      }
+      for (let k = 0; k < geo.count; k++) {
+        sctx.lineWidth = ribbonWidth(radius, geo.verts[k].gi / last);
+        this.traceRibbonGeo(sctx, geo, k);
+        sctx.stroke();
+      }
+    }
+    sctx.restore();
+
+    // 3) source-in：仅在轮廓内保留图片图案（其余区域被清空）
+    const pattern = this.skinPattern(img);
+    if (pattern) {
+      sctx.save();
+      sctx.globalCompositeOperation = 'source-in';
+      sctx.fillStyle = pattern;
+      sctx.fillRect(0, 0, this.size.width, this.size.height);
+      sctx.restore();
+    }
+
+    // 4) 整层贴回主画布（沿用裁剪与存活状态的整体透明度）
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(this.skinLayer, 0, 0, this.size.width, this.size.height);
+    ctx.restore();
+  }
+
+  /**
+   * 皮肤图片的重复图案：按体节尺寸缩放后平铺，原点是网格左上角，
+   * 使每个体节都落在图片的同一区域上（整张图正好铺满一格）。
+   */
+  skinPattern(img) {
+    const pattern = this.ctx.createPattern(img, 'repeat');
+    if (!pattern) return null;
+    const cell = this.style.cellSize + this.style.gap;
+    const m = new DOMMatrix();
+    m.a = cell / Math.max(1, img.width);
+    m.d = cell / Math.max(1, img.height);
+    m.e = this.size.margin;
+    m.f = this.size.margin;
+    try {
+      pattern.setTransform(m);
+    } catch (e) {
+      /* 老内核不支持图案变换时退回默认平铺（仍能正常显示皮肤） */
+    }
+    return pattern;
+  }
+
+  /** 蛇头皮肤：按体节形状裁切贴图后绘制在蛇头节点上 */
+  drawSkinHead(p, radius, cfgBody, img, alive) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alive ? 1 : 0.45;
+    drawShape(ctx, p.x, p.y, radius, this.grid.type, cfgBody?.shape || 'round');
+    ctx.clip();
+    ctx.drawImage(img, p.x - radius, p.y - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  /** 蛇身皮肤离屏层：与主画布同像素尺寸（含 dpr），每次使用前清空 */
+  ensureSkinLayer() {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (!this.skinLayer) this.skinLayer = document.createElement('canvas');
+    if (this.skinLayer.width !== this.canvas.width || this.skinLayer.height !== this.canvas.height) {
+      this.skinLayer.width = this.canvas.width;
+      this.skinLayer.height = this.canvas.height;
+    }
+    const sctx = this.skinLayer.getContext('2d');
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sctx.clearRect(0, 0, this.size.width, this.size.height);
+    return sctx;
   }
 
   /** 蛇头双眼：ang 为前进方向角，双眼沿前进方向前移并左右分布 */
@@ -1057,7 +1255,7 @@ export class Renderer {
     const ctx = this.ctx;
     const { cellSize } = this.style;
     const half = cellSize / 2;
-    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0' };
+    const colors = { merge: '#c084fc', repel: '#ffd166', spawn: '#63e6be', markerEffect: '#ffd166', agentDeath: '#ff5d5d', wrap: '#4cc9f0', transform: TRANSFORM_ACCENT, warning: WARNING_ACCENT };
     for (let fi = start; fi <= frameIndex; fi++) {
       const f = frames[fi];
       if (!f || !f.highlights) continue;
@@ -1067,6 +1265,12 @@ export class Renderer {
         if (!EFFECT_TYPES.has(h.type)) continue;
         if (h.col === undefined || h.row === undefined) continue;
         const p = this.center({ col: h.col, row: h.row });
+        // 蛇死亡转化：专用过渡动画（体节色块淡入目标状态色 + 收束圆环），
+        // 比通用波纹更能表达「身体节点并入元胞自动机」的过程
+        if (h.type === 'transform') {
+          this.drawTransformEffect(p, t, cellSize, h.state ? this.stateColor(h.state) : null);
+          continue;
+        }
         const color = h.color || (h.state ? (this.stateColor(h.state) || colors[h.type]) : colors[h.type]) || '#e5e9f0';
         // 边界穿越：沿进出方向在网格内补一段渐隐的「穿梭」光带，
         // 让「从对侧滑入」在画面上有明确的方向感
@@ -1082,6 +1286,42 @@ export class Renderer {
         ctx.restore();
       }
     }
+  }
+
+  /**
+   * 蛇死亡转化：身体节点「并入环境」的过渡动画。
+   *
+   * 时间轴 t 由 1（刚刚发生）衰减到 0（6 步后结束）：
+   *   - 体节色块：以目标状态色从中心淡入并略微收缩，预示该节点即将成为的元胞形态；
+   *   - 收束圆环：由外向内收拢，表达「被环境吸收」的方向感；
+   *   - 两者叠加后，节点在几步内从「蛇身」连续过渡为「环境单元」，避免突然跳变。
+   *
+   * @param {object} p   格中心像素坐标
+   * @param {number} t   剩余强度 [0,1]
+   * @param {number} cellSize 格边长
+   * @param {string|null} stateColor 目标状态的颜色（取不到时退回转化主色调）
+   */
+  drawTransformEffect(p, t, cellSize, stateColor) {
+    const ctx = this.ctx;
+    const half = cellSize / 2;
+    const hex = this.grid.type === 'hex';
+    ctx.save();
+    // 体节色块 → 目标状态色：越接近结束越贴近最终元胞（视觉连贯）
+    ctx.globalAlpha = 0.7 * t;
+    ctx.fillStyle = stateColor || TRANSFORM_ACCENT;
+    const grow = half * (0.42 + 0.58 * t);
+    if (hex) pathHex(ctx, p.x, p.y, grow * 0.95);
+    else roundRect(ctx, p.x - grow, p.y - grow, grow * 2, grow * 2, cellSize * 0.2);
+    ctx.fill();
+    // 收束圆环：半径随 t 减小而向内收拢
+    ctx.globalAlpha = 0.25 + 0.65 * t;
+    ctx.strokeStyle = TRANSFORM_ACCENT;
+    ctx.lineWidth = Math.max(1.5, cellSize * 0.09);
+    const ring = half * (0.5 + 1.2 * (1 - t));
+    if (hex) pathHex(ctx, p.x, p.y, ring);
+    else roundRect(ctx, p.x - ring, p.y - ring, ring * 2, ring * 2, cellSize * 0.24);
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**
@@ -1286,6 +1526,11 @@ export class Renderer {
 }
 
 /* ------------------------------ 绘制工具 ------------------------------ */
+
+/** 蛇身线宽：由头（t=0）到尾（t=1）逐渐收束，避免长蛇尾部显得臃肿 */
+function ribbonWidth(radius, t) {
+  return Math.max(1.5, radius * 2 * (1 - 0.16 * t));
+}
 
 function drawShape(ctx, x, y, r, gridType, shape) {
   if (gridType === 'hex') {

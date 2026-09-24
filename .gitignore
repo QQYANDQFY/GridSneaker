@@ -13,3 +13,6 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 打包脚本 --no-minify 生成的未压缩调试产物
+*.raw.html

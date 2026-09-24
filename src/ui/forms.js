@@ -77,7 +77,8 @@ function markGroupDepth(root, base) {
 export function group(title, children, opts = {}) {
   const key = opts.key === undefined ? String(title) : String(opts.key);
   const remembered = groupOpenState.get(key);
-  const open = remembered === undefined ? opts.open !== false : remembered;
+  // 默认全部收起：仅当显式传入 open: true 时才展开，保证面板初始状态只露出分组标题
+  const open = remembered === undefined ? opts.open === true : remembered;
   const details = h('details', { class: 'group', open, 'data-group-key': key });
   details.appendChild(h('summary', {}, title, opts.badge ? h('span', { class: 'badge' }, opts.badge) : null));
   const body = h('div', { class: 'group-body' });

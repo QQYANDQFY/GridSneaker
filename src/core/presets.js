@@ -41,14 +41,14 @@ export const PRESETS = [
   {
     id: 'random-walk',
     name: '随机游走',
-    description: '方形网格上的等概率左/直/右随机游走，撞墙即停。',
+    description: '方形网格上的等概率左/直/右随机游走，边界穿越到另一侧（默认游戏模式）。',
     build: () => base({
       meta: { name: '随机游走', description: '等概率转向的经典随机游走' },
-      grid: { type: 'square', width: 28, height: 20, boundary: 'stop' },
+      grid: { type: 'square', width: 28, height: 20, boundary: 'wrap' },
       start: { col: 14, row: 10, direction: 'up' },
       body: { initialLength: 4, colorMode: 'gradient' },
       moveRules: { left: 1, straight: 1, right: 1 },
-      endConditions: { maxSteps: 300, wall: true },
+      endConditions: { maxSteps: 300, wall: false },
       style: { cellSize: 22, showTrail: true, trailFade: true },
     }),
   },
@@ -69,13 +69,16 @@ export const PRESETS = [
   {
     id: 'bounce',
     name: '撞墙反弹',
-    description: '边界反弹模式：撞到墙后掉头，永不越界。',
+    description: '边界反弹模式：撞到墙后掉头，永不越界；反弹时自动启用安全避撞，不会撞到自身身体。',
     build: () => base({
       meta: { name: '撞墙反弹', description: '边界行为 = 反弹' },
       grid: { type: 'square', width: 24, height: 18, boundary: 'bounce' },
       start: { col: 12, row: 9, direction: 'up' },
       body: { initialLength: 8 },
       moveRules: { left: 0.2, straight: 0.6, right: 0.2 },
+      // 反弹落点会自动避开自身身体，这里同步勾选「安全避撞 → 自身身体」，
+      // 使方向选择阶段也一并规避自撞
+      safety: { avoidBody: true },
       endConditions: { maxSteps: 500, wall: false },
       style: { cellSize: 24 },
     }),

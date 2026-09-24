@@ -27,6 +27,12 @@ export const MAX_FRAME_CAP = 200000;
 export const MAX_STORED_FRAMES = MAX_FRAME_CAP;
 /** 单次运行最多缓存的环境规则日志条数，超出后只计数不留存，避免长跑时内存膨胀 */
 export const MAX_LOGS = 50000;
+/**
+ * 单次「蛇死亡转化」最多写入的过渡动画高亮条数。
+ * 长蛇（可达成千上万节）转化为环境时，画面只需呈现可见范围内的过渡效果，
+ * 因此对高亮条数设上限，避免逐帧携带超大高亮数组拖慢播放。
+ */
+export const MAX_TRANSFORM_HIGHLIGHTS = 4000;
 
 /** 单调时钟：优先高精度计时（performance.now），环境不支持时退回 Date.now */
 function clockNow() {
@@ -195,6 +201,12 @@ export class Simulation {
       repels: 0,
       markerInteractions: 0,
       forcedStraights: 0,
+      // 「蛇死亡转化」专属统计：自撞致死次数 / 成功并入环境的身体节点数 / 转化流程触发次数
+      transformDeaths: 0,
+      transformedCells: 0,
+      transformTriggers: 0,
+      /** 碰撞预警：下一步会撞到自身身体的「危险朝向」计数（仅在开启预警时累计） */
+      collisionWarnings: 0,
       turnHistory: [],
       lengthOverTime: [mainAgent ? mainAgent.length : 0],
       obstacleCount: 0,
@@ -345,6 +357,9 @@ export class Simulation {
         spawns: stats.spawns,
         agentDeaths: stats.agentDeaths,
         merges: stats.merges,
+        transformDeaths: stats.transformDeaths,
+        transformedCells: stats.transformedCells,
+        collisionWarnings: stats.collisionWarnings,
         endReason: endReason ? endReason.label : '未结束（达到帧上限）',
         finalLength: frameStats.length ?? stats.length,
         /** 得分系统：总分 / 等级 / 分项，由 core/score.js 纯函数折算 */
@@ -365,7 +380,12 @@ export class Simulation {
     const stats = ctx.stats;
     const agents = ctx.agents;
     const sync = cfg.ruleExecution === 'sync';
-    const main = agents.find((a) => a.isMain) || agents[0] || null;
+    // 主移动体优先；主移动体已消失（如自撞转入环境）时退回到仍在场的移动体，
+    // 保证「撞到自身」不再终止运行后，规则主体与结束条件判定仍然有可用对象。
+    const main = agents.find((a) => a.isMain && a.alive)
+      || agents.find((a) => a.alive)
+      || agents[0]
+      || null;
     ctx.agent = main;
 
     // 1. 元胞自动机（移动前）
@@ -392,6 +412,9 @@ export class Simulation {
     ctx.agent = main;
     if (fatal) return { ended: true, reason: fatal, turn: main ? main.lastTurn : null };
 
+    // 3.5 碰撞预警：标出「下一步会撞到自身身体」的邻格（需在配置中显式开启，默认关闭）
+    if (cfg.safety.warnSelfCollision) this.collectCollisionWarnings(ctx);
+
     // 4. 多蛇交互（碰撞 / 融合 / 排斥）
     const inter = this.resolveAgentInteractions(ctx, tickEvents);
     if (inter && inter.fatal) return { ended: true, reason: inter.reason };
@@ -412,6 +435,17 @@ export class Simulation {
     // 8. 结束条件
     const endCheck = this.checkEndConditions(ctx, tickEvents);
     if (endCheck) return { ended: true, reason: endCheck, turn: main ? main.lastTurn : null };
+
+    // 8.5 转化模式收尾：已经发生自撞死亡、场上不再有存活移动体，且没有元胞自动机
+    // 需要继续演化时，没有必要空转到帧上限——给出明确的收尾原因；
+    // 启用 CA 时则保持运行，让转化后的节点继续按 CA 规则演化（这正是「无缝接入」的语义）。
+    if (cfg.transform.enabled && !ca && (stats.agentDeaths || 0) > 0
+      && !agents.some((a) => a.alive)) {
+      return {
+        ended: true,
+        reason: { code: 'transformDone', label: END_LABELS.transformDone, tick: ctx.tick, coord: null },
+      };
+    }
 
     // 清理已消失的移动体（保留死亡信息于统计与事件中）
     for (let i = agents.length - 1; i >= 0; i--) {
@@ -465,8 +499,22 @@ export class Simulation {
       } else if (mode === 'bounce') {
         dir = grid.opposite(dir);
         const t2 = grid.step(agent.head, dir);
-        if (grid.inBounds(t2)) target = t2;
-        else wallHit = true;
+        if (grid.inBounds(t2) && !this.selfBlocks(ctx, agent, t2)) {
+          target = t2;
+        } else {
+          // 边界反弹的安全避撞（仅「反弹」边界生效，穿越等其它边界逻辑不变）：
+          // 反向落点压在自身身体上（贴边掉头正好撞到自己的脖子）或落在界外（贴角）时，
+          // 改选一个「界内 + 不被阻塞 + 不撞自身」的方向，避免被误判为自撞死亡。
+          const alt = this.bounceSafeOption(ctx, agent, dir);
+          if (alt) {
+            dir = alt.dir;
+            target = alt.coord;
+          } else if (grid.inBounds(t2)) {
+            target = t2;
+          } else {
+            wallHit = true;
+          }
+        }
       } else if (mode === 'randomTurn') {
         const options = [];
         for (let d = 0; d < grid.dirCount; d++) {
@@ -568,16 +616,29 @@ export class Simulation {
       stats.collisions++;
       stats.collisionsTotal++;
       stats.collisionsConsecutive++;
+      // 「蛇死亡转化」：自撞即判定死亡——只让该移动体从场上消失（主移动体也不例外），
+      // 这里刻意不返回 ended，主循环与元胞自动机继续运行，随后按两个概率参数
+      // 把身体节点并入环境状态集合。未开启该功能时完全沿用下方的原有自撞策略。
+      const transformDeath = collision === 'self' && cfg.transform.enabled && cfg.transform.dieOnSelfCollision;
       if (collision === 'self') {
-        stats.selfCollisions++;
-        stats.selfCollisionsConsecutive++;
+        // 转化死亡由「蛇死亡」流程接管，不计入自撞次数，避免触发自撞类结束规则
+        if (transformDeath) stats.selfCollisionsConsecutive = 0;
+        else {
+          stats.selfCollisions++;
+          stats.selfCollisionsConsecutive++;
+        }
       } else {
         // 撞到其它移动体：不计入「自撞」统计，避免污染自撞结束规则
         stats.selfCollisionsConsecutive = 0;
       }
-      tickEvents.push({ type: 'selfCollision', coord: { ...target }, kind: collision });
+      tickEvents.push({ type: 'selfCollision', coord: { ...target }, kind: collision, transformed: transformDeath });
       ctx.highlights.push({ col: target.col, row: target.row, type: 'collision', tick: ctx.tick });
       stats.ruleTriggers += engine.run('onCollision', ctx, { sync });
+
+      if (transformDeath) {
+        this.transformAgent(ctx, agent, tickEvents);
+        return { ended: false, turn: turnKey };
+      }
 
       const policy = cfg.selfCollisionPolicy;
       // 「自撞是否结束运行」唯一由结束规则「撞到自身」决定：
@@ -671,6 +732,102 @@ export class Simulation {
     if (tickEvents) {
       tickEvents.push({ type: 'agentDeath', coord: { ...agent.head }, highlight: true, reason: reason.code });
     }
+    // 高亮补齐：此前只写了 tickEvents，渲染层的 agentDeath 特效分支因此永远不会触发
+    ctx.highlights.push({ col: agent.head.col, row: agent.head.row, type: 'agentDeath', tick: ctx.tick });
+  }
+
+  /**
+   * 蛇死亡 → 概率判定 → 身体节点并入元胞自动机。
+   *
+   * 流程（随机全部取自种子化 RNG，同种子结果可复现）：
+   *   1) 先让移动体死亡消失，主循环与元胞自动机不受影响（不返回 ended）；
+   *   2) 按「全局触发概率」决定是否启动转化流程，未命中则蛇只是消失、环境不变；
+   *   3) 命中后逐个身体节点按「分段转化概率」独立判定，命中者写入 cfg.transform.state
+   *      对应的环境状态，并置 cellsDirty 让元胞自动机与画面同步到同一份数据；
+   *   4) 每个转化点写入 type='transform' 高亮，供渲染层播放「塌缩入环境」的过渡动画。
+   *
+   * @returns {number} 实际并入环境的身体节点数
+   */
+  transformAgent(ctx, agent, tickEvents) {
+    const cfg = ctx.config;
+    const t = cfg.transform;
+    const grid = ctx.grid;
+    const stats = ctx.stats;
+    const head = agent.head ? { ...agent.head } : null;
+    // 先抄下体节坐标：killAgent 之后该移动体会在本步结束时被移出 agents
+    const nodes = agent.segments.map((s) => ({ col: s.col, row: s.row }));
+
+    this.killAgent(ctx, agent, {
+      code: 'selfCollision',
+      label: '自撞死亡（身体转入环境）',
+      tick: ctx.tick,
+      coord: head,
+    }, tickEvents);
+    stats.transformDeaths = (stats.transformDeaths || 0) + 1;
+
+    if (t.globalProbability <= 0) return 0;
+    if (t.globalProbability < 1 && ctx.rng.next() >= t.globalProbability) {
+      tickEvents.push({ type: 'transformSkipped', coord: head });
+      return 0;
+    }
+    stats.transformTriggers = (stats.transformTriggers || 0) + 1;
+
+    const stateName = t.state;
+    const converted = [];
+    for (const node of nodes) {
+      if (t.segmentProbability <= 0) break;
+      if (t.segmentProbability < 1 && ctx.rng.next() >= t.segmentProbability) continue;
+      if (!grid.inBounds(node)) continue;
+      if (ctx.world.set(node, stateName)) ctx.cellsDirty = true;
+      converted.push(node);
+    }
+    stats.transformedCells = (stats.transformedCells || 0) + converted.length;
+    // 过渡动画的高亮条数上限保护：蛇可以非常长，但可见动画只需覆盖有限范围
+    const drawn = converted.length > MAX_TRANSFORM_HIGHLIGHTS ? converted.slice(0, MAX_TRANSFORM_HIGHLIGHTS) : converted;
+    for (const node of drawn) {
+      ctx.highlights.push({ col: node.col, row: node.row, type: 'transform', tick: ctx.tick, state: stateName });
+    }
+    tickEvents.push({ type: 'transform', coord: head, count: converted.length, state: stateName, highlight: true });
+    ctx.log({
+      tick: ctx.tick,
+      ruleId: 'transform',
+      ruleName: '蛇死亡转化',
+      trigger: 'selfCollision',
+      subject: '移动体身体',
+      coord: head,
+      priority: 0,
+      condition: `全局概率 ${t.globalProbability} 命中`,
+      actions: `${converted.length} 节并入环境状态「${stateName}」`,
+      text: `「${agent.label}」自撞死亡，${converted.length} 个体节转化为「${stateName}」`,
+    });
+    return converted.length;
+  }
+
+  /**
+   * 碰撞预警采集：对每个存活移动体检查各可行朝向的落点，
+   * 若落点压在自身身体上（下一步必然自撞），就在该格写入 type='warning' 高亮。
+   * 仅在 cfg.safety.warnSelfCollision 开启时调用，避免长蛇场景下的额外逐格开销。
+   */
+  collectCollisionWarnings(ctx) {
+    const grid = ctx.grid;
+    const stats = ctx.stats;
+    for (const agent of ctx.agents) {
+      if (!agent.alive || agent.segments.length < 3) continue;
+      for (let d = 0; d < grid.dirCount; d++) {
+        const c = this.resolveCandidate(ctx, grid.step(agent.head, d));
+        if (!c.ok) continue;
+        if (this.detectCollision(ctx, agent, c.coord, false) !== 'self') continue;
+        stats.collisionWarnings = (stats.collisionWarnings || 0) + 1;
+        ctx.highlights.push({
+          col: c.coord.col,
+          row: c.coord.row,
+          type: 'warning',
+          tick: ctx.tick,
+          dir: d,
+          agentId: agent.id,
+        });
+      }
+    }
   }
 
   /** 元胞自动机单步演化 + 稳定态检测 */
@@ -724,6 +881,28 @@ export class Simulation {
       if (grid.idx(agent.segments[i].col, agent.segments[i].row) === index) return true;
     }
     return false;
+  }
+
+  /**
+   * 「反弹」边界的安全落点：反向掉头不可用时，在其余方向中挑一个
+   * 「界内 + 不被阻塞 + 不撞自身身体」的落点（随机择优，保持可复现）。
+   *
+   * 仅服务于边界反弹：贴边掉头时反向格往往正是自己的脖子，若不改道就会触发自撞结束。
+   * 返回 null 表示所有方向都不可行，调用方回落到原始反弹逻辑。
+   */
+  bounceSafeOption(ctx, agent, backDir) {
+    const grid = ctx.grid;
+    const options = [];
+    for (let d = 0; d < grid.dirCount; d++) {
+      if (d === backDir) continue;
+      const t = grid.step(agent.head, d);
+      if (!grid.inBounds(t)) continue;
+      if (ctx.world.isBlocking(t)) continue;
+      if (this.selfBlocks(ctx, agent, t)) continue;
+      options.push({ dir: d, coord: t });
+    }
+    if (!options.length) return null;
+    return ctx.rng.pick(options);
   }
 
   /**
@@ -982,6 +1161,8 @@ export class Simulation {
         a.dir = a.prevState.dir;
         ctx.stats.repels = (ctx.stats.repels || 0) + 1;
         tickEvents.push({ type: 'repel', coord: { ...a.head }, highlight: true });
+        // 高亮补齐：此前只写了 tickEvents，渲染层的 repel 特效分支因此永远不会触发
+        ctx.highlights.push({ col: a.head.col, row: a.head.row, type: 'repel', tick: ctx.tick });
       }
       return null;
     }
@@ -1132,7 +1313,9 @@ export class Simulation {
     const triggered = {
       wall: () => tickEvents.some((e) => e.type === 'wall'),
       outOfBounds: () => tickEvents.some((e) => e.type === 'wall' && e.outOfBounds),
-      selfCollision: () => tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other'),
+      // 转化模式下的自撞属于「蛇死亡」而非「结束运行」：带 transformed 标志的事件不计入结束判定，
+      // 否则一旦启用转化，主移动体自撞仍会按「撞到自身」结束规则终止整轮运行。
+      selfCollision: () => tickEvents.some((e) => e.type === 'selfCollision' && e.kind !== 'other' && !e.transformed),
       selfCollisionTotal: () => stats.selfCollisions >= ec.selfCollisionTotalN,
       selfCollisionConsecutive: () => stats.selfCollisionsConsecutive >= ec.selfCollisionConsecutiveN,
       obstacle: () => tickEvents.some((e) => e.type === 'obstacle'),

@@ -43,6 +43,7 @@ export const END_LABELS = {
   frameLimit: '达到安全步数上限',
   caStable: '元胞自动机稳定',
   allAgentsGone: '所有移动体均已消失',
+  transformDone: '蛇已全部转化为环境',
   manual: '手动结束',
 };
 
@@ -81,7 +82,8 @@ export const DEFAULT_STATES = [
 ];
 
 export function defaultGrid() {
-  return { type: 'square', width: 24, height: 24, boundary: 'stop' };
+  // 默认边界行为为「穿越到另一侧」：蛇头触碰画布边界时从对侧对应位置重新出现。
+  return { type: 'square', width: 24, height: 24, boundary: 'wrap' };
 }
 
 export function defaultRule(overrides = {}) {
@@ -203,6 +205,11 @@ export function defaultConfig() {
         growth: { enabled: false, trigger: 'step', amount: 1, probability: 1, maxLength: 50, minLength: 1, interval: 1 },
         shrink: { enabled: false, trigger: 'step', amount: 1, probability: 0.05, maxLength: 100000, minLength: 1, interval: 1 },
       },
+      /**
+       * 自定义皮肤：用户上传的图片（dataURL），head 绘制在蛇头、body 绘制在其余体节。
+       * 空字符串表示未使用皮肤，此时按「配色模式」的纯色 / 渐变绘制。
+       */
+      skin: { head: '', body: '' },
     },
     moveRules: { left: 0.33, straight: 0.34, right: 0.33 },
     /**
@@ -213,6 +220,8 @@ export function defaultConfig() {
       avoidBody: false,
       avoidObstacle: false,
       avoidOtherAgents: true,
+      /** 碰撞预警提示：在画面上标出下一步会撞到自身身体的危险格（默认关闭） */
+      warnSelfCollision: false,
     },
     /** 多蛇生成与交互系统 */
     multiSnake: {
@@ -244,6 +253,25 @@ export function defaultConfig() {
       countMode: 'total',
     },
     selfCollisionPolicy: { action: 'stop', n: 2, maxConsecutive: 5 },
+    /**
+     * 蛇死亡转化：自撞致死后，按概率把身体节点并入元胞自动机（写入目标状态）。
+     *
+     * 与既有「自撞处理」的关系：
+     *  - enabled = false 时自撞完全沿用 selfCollisionPolicy 的原有处理，默认值保证旧场景零变化；
+     *  - enabled = true 且 dieOnSelfCollision = true 时，自撞只让该移动体从场上消失
+     *    （含主移动体），**不会终止整轮运行**，主循环继续驱动元胞自动机演化。
+     */
+    transform: {
+      enabled: false,
+      /** 自撞即判定死亡（取代「自撞处理」策略；死亡不等于结束运行） */
+      dieOnSelfCollision: true,
+      /** 全局触发概率：蛇死亡后是否启动转化流程 */
+      globalProbability: 0.6,
+      /** 分段转化概率：每个身体节点独立转化为环境状态的概率 */
+      segmentProbability: 0.5,
+      /** 转化目标状态名（必须是 caMode.states 中真实存在且非 empty 的状态） */
+      state: 'obstacle',
+    },
     environmentRules: [],
     caMode: {
       enabled: false,
@@ -370,6 +398,25 @@ function normColorList(v, fallback) {
   if (!Array.isArray(v)) return [...fallback];
   const list = v.map((c) => String(c).trim()).filter((c) => HEX_COLOR.test(c));
   return list.length ? list : [...fallback];
+}
+
+/** 自定义皮肤支持的上传格式（与界面「自定义皮肤」的格式校验保持一致） */
+export const SKIN_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+/** 皮肤字段的合法形态：JPG / PNG / WebP 三种格式的 base64 dataURL */
+const SKIN_DATA_URL = /^data:image\/(?:jpe?g|png|webp);base64,[a-z0-9+/=]+$/i;
+
+/** 配置中的皮肤字段是否为受支持的图片 dataURL */
+export function isSkinImage(v) {
+  return typeof v === 'string' && SKIN_DATA_URL.test(v.trim());
+}
+
+/** 皮肤规范化：仅保留受支持的图片 dataURL，非法值 / 缺失字段一律回退为「未设置」 */
+function normSkin(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    head: isSkinImage(src.head) ? String(src.head).trim() : '',
+    body: isSkinImage(src.body) ? String(src.body).trim() : '',
+  };
 }
 
 function normClause(raw) {
@@ -671,6 +718,8 @@ function normSafety(raw = {}) {
     avoidBody: bool(raw.avoidBody, d.avoidBody),
     avoidObstacle: bool(raw.avoidObstacle, d.avoidObstacle),
     avoidOtherAgents: bool(raw.avoidOtherAgents, d.avoidOtherAgents),
+    /** 碰撞预警提示：标出「下一步会撞到自身身体」的危险格（默认关闭，避免长蛇额外开销） */
+    warnSelfCollision: bool(raw.warnSelfCollision, d.warnSelfCollision),
   };
 }
 
@@ -700,6 +749,26 @@ function normCaMarkerInteraction(raw = {}) {
     enabled: bool(raw.enabled, d.enabled),
     states,
     effects: normMarkerEffects(raw.effects),
+  };
+}
+
+/**
+ * 「蛇死亡转化」参数规范化。
+ * 两个概率都夹取到 [0,1]；转化目标状态必须落在当前状态集合中真实存在且非 empty 的位置，
+ * 否则写入时会被 stateIndexOf 退化成索引 0（视觉上「转化了但什么都没出现」）。
+ */
+function normTransform(rawT, states) {
+  const d = defaultConfig().transform;
+  const t = rawT && typeof rawT === 'object' ? rawT : {};
+  const names = states.map((s) => s.name);
+  const want = str(t.state, d.state);
+  const fallback = names.find((n) => n !== 'empty') || 'empty';
+  return {
+    enabled: bool(t.enabled, d.enabled),
+    dieOnSelfCollision: bool(t.dieOnSelfCollision, d.dieOnSelfCollision),
+    globalProbability: clamp(num(t.globalProbability, d.globalProbability), 0, 1),
+    segmentProbability: clamp(num(t.segmentProbability, d.segmentProbability), 0, 1),
+    state: names.includes(want) && want !== 'empty' ? want : fallback,
   };
 }
 
@@ -768,6 +837,7 @@ export function normalizeConfig(rawInput = {}) {
       ...(bodyRaw.colors || {}),
       custom: normColorList(bodyRaw.colors?.custom, d.body.colors.custom),
     },
+    skin: normSkin(bodyRaw.skin),
     lengthPolicy: normLengthPolicy(bodyRaw.lengthPolicy),
   };
 
@@ -869,6 +939,8 @@ export function normalizeConfig(rawInput = {}) {
 
   // 保证同一场景中状态集合一致（agent 感知需要 obstacles/markers 存在）
   ensureCoreStates(cfg);
+  // 转化目标状态依赖最终的状态集合，因此在 ensureCoreStates 之后再解析
+  cfg.transform = normTransform(raw.transform, cfg.caMode.states);
   return cfg;
 }
 
@@ -1243,6 +1315,31 @@ export function diagnoseConfig(rawInput = {}) {
       suggestions: [],
     });
   }
+  // 蛇死亡转化：概率为 0 时流程永不启动；开启死亡判定时「撞到自身」结束规则让位
+  if (cfg.transform.enabled && (cfg.transform.globalProbability <= 0 || cfg.transform.segmentProbability <= 0)) {
+    out.push({
+      level: 'warning',
+      code: 'transformNoEffect',
+      title: '蛇死亡转化不会产生任何节点',
+      message: `已启用「蛇死亡转化」，但${cfg.transform.globalProbability <= 0 ? '全局触发概率' : '分段转化概率'}为 0，自撞致死后的身体节点不会被写入环境。`,
+      suggestions: [
+        { label: '两个概率都改为 0.5', patch: { transform: { globalProbability: 0.5, segmentProbability: 0.5 } } },
+        { label: '关闭「蛇死亡转化」', patch: { transform: { enabled: false } } },
+      ],
+    });
+  }
+  if (cfg.transform.enabled && cfg.transform.dieOnSelfCollision && cfg.endConditions.selfCollision) {
+    out.push({
+      level: 'info',
+      code: 'transformOverridesSelfCollisionEnd',
+      title: '「撞到自身」结束规则在转化模式下不触发',
+      message: '已开启「自撞即判定死亡」：自撞只会让该移动体消失并把身体节点并入环境，主循环会继续运行，因此结束规则「撞到自身」不会收尾。',
+      suggestions: [
+        { label: '关闭「自撞即判定死亡」以恢复该结束规则', patch: { transform: { dieOnSelfCollision: false } } },
+        { label: '改用「所有移动体均已消失」收尾', patch: { endConditions: { allAgentsGone: true } } },
+      ],
+    });
+  }
 
   return out;
 }
@@ -1315,7 +1412,17 @@ export function buildShareUrl(cfg) {
   const origin = location.origin && location.origin !== 'null'
     ? `${location.origin}${location.pathname}`
     : String(location.href || '').split('#')[0];
-  return `${origin}#c=${encodeConfigToToken(cfg)}`;
+  return `${origin}#c=${encodeConfigToToken(stripSkinAssets(cfg))}`;
+}
+
+/**
+ * 剥离皮肤图片的配置副本。
+ * 皮肤是体积可达数 MB 的 dataURL，直接编码进 URL 会远超浏览器 / 聊天工具的长度上限，
+ * 因此分享链接一律不含皮肤图片；本地配置与「导出 JSON」仍然完整保留。
+ */
+export function stripSkinAssets(cfg) {
+  if (!cfg || !cfg.body) return cfg;
+  return { ...cfg, body: { ...cfg.body, skin: { head: '', body: '' } } };
 }
 
 export function readConfigFromLocation() {

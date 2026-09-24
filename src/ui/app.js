@@ -5,6 +5,7 @@ import {
   defaultConfig, normalizeConfig, defaultRule, defaultClause, defaultAction,
   validateConfig, diagnoseConfig, buildShareUrl, readConfigFromLocation, END_LABELS, MAX_STEPS_LIMIT,
   isBodyEnabled, INTERACTION_LABELS, SPAWN_LABELS, SPAWN_EVENTS, SPAWN_EVENT_LABELS, FADE_LENGTH_LIMIT,
+  SKIN_MIME_TYPES, stripSkinAssets,
 } from '../core/config.js';
 import {
   defaultTrailQuery, queryTrail, trailQueryActive, trailQueryLabel, trailCellsToCSV, trailCellsToText,
@@ -14,6 +15,7 @@ import {
 } from '../core/trail.js';
 import { PRESETS, buildPresetConfig, matchPreset } from '../core/presets.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../core/simulation.js';
+import { RNG } from '../core/rng.js';
 import { formatScore } from '../core/score.js';
 import { difficultyOf } from '../core/difficulty.js';
 import { diffConfigs, summarizeConfigChanges } from '../core/config-diff.js';
@@ -188,6 +190,8 @@ function init() {
   els.config = document.getElementById('config-panel');
 
   renderer = new Renderer(els.canvas);
+  // 皮肤图片是异步解码的，解码完成后重绘一次，让上传的皮肤立即出现在画布上
+  renderer.onSkinLoad = () => draw();
   buildControls();
   applyScoreVisibility();
   bindCanvasEvents();
@@ -343,7 +347,13 @@ function saveLocalConfig(cfg) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
   } catch (e) {
-    /* 隐私模式或超配额时静默忽略 */
+    // 超配额时（自定义皮肤的 dataURL 体积较大）退一步：去掉皮肤图片再存，
+    // 保证网格 / 规则等其余设置刷新后不丢失
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stripSkinAssets(cfg)));
+    } catch (e2) {
+      /* 隐私模式或仍超配额时静默忽略 */
+    }
   }
 }
 
@@ -357,6 +367,133 @@ function loadLocalConfig() {
   } catch (e) {
     return null;
   }
+}
+
+/* ---------------- 游戏状态存档与读取（本地多存档） ---------------- */
+
+const SAVE_KEY = 'gridsneaker:saves';
+/** 本地存档条数上限，超出后按保存顺序淘汰最早的 */
+const SAVE_LIMIT = 20;
+
+function readSaves() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((s) => s && s.name && s.config) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 写入存档列表；配额不足时退一步去掉自定义皮肤图片后重存，保证存档本身不丢 */
+function writeSaves(list) {
+  const trimmed = list.slice(0, SAVE_LIMIT);
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(trimmed));
+    return true;
+  } catch (e) {
+    /* 落到下方的降级存储 */
+  }
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(trimmed.map((s) => ({ ...s, config: stripSkinAssets(s.config) }))));
+    return true;
+  } catch (e2) {
+    toast('存档写入失败（浏览器存储配额不足，可先删除旧存档）', 'error');
+    return false;
+  }
+}
+
+/** 存档时间展示：同一天只显示时分秒，跨天带上日期 */
+function formatSaveTime(ts) {
+  const d = new Date(Number(ts) || 0);
+  if (!Number.isFinite(d.getTime()) || !ts) return '-';
+  const p = (n) => String(n).padStart(2, '0');
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  const today = new Date();
+  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+  return sameDay ? time : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+}
+
+/** 保存当前游戏状态：配置 + 播放位置 + 统计口径，便于随时回到同一局面 */
+function saveGameState(name) {
+  const label = String(name || '').trim() || `存档 ${formatSaveTime(Date.now())}`;
+  const entry = {
+    name: label,
+    savedAt: Date.now(),
+    frameIndex: state.frameIndex,
+    statMode: state.statMode,
+    config: snapshotConfig(state.cfg),
+  };
+  const list = readSaves().filter((s) => s.name !== label);
+  list.unshift(entry);
+  if (!writeSaves(list)) return;
+  toast(`已保存存档「${label}」`, 'success');
+  renderSidePanel();
+}
+
+/** 读取存档：整体替换配置（自动重算整轮运行）后跳回保存时的播放位置 */
+function loadGameState(name) {
+  const entry = readSaves().find((s) => s.name === name);
+  if (!entry) {
+    toast('存档不存在或已被删除', 'warn');
+    return;
+  }
+  applyConfigReplacement(normalizeConfig(entry.config), `读取存档「${name}」`, `已读取存档「${name}」`);
+  const last = state.result ? state.result.frames.length - 1 : 0;
+  state.frameIndex = Math.max(0, Math.min(Math.round(entry.frameIndex) || 0, last));
+  if (entry.statMode) setStatMode(entry.statMode);
+  draw();
+}
+
+/** 仅重绘存档列表（保存 / 删除后避免整块侧栏重建） */
+let renderSaveList = () => {};
+
+function savesGroup() {
+  const nameInput = textInput('', () => {}, { placeholder: '存档名称（留空则按时间命名）' });
+  const host = h('div', { class: 'save-list' });
+  renderSaveList = () => {
+    clear(host);
+    const list = readSaves();
+    if (!list.length) {
+      host.appendChild(h('div', { class: 'hint' }, '暂无存档。保存后会记录当前配置、播放位置与统计口径。'));
+      return;
+    }
+    for (const s of list) {
+      host.appendChild(h('div', { class: 'save-row' },
+        h('span', { class: 'save-name', title: s.name }, s.name),
+        h('span', { class: 'mini-label' }, formatSaveTime(s.savedAt)),
+        button('读取', () => loadGameState(s.name), 'primary small'),
+        button('删除', () => {
+          writeSaves(readSaves().filter((x) => x.name !== s.name));
+          toast(`已删除存档「${s.name}」`, 'info');
+          renderSaveList();
+        }, 'ghost small')));
+    }
+  };
+  renderSaveList();
+  return group('游戏状态存档', [
+    field('存档名称', nameInput),
+    row(
+      button('保存当前状态', () => saveGameState(nameInput.value), 'primary'),
+      button('清空全部存档', () => {
+        const list = readSaves();
+        if (!list.length) { toast('暂无存档', 'info'); return; }
+        confirmDialog({
+          title: '清空全部存档',
+          message: `将删除本地保存的 ${list.length} 条存档，此操作不可撤销。`,
+          confirmText: '清空',
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          writeSaves([]);
+          toast('已清空全部存档', 'info');
+          renderSaveList();
+        });
+      }, 'ghost'),
+    ),
+    h('div', { class: 'hint' }, `存档保存在浏览器本地（最多 ${SAVE_LIMIT} 条）：记录配置、播放位置与统计口径，读取后立即重算并跳回同一帧；自定义皮肤图片体积过大时会被省略。`),
+    host,
+  ], { open: false });
 }
 
 /* ---------------- 筛选条件 / 统计口径 / 筛选预设的本地持久化 ---------------- */
@@ -1111,6 +1248,7 @@ const STAT_KEYS = [
   ['finalLength', '最终长度'], ['maxLength', '最大长度'], ['coverage', '覆盖率'], ['ruleTriggers', '规则触发'],
   ['agents', '存活移动体'], ['peakAgents', '峰值移动体'], ['spawns', '生成新蛇'], ['agentDeaths', '移动体消失'],
   ['merges', '融合次数'], ['repels', '排斥次数'], ['markerInteractions', '标记物交互'],
+  ['transformDeaths', '自撞死亡'], ['transformedCells', '转化节点'], ['collisionWarnings', '碰撞预警'],
   ['caSteps', 'CA 演进次数'], ['obstacleCount', '障碍物'], ['markerCount', '标记物'], ['seed', '随机种子'],
   ['rngCalls', '随机调用次数'],
 ];
@@ -1195,6 +1333,9 @@ function statValues() {
       merges: pick(st.merges, s.merges),
       repels: pick(st.repels, r.stats.repels || 0),
       markerInteractions: pick(st.markerInteractions, r.stats.markerInteractions || 0),
+      transformDeaths: pick(st.transformDeaths, s.transformDeaths || 0),
+      transformedCells: pick(st.transformedCells, s.transformedCells || 0),
+      collisionWarnings: pick(st.collisionWarnings, s.collisionWarnings || 0),
       caSteps: pick(st.caSteps, s.caSteps),
       obstacleCount: pick(st.obstacleCount, s.obstacleCount),
       markerCount: pick(st.markerCount, s.markerCount),
@@ -1258,10 +1399,12 @@ function eventLabel(e) {
     selfCollision: '撞到自身', grow: '增长', shrink: '缩短', eat: '吃到标记物', spawn: '生成移动体',
     merge: '蛇融合', repel: '蛇排斥', agentCollision: '移动体相撞', agentDeath: '移动体消失',
     agentRemoved: '移动体被移除', markerInteraction: '交互标记物',
+    transform: '身体转化入环境', transformDeath: '自撞死亡', transformSkipped: '转化未触发',
   };
   const pos = e.coord ? `(${e.coord.col},${e.coord.row})` : '';
   const extra = e.type === 'markerInteraction' && e.delta ? ` ${e.delta > 0 ? '+' : ''}${e.delta}` : '';
-  return `${map[e.type] || e.type}${extra}${pos}`;
+  const count = e.type === 'transform' && e.count !== undefined ? ` ×${e.count}` : '';
+  return `${map[e.type] || e.type}${extra}${count}${pos}`;
 }
 
 function drawSparkline(canvas, history) {
@@ -1421,7 +1564,9 @@ function renderSidePanel() {
       button('撤销上次变更', undoConfigReplace, 'ghost'),
     ),
     h('div', { class: 'hint' }, '载入模板前自动比对当前配置与模板基准，检测到自定义改动时会先列出将被覆盖的内容并等待确认；Ctrl+Z 可撤销最近一次配置替换。'),
-  ], { open: true }));
+  ], { open: false }));
+
+  side.appendChild(savesGroup());
 
   side.appendChild(group('配置导入导出', [
     row(
@@ -1487,7 +1632,7 @@ function renderSidePanel() {
   side.appendChild(group('规则触发日志', [
     row(filterSel, els.logCount),
     els.logHost,
-  ], { open: true }));
+  ], { open: false }));
 
   // 面板重建后统计节点是全新的，需要用当前快照/差异重新填充
   updateCompareStat();
@@ -1524,7 +1669,7 @@ function statsModeGroup() {
     // 坐标筛选查询并入统计模块：与统计口径共用同一轨迹数据源，
     // 切换口径或改变播放位置时查询结果会实时同步到统计面板与画面高亮。
     trailQueryGroup(),
-  ], { key: 'stat-mode', open: true });
+  ], { key: 'stat-mode', open: false });
 }
 
 /** 切换统计口径：更新控件高亮、状态提示、统计数值与轨迹筛选数据源 */
@@ -2148,7 +2293,7 @@ function diagnosticsGroup() {
     for (const d of list) body.push(diagItem(d));
     body.push(row(button('复制诊断报告', () => copyText(diagnosticsReport(list), '诊断报告已复制'), 'ghost small')));
   }
-  return group('配置诊断', body, { open: true, key: DIAG_GROUP_KEY, badge });
+  return group('配置诊断', body, { open: false, key: DIAG_GROUP_KEY, badge });
 }
 
 /** 只重建「配置诊断」分组，避免整块侧边面板重绘 */
@@ -2263,6 +2408,7 @@ function renderConfigPanel() {
   root.appendChild(multiSnakeGroup(cfg));
   root.appendChild(envRulesGroup(cfg));
   root.appendChild(caGroup(cfg));
+  root.appendChild(transformGroup(cfg));  // 蛇死亡转化 · 概率参数可视化调节
   root.appendChild(endGroup(cfg));
   root.appendChild(styleGroup(cfg));
   // 面板重建后按当前关键词重新过滤，避免调整参数后搜索状态丢失
@@ -2339,7 +2485,7 @@ function sceneGroup(cfg) {
       { value: 'async', label: '异步（逐条即时生效）' },
       { value: 'sync', label: '同步（基于阶段快照）' },
     ])),
-  ], { open: true });
+  ], { open: false });
 }
 
 function gridGroup(cfg) {
@@ -2374,7 +2520,7 @@ function gridGroup(cfg) {
       { value: 'custom', label: '自定义（由环境规则决定）' },
     ])),
     gridSizeLabel,
-  ]);
+  ], { open: false });
 }
 
 function bodyGroup(cfg) {
@@ -2436,8 +2582,127 @@ function bodyGroup(cfg) {
       }, { placeholder: '#ff5d5d, #ffd166, #51cf66' }),
         '逗号分隔的十六进制颜色，从头到尾沿体节渐变')
       : null,
+    skinSection(cfg),
     lengthSection(cfg),
-  ], { open: true });
+  ], { open: false });
+}
+
+/* ---------------- 移动体与身体：自定义皮肤 ---------------- */
+
+/** 皮肤图片的像素边长范围：过小放大后模糊，过大则拖慢每帧绘制与配置序列化 */
+const SKIN_MIN_PIXELS = 16;
+const SKIN_MAX_PIXELS = 2048;
+/** 皮肤图片的文件体积上限 */
+const SKIN_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 自定义皮肤分组：蛇头 / 蛇身各一个本地上传控件。
+ * 上传后写入 cfg.body.skin（dataURL），由渲染器贴到对应体节上。
+ */
+function skinSection(cfg) {
+  const hint = h('div', { class: 'hint' },
+    `支持 JPG / PNG / WebP，建议使用正方形图片；边长 ${SKIN_MIN_PIXELS}~${SKIN_MAX_PIXELS} 像素、单张不超过 2 MB。`
+    + '皮肤会随「导出 JSON」一并保存，但不会写入分享链接（图片体积会超出链接长度上限）。');
+  return group('自定义皮肤（上传图片）', [
+    skinField(cfg, 'head', '蛇头皮肤'),
+    skinField(cfg, 'body', '蛇身皮肤'),
+    hint,
+  ], { key: 'body-skin', open: false });
+}
+
+/**
+ * 单个部位的上传控件：预览 + 选择 + 清除。
+ * 选择文件后先校验格式 / 体积 / 尺寸，任一环节失败都保持原皮肤不变并提示原因。
+ */
+function skinField(cfg, key, label) {
+  const skin = cfg.body.skin;
+  const input = h('input', {
+    type: 'file',
+    class: 'skin-file',
+    accept: SKIN_MIME_TYPES.join(','),
+  });
+  const preview = h('div', { class: 'skin-preview' });
+  const paint = () => {
+    clear(preview);
+    if (skin[key]) {
+      preview.classList.add('has-image');
+      preview.appendChild(h('img', { src: skin[key], alt: label }));
+    } else {
+      preview.classList.remove('has-image');
+      preview.appendChild(h('span', { class: 'skin-empty' }, '未设置'));
+    }
+  };
+  paint();
+
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    input.value = ''; // 复位以便再次选择同一个文件
+    if (!file) return;
+    readSkinFile(file)
+      .then((dataUrl) => {
+        skin[key] = dataUrl;
+        paint();
+        onStyleChange();
+        toast(`${label}已更新`, 'info');
+      })
+      .catch((err) => toast(`${label}载入失败：${err.message}`, 'error'));
+  });
+
+  return field(label, h('div', { class: 'skin-row' },
+    preview,
+    h('div', { class: 'skin-col' },
+      row(
+        button('选择图片', () => input.click(), 'ghost small'),
+        button('清除', () => {
+          if (!skin[key]) return;
+          skin[key] = '';
+          paint();
+          onStyleChange();
+          toast(`已清除${label}`, 'info');
+        }, 'ghost small'),
+      ),
+      input,
+    ),
+  ));
+}
+
+/**
+ * 读取并校验皮肤图片，成功时返回可用于渲染与持久化的 dataURL。
+ * 校验顺序：格式（JPG / PNG / WebP）→ 体积 → 可解码 → 像素尺寸，
+ * 便于一失败就给出最直接的提示，而不是等到渲染阶段才发现问题。
+ */
+function readSkinFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!SKIN_MIME_TYPES.includes(file.type)) {
+      reject(new Error('仅支持 JPG / PNG / WebP 格式'));
+      return;
+    }
+    if (file.size > SKIN_MAX_BYTES) {
+      reject(new Error(`文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB，上限 2 MB）`));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('文件读取失败'));
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const img = new Image();
+      img.onerror = () => reject(new Error('图片解析失败或文件已损坏'));
+      img.onload = () => {
+        const { width, height } = img;
+        if (width < SKIN_MIN_PIXELS || height < SKIN_MIN_PIXELS) {
+          reject(new Error(`图片过小（${width}×${height}，至少 ${SKIN_MIN_PIXELS}×${SKIN_MIN_PIXELS}）`));
+          return;
+        }
+        if (width > SKIN_MAX_PIXELS || height > SKIN_MAX_PIXELS) {
+          reject(new Error(`图片过大（${width}×${height}，最多 ${SKIN_MAX_PIXELS}×${SKIN_MAX_PIXELS}）`));
+          return;
+        }
+        resolve(dataUrl);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 /** 解析逗号/空格分隔的颜色列表，仅保留合法的十六进制颜色 */
@@ -2483,7 +2748,7 @@ function moveRulesGroup(cfg) {
       hint,
       field('优先级', numBind(r, 'priority', () => onSimChange(), { step: 1 }), '数值越大越优先匹配'),
     ];
-    list.appendChild(group(r.name || '条件概率规则', body, { open: index === 0, badge: r.enabled ? '' : '停用', key: `adv:${r.id}` }));
+    list.appendChild(group(r.name || '条件概率规则', body, { open: false, badge: r.enabled ? '' : '停用', key: `adv:${r.id}` }));
   });
 
   return group('移动规则', [
@@ -2506,7 +2771,7 @@ function moveRulesGroup(cfg) {
       rebuildAll();
     }, 'ghost'),
     safetySection(cfg),
-  ], { open: true });
+  ], { open: false });
 }
 
 /* ---------------- 安全避撞预设（方向选择的条件概率增强） ---------------- */
@@ -2528,6 +2793,9 @@ function safetySection(cfg) {
       bind('avoidOtherAgents', '其它移动体')),
       '规避是「择优」而非「禁止」：仍有可行方向时按权重择优，从而降低自撞概率'),
     note,
+    field('碰撞预警提示', h('div', { class: 'chips-line' },
+      chkBind(s, 'warnSelfCollision', () => onSimChange(), '标记「下一步会撞到自身身体」的危险格')),
+      '开启后每步检查各可行朝向，把会导致自撞的落点标为警示色；长蛇场景会带来少量额外开销，默认关闭'),
   ], { open: false, badge: (s.avoidBody || s.avoidObstacle || s.avoidOtherAgents) ? '已启用' : '' });
 }
 
@@ -2742,7 +3010,7 @@ function envRulesGroup(cfg) {
         rebuildAll();
       }, 'ghost'),
     ),
-  ], { open: true });
+  ], { open: false });
 }
 
 function actionEditor(rule, action, index) {
@@ -3409,6 +3677,63 @@ function applyCaTemplate(cfg, kind) {
   // 状态校验：交互版依赖「蛇长度可变」，未启用时立刻醒目提示
   const warn = markerLengthWarning();
   if (warn) toast(warn, 'warn');
+}
+
+/* ---------------- 蛇死亡转化（概率参数可视化调节） ---------------- */
+
+/**
+ * 蛇死亡转化面板：两个概率参数用「滑杆 + 数值框」双向绑定，拖动即重算，
+ * 并实时给出「期望并入环境的节点数」读数与一次蒙特卡洛抽样试算，
+ * 让 0~1 的概率取值不再是抽象数字。
+ */
+function transformGroup(cfg) {
+  const t = cfg.transform;
+  const pct = (v) => `${(Math.round(Number(v) * 1000) / 10).toFixed(1)}%`;
+  const nodeCount = () => Math.max(1, Math.round(Number(cfg.body.initialLength) || 1));
+  const estimate = h('span', { class: 'mini-label' }, '');
+  const syncEstimate = () => {
+    const segs = nodeCount();
+    const expected = t.globalProbability * t.segmentProbability * segs;
+    estimate.textContent = `按初始长度 ${segs} 节估算：平均约 ${expected.toFixed(2)} 节并入环境；未命中全局概率时蛇只消失、环境不变。`;
+  };
+  syncEstimate();
+  const onProbChange = () => { syncEstimate(); onSimChange(); };
+
+  /** 蒙特卡洛试算：用与模拟层相同的判定顺序（先全局、再逐节）抽样，读出实际触发率与转化节数 */
+  const runSample = () => {
+    const rng = new RNG(cfg.seed || 1);
+    const segs = nodeCount();
+    const rounds = 2000;
+    let triggers = 0;
+    let cells = 0;
+    for (let i = 0; i < rounds; i++) {
+      if (rng.next() >= t.globalProbability) continue;
+      triggers++;
+      for (let s = 0; s < segs; s++) if (rng.next() < t.segmentProbability) cells++;
+    }
+    const avg = triggers ? cells / triggers : 0;
+    toast(`试算 ${rounds} 次：转化触发 ${triggers} 次（${pct(triggers / rounds)}），触发时平均转化 ${avg.toFixed(2)} 节`, 'info');
+  };
+
+  const stateSelect = selBind(t, 'state', () => { onSimChange(); }, cfg.caMode.states
+    .filter((s) => s.name !== 'empty')
+    .map((s) => ({ value: s.name, label: stateLabelWithKey(s.name) })));
+
+  return group('蛇死亡转化', [
+    field('启用', h('div', { class: 'chips-line' },
+      chkBind(t, 'enabled', () => { onSimChange(); }, '自撞致死后按概率并入环境')),
+      '关闭时自撞完全沿用「碰撞与自撞处理 → 自撞处理」的原有策略'),
+    field('自撞即判定死亡', chkBind(t, 'dieOnSelfCollision', () => onSimChange(), '自撞即判定死亡（不结束运行）')),
+    field('全局触发概率', rangeBind(t, 'globalProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
+      '蛇死亡后是否启动转化流程的总概率'),
+    field('分段转化概率', rangeBind(t, 'segmentProbability', onProbChange, { min: 0, max: 1, step: 0.01, number: true }),
+      '每个身体节点独立转化为环境状态的概率'),
+    field('转化目标状态', stateSelect,
+      '转化后的节点写入该环境状态并参与元胞自动机演化；选择阻挡类状态时还会成为蛇的障碍'),
+    field('期望试算', h('div', { class: 'row' },
+      button('抽样试算', runSample, 'ghost small'), estimate)),
+    h('div', { class: 'hint' }, '自撞死亡只让该移动体从场上消失，主循环与元胞自动机继续运行；身体节点在几步内以过渡动画连续并入环境。'),
+  ], { open: false, badge: t.enabled ? '已启用' : '' });
 }
 
 /* ---------------- 结束条件 ---------------- */

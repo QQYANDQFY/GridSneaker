@@ -7,7 +7,8 @@ import { Grid, parseDir } from '../src/core/grid.js';
 import { Simulation, DEFAULT_FRAME_CAP, MAX_FRAME_CAP, MAX_STORED_FRAMES } from '../src/core/simulation.js';
 import {
   normalizeConfig, defaultConfig, defaultRule, validateConfig, encodeConfigToToken, decodeConfigFromToken, diagnoseConfig,
-  buildShareUrl, isBodyEnabled, JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
+  buildShareUrl, isBodyEnabled, isSkinImage, stripSkinAssets,
+  JOIN_MODES, FADE_MODES, FADE_LENGTH_LIMIT, END_PRIORITY_DEFAULT, END_LABELS,
 } from '../src/core/config.js';
 import {
   buildTrail, defaultTrailQuery, normalizeTrailQuery, queryTrail, trailQueryActive,
@@ -253,6 +254,54 @@ section('边界行为');
   const bounce = new Simulation(mk('bounce')).run();
   const dirs = bounce.frames.map((f) => f.agents[0].dir);
   ok(dirs.includes(3), '反弹边界产生掉头（向左）');
+}
+
+/* ---------- 默认边界行为：穿越到另一侧 ---------- */
+section('默认游戏模式：边界行为为「穿越到另一侧」');
+{
+  eq(defaultConfig().grid.boundary, 'wrap', 'defaultConfig 的边界行为默认为穿越到另一侧');
+
+  const preset = buildPresetConfig('random-walk');
+  eq(preset.grid.boundary, 'wrap', '默认场景「随机游走」的边界行为为穿越到另一侧');
+  eq(preset.endConditions.wall, false, '默认场景不再以「撞墙」作为结束条件');
+
+  const r = new Simulation(preset).run();
+  ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'wrap')), '默认场景运行中确实发生边界穿越');
+  eq(r.endReason.code, 'maxSteps', '默认场景按步数上限正常收尾（不会因撞墙提前结束）');
+}
+
+/* ---------- 边界反弹的安全避撞 ---------- */
+section('边界反弹的安全避撞（贴墙掉头不自撞）');
+{
+  /**
+   * 6×6 网格、蛇头贴右墙朝右、身体横铺在同一行：
+   * 反弹掉头时的反向格恰好是自己的脖子，不做规避就会被判为自撞并立即结束。
+   */
+  const mk = (boundary) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 6, height: 6, boundary };
+    cfg.start = { col: 5, row: 3, direction: 'right' };
+    cfg.body.initialLength = 3;
+    cfg.moveRules = { left: 0, straight: 1, right: 0 };
+    cfg.endConditions = { ...cfg.endConditions, maxSteps: 8, wall: false, selfCollision: true };
+    cfg.seed = 11;
+    return cfg;
+  };
+
+  const bounce = new Simulation(mk('bounce')).run();
+  eq(bounce.endReason.code, 'maxSteps', '反弹模式下贴墙掉头不会被误判为自撞，按步数上限收尾');
+  eq(bounce.stats.selfCollisions, 0, '反弹模式全程未发生自撞');
+  const rows = bounce.frames.map((f) => f.agents[0].segments[0][1]);
+  ok(rows.some((row) => row !== 3), '反弹时改选竖直方向绕开自身身体（不再沿原行直接掉头）');
+  ok(bounce.frames.every((f) => {
+    const s = f.agents[0].segments;
+    return s.length < 2 || s[0][0] !== s[1][0] || s[0][1] !== s[1][1];
+  }), '反弹全程蛇头不会与紧邻的体节重叠');
+
+  // 对照：穿越模式不启用该避撞，仍按原逻辑从对侧出现、保持直行
+  const wrap = new Simulation(mk('wrap')).run();
+  eq(wrap.frames[1].agents[0].segments[0][0], 0, '穿越模式仍按原逻辑从对侧出现（避撞不影响穿越）');
+  ok(wrap.frames.every((f) => f.agents[0].segments[0][1] === 3), '穿越模式下始终沿原方向直行，未被反弹避撞改道');
 }
 
 /* ---------- 环境规则 ---------- */
@@ -1656,6 +1705,7 @@ section('跨缝渲染调用（裁剪到网格区域，两侧分段绘制）');
   r.canvas = { width: 268, height: 212, style: {} };
   r.style = { ...STYLE_DEFAULTS, cellSize: 26, gap: 2 };
   r.body = { segmentSize: 0.82, shape: 'round', colorMode: 'gradient', colors: { head: '#ff5d5d', tail: '#7a4dff' } };
+  r.skinImg = { head: null, body: null };
   r.grid = new Grid({ type: 'square', width: 8, height: 6, boundary: 'wrap' });
   r.size = r.grid.canvasSize(r.style.cellSize, r.style.gap, 23);
   const pitch = r.style.cellSize + r.style.gap;
@@ -1739,6 +1789,11 @@ function headlessRenderer(style = {}) {
   r.collisionPoints = [];
   r.startCoord = null;
   r.endCoord = null;
+  // 自定义皮肤缓存（无头环境下不加载图片，保持未设置状态 → 走纯色绘制分支）
+  r.skinSrc = { head: '', body: '' };
+  r.skinImg = { head: null, body: null };
+  r.onSkinLoad = null;
+  r.skinLayer = null;
   r._scratchA = { x: 0, y: 0 };
   r._scratchB = { x: 0, y: 0 };
   r._scratchC = { x: 0, y: 0 };
@@ -2221,13 +2276,13 @@ section('配置差异比对（模板载入改动检测）');
   // 3) 枚举字段：取值中文化，而不是直接暴露英文键名
   {
     const next = clone(base);
-    next.grid.boundary = 'wrap';
+    next.grid.boundary = 'stop';
     next.collision.obstacle = 'pass';
     next.caMode.neighborhood = 'vonNeumann';
     const changes = diffConfigs(base, next);
     const byPath = new Map(changes.map((c) => [c.path, c]));
     eq(byPath.size, 3, '三处枚举改动各产生一条差异');
-    eq(byPath.get('grid.boundary').text, '边界行为：停止（撞墙即停） → 穿越到另一侧', '边界行为枚举取中文文案');
+    eq(byPath.get('grid.boundary').text, '边界行为：穿越到另一侧 → 停止（撞墙即停）', '边界行为枚举取中文文案');
     eq(byPath.get('collision.obstacle').text, '撞障碍物：停止 → 直接穿过', '碰撞处理枚举取中文文案');
     eq(byPath.get('caMode.neighborhood').text, '邻域：8 邻域（Moore） → 4 邻域（Von Neumann）', '元胞邻域枚举取中文文案');
   }
@@ -2323,6 +2378,162 @@ section('配置差异比对（模板载入改动检测）');
     ok(Number.isFinite(cfg.body.lengthPolicy.growth.minLength), '增长策略的最小长度归一化后为有限数值');
     ok(Number.isFinite(cfg.body.lengthPolicy.shrink.maxLength), '缩短策略的最大长度归一化后为有限数值');
     eq(diffConfigs(clone(cfg), cfg).length, 0, '归一化配置与自身 JSON 快照零差异（对模板基准不产生幻影改动）');
+  }
+}
+
+/* ---------- 自定义皮肤（上传图片） ---------- */
+section('自定义皮肤：格式校验 / 规范化 / 分享链接剥离');
+{
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+
+  const d = defaultConfig();
+  eq(d.body.skin.head, '', '默认不设置蛇头皮肤');
+  eq(d.body.skin.body, '', '默认不设置蛇身皮肤');
+
+  // 1) 格式校验：仅接受 JPG / PNG / WebP 的 base64 dataURL
+  ok(isSkinImage(PNG), '识别 PNG base64 dataURL 为合法皮肤');
+  ok(isSkinImage('data:image/jpeg;base64,AAAA'), '支持 JPG（image/jpeg）');
+  ok(isSkinImage('data:image/jpg;base64,AAAA'), '支持 JPG（image/jpg）');
+  ok(isSkinImage('data:image/webp;base64,AAAA'), '支持 WebP');
+  eq(isSkinImage('data:image/gif;base64,AAAA'), false, '拒绝不支持的 GIF 格式');
+  eq(isSkinImage('data:image/svg+xml;base64,AAAA'), false, '拒绝 SVG（可能携带脚本）');
+  eq(isSkinImage('https://example.com/a.png'), false, '拒绝外链地址');
+  eq(isSkinImage('javascript:alert(1)'), false, '拒绝非图片协议');
+  eq(isSkinImage(''), false, '空字符串视为未设置');
+  eq(isSkinImage(null), false, 'null 视为未设置');
+  eq(isSkinImage({}), false, '非字符串视为未设置');
+
+  // 2) 规范化：非法值一律回退为「未设置」，不影响其它字段
+  const n = normalizeConfig({ ...d, body: { ...d.body, skin: { head: PNG, body: 'data:image/gif;base64,AAAA' } } });
+  eq(n.body.skin.head, PNG, '规范化保留合法的蛇头皮肤');
+  eq(n.body.skin.body, '', '非法格式的蛇身皮肤回退为未设置');
+  eq(n.body.segmentSize, d.body.segmentSize, '皮肤规范化不影响其它身体字段');
+  eq(normalizeConfig({ ...d, body: { ...d.body, skin: 'oops' } }).body.skin.head, '', '皮肤字段结构非法时整体回退为未设置');
+  eq(normalizeConfig({ ...d, body: { ...d.body, skin: undefined } }).body.skin.body, '', '缺少皮肤字段时补全为未设置');
+
+  // 3) 分享链接剥离皮肤图片（dataURL 体积可达数 MB，直接编码会超出链接长度上限）
+  const stripped = stripSkinAssets(n);
+  eq(stripped.body.skin.head, '', 'stripSkinAssets 清空皮肤图片');
+  eq(n.body.skin.head, PNG, 'stripSkinAssets 不修改原配置（纯函数）');
+  ok(!encodeConfigToToken(stripped).includes('iVBORw0KGgo'), '剥离后的配置编码不再包含皮肤图片数据');
+
+  const saved = globalThis.location;
+  try {
+    globalThis.location = { origin: 'https://example.com', pathname: '/snake/', href: 'https://example.com/snake/' };
+    const url = buildShareUrl(n);
+    ok(url.includes('#c='), '分享链接正常生成');
+    ok(!url.includes('iVBORw0KGgo'), '分享链接不含皮肤图片（避免超长链接）');
+    eq(decodeConfigFromToken(url.split('#c=')[1]).body.skin.head, '', '从链接载入时皮肤为空（未被截断的图片污染）');
+  } finally {
+    if (saved === undefined) delete globalThis.location;
+    else globalThis.location = saved;
+  }
+}
+
+/* ---------- 自碰撞死亡与蛇转化为元胞自动机 ---------- */
+section('自碰撞死亡与转化为元胞自动机');
+{
+  /**
+   * 构造必定自撞的场景：只允许左转的蛇在方格上绕 2×2 小循环，
+   * 身体长度 6 > 循环周长 4，第 3 步必然压到自身身体。
+   */
+  const loopCfg = (over = {}) => {
+    const cfg = defaultConfig();
+    cfg.grid = { type: 'square', width: 20, height: 20, boundary: 'wrap' };
+    cfg.start = { col: 10, row: 10, direction: 'up' };
+    cfg.body.initialLength = 6;
+    cfg.moveRules = { left: 1, straight: 0, right: 0 };
+    cfg.endConditions.maxSteps = 20;
+    cfg.endConditions.wall = false;
+    cfg.endConditions.outOfBounds = false;
+    cfg.endConditions.noMove = false;
+    cfg.endConditions.ruleEnd = false;
+    cfg.transform = { enabled: true, dieOnSelfCollision: true, globalProbability: 1, segmentProbability: 1, state: 'obstacle' };
+    return applyPatch(cfg, over);
+  };
+
+  // 1) 规范化：两个概率夹取到 [0,1]，非法目标状态回退到首个非空状态
+  {
+    const n = normalizeConfig({ transform: { enabled: true, globalProbability: 5, segmentProbability: -1, state: 'nope' } });
+    eq(n.transform.globalProbability, 1, '全局触发概率上溢夹取到 1');
+    eq(n.transform.segmentProbability, 0, '分段转化概率下溢夹取到 0');
+    eq(n.transform.state, 'obstacle', '非法目标状态回退到首个非空状态');
+    eq(normalizeConfig({ transform: { state: 'empty' } }).transform.state, 'obstacle', '目标状态不允许为 empty（回退到非空状态）');
+    eq(normalizeConfig({}).transform.enabled, false, '默认关闭「蛇死亡转化」（旧场景零变化）');
+    ok(END_LABELS.transformDone && END_LABELS.transformDone.length > 0, '结束原因表包含「蛇已全部转化为环境」标签');
+  }
+
+  // 2) 自撞即死亡：不终止运行，身体节点按两个概率并入环境
+  {
+    const r = new Simulation(loopCfg()).run();
+    eq(r.stats.transformDeaths, 1, '自撞触发一次蛇死亡');
+    eq(r.stats.transformTriggers, 1, '全局概率为 1 时转化流程必定启动');
+    eq(r.stats.transformedCells, 6, '分段概率为 1 时全部 6 节身体并入环境');
+    ok(r.endReason.code !== 'selfCollision', '转化模式下自撞不会以「撞到自身」收尾');
+    eq(r.endReason.code, 'transformDone', '场上无存活移动体后以「全部转化为环境」收尾');
+    ok(r.stats.obstacleCount >= 6, '转化后的节点确实成为环境的一部分', `实际 ${r.stats.obstacleCount}`);
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'transform')), '转化过程写入 transform 过渡高亮');
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'transform' && h.state === 'obstacle')), '过渡高亮携带目标状态色');
+    ok(r.frames.some((f) => (f.events || []).some((e) => e.type === 'transform' && e.count === 6)), '转化事件进入帧事件流并带节点数');
+    ok(r.summary.transformedCells === 6 && r.summary.transformDeaths === 1, '运行摘要同步转化统计');
+    ok(r.logs.some((l) => l.ruleName === '蛇死亡转化'), '转化写入环境规则日志');
+  }
+
+  // 3) 全局触发概率为 0：仍判定死亡，但不启动转化
+  {
+    const r = new Simulation(loopCfg({ transform: { globalProbability: 0 } })).run();
+    eq(r.stats.transformDeaths, 1, '全局概率为 0 时仍然判定蛇死亡');
+    eq(r.stats.transformTriggers, 0, '全局概率为 0 时不启动转化流程');
+    eq(r.stats.transformedCells, 0, '全局概率为 0 时没有节点并入环境');
+    eq(r.endReason.code, 'transformDone', '未转化时运行仍在死亡后正常收尾');
+  }
+
+  // 4) 分段转化概率为 0：不影响全局触发，但不写入任何节点
+  {
+    const r = new Simulation(loopCfg({ transform: { segmentProbability: 0 } })).run();
+    eq(r.stats.transformTriggers, 1, '分段概率为 0 不影响全局触发次数');
+    eq(r.stats.transformedCells, 0, '分段概率为 0 时没有节点被转化');
+  }
+
+  // 5) 关闭「自撞即判定死亡」：完全恢复原有的「撞到自身」结束行为
+  {
+    const r = new Simulation(loopCfg({ transform: { dieOnSelfCollision: false } })).run();
+    eq(r.stats.transformDeaths, 0, '关闭「自撞即判定死亡」时不进入转化流程');
+    eq(r.endReason.code, 'selfCollision', '关闭后自撞仍按原有结束规则收尾');
+  }
+
+  // 6) 未启用「蛇死亡转化」：行为与旧版完全一致
+  {
+    const r = new Simulation(loopCfg({ transform: { enabled: false } })).run();
+    eq(r.stats.transformDeaths, 0, '未启用转化时不会记录转化死亡');
+    eq(r.endReason.code, 'selfCollision', '未启用转化时自撞仍按结束规则收尾');
+  }
+
+  // 7) 启用元胞自动机：转化后并入环境的节点继续演化，运行不提前收尾
+  {
+    const r = new Simulation(loopCfg({ caMode: { enabled: true } })).run();
+    eq(r.stats.transformDeaths, 1, '启用元胞自动机时同样判定自撞死亡');
+    eq(r.stats.transformedCells, 6, '启用元胞自动机时节点同样并入环境');
+    ok(r.endReason.code !== 'transformDone' && r.endReason.code !== 'selfCollision', '有元胞自动机继续演化时不会在死亡处收尾');
+    eq(r.stats.steps, 20, '转化后元胞自动机继续运行到步数上限');
+  }
+
+  // 8) 碰撞预警：标出「下一步会撞到自身身体」的危险落点
+  {
+    const r = new Simulation(loopCfg({ safety: { warnSelfCollision: true } })).run();
+    ok(r.stats.collisionWarnings >= 1, '开启碰撞预警后统计到危险落点', `实际 ${r.stats.collisionWarnings}`);
+    ok(r.frames.some((f) => f.highlights.some((h) => h.type === 'warning')), '危险落点写入 warning 高亮');
+    ok(r.summary.collisionWarnings === r.stats.collisionWarnings, '运行摘要同步预警统计');
+    const off = new Simulation(loopCfg()).run();
+    eq(off.stats.collisionWarnings, 0, '默认关闭时不产生预警开销与统计');
+  }
+
+  // 9) 配置诊断：概率为 0 与「撞到自身」结束规则让位
+  {
+    const noEff = diagnoseConfig({ transform: { enabled: true, globalProbability: 0 } });
+    ok(noEff.some((d) => d.code === 'transformNoEffect'), '诊断：概率为 0 时提示转化不会产生节点');
+    const override = diagnoseConfig({ transform: { enabled: true, dieOnSelfCollision: true }, endConditions: { selfCollision: true } });
+    ok(override.some((d) => d.code === 'transformOverridesSelfCollisionEnd'), '诊断：「撞到自身」结束规则在转化模式下让位');
   }
 }
 
