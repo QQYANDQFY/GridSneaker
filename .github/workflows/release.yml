@@ -1,0 +1,45 @@
+name: Release
+
+# 打 tag（如 v2.10.0）即自动构建单文件成品，并作为 Release 附件发布
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 成品里的版本号取自 package.json，若不与 tag 一致，用户会下载到标错版本的文件
+      - name: 校验标签与 package.json 版本一致
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(npm pkg get version | tr -d '"')
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::标签 ${GITHUB_REF_NAME} 与 package.json 的版本 ${PKG} 不一致，请先同步版本号再打 tag"
+            exit 1
+          fi
+
+      - name: 运行测试
+        run: npm test
+
+      - name: 构建单文件成品
+        run: npm run build
+
+      - name: 创建 Release 并上传成品 HTML
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GridSneaker.html
+          generate_release_notes: true

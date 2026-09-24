@@ -2,6 +2,7 @@
   "name": "gridsneaker",
   "version": "2.10.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "GridSneaker：可高度自定义的网格移动动画模拟平台（移动体 + 环境规则 + 元胞自动机）",
   "scripts": {

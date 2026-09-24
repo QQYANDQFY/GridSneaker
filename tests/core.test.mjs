@@ -5491,6 +5491,23 @@ section('功能拓展：三项新功能与单蛇提示精简接入配置面板�
   eq(STYLE_DEFAULTS.stepDiffAlpha, style.stepDiffAlpha, '变化高亮不透明度：两层默认值一致');
 }
 
+/* ---------- 版本号一致性：package.json 为唯一来源（源码级回归） ---------- */
+
+section('版本号一致性：开发入口 / 单文件成品与 package.json 同步（源码级回归）');
+{
+  const readText = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
+  const readVersion = (file) => (readText(file).match(/id="app-version">([^<]*)</) || [, ''])[1];
+  const pkg = JSON.parse(readText('../package.json'));
+  const build = readText('../tools/build-single-file.mjs');
+
+  ok(/pkg\.version/.test(build) && /app-version/.test(build),
+    '构建脚本把 package.json 的版本号注入单文件产物（版本号只有 package.json 一个来源）');
+  eq(readVersion('../index.html'), pkg.version,
+    '开发入口 index.html 显示的版本与 package.json 一致（滞后会让开发入口与成品显示不同版本）');
+  eq(readVersion('../GridSneaker.html'), pkg.version,
+    '已提交的单文件成品版本与 package.json 一致（版本号变更后需执行 npm run build 重新构建）');
+}
+
 /* ---------- 结果 ---------- */
 console.log(`\n${'='.repeat(48)}`);
 console.log(`通过 ${pass} 项，失败 ${fail} 项`);

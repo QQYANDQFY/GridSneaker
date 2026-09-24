@@ -117,6 +117,9 @@
 
 双击仓库根目录下的 `GridSneaker.html`，浏览器即可运行，无需服务器、无需联网、无需安装任何依赖。
 
+也可以直接从 Releases 下载最新成品（附件即构建好的单文件，无需自行构建）：
+`https://github.com/<用户名>/<仓库名>/releases/latest/download/GridSneaker.html`
+
 ### 方式二：本地开发（可读源码 + 热刷新）
 
 需要 Python 3（仅用于起静态服务器）或任意静态服务器：
@@ -204,6 +207,9 @@ npm start          # 等价于 python -m http.server 8080
 ├── GridSneaker.html           # 打包产物：可双击直接运行的单文件版本
 ├── package.json               # 版本号 / 脚本（start · test · build）
 ├── CHANGELOG.md               # 迭代记录
+├── LICENSE                    # MIT 许可证
+├── .github/
+│   └── workflows/release.yml  # 打 tag 自动构建并发布成品 HTML 到 Releases
 ├── src/
 │   ├── core/                  # 纯逻辑，无 DOM 依赖，可被 Node 直接测试
 │   │   ├── grid.js            # 方格 / 六边形网格、方向、越界与环绕
@@ -255,7 +261,8 @@ npm test              # 等价于 node tests/core.test.mjs
 另含「视觉折叠分组 / 统计项显示配置 / 开关行排版 / 选项卡配色 / 统计术语浮层 / 安全避撞开关联动 /
 环境写入置脏 / 播放合并重绘 / 搜索防抖 / 长跑运行提示 / 元胞状态格子放置 / 避撞处理方式 /
 CA 子选项卡分类及其搜索联动 / 延迟放置（仅本步生效、不回溯历史帧）/ 第 0 步缺环境警告 /
-规则集导入导出 / 环境模板 / 参数预设」等源码级与行为级回归断言，当前 **1621 项断言全部通过**。
+规则集导入导出 / 环境模板 / 参数预设 / 版本号一致性（开发入口与单文件成品同步 `package.json`）」
+等源码级与行为级回归断言，当前 **1704 项断言全部通过**。
 
 性能基准（无依赖，可复现）：
 
@@ -269,6 +276,10 @@ node tools/bench-trail.mjs   # 轨迹渲染帧率与边界解算速率（同进�
 
 - **GitHub Pages**：把仓库推送到 GitHub，在 `Settings → Pages` 中选择分支（如 `main`）与根目录 `/` 保存，
   稍后访问 `https://<用户名>.github.io/<仓库名>/` 即可（`index.html` 会被自动识别为入口）。
+- **GitHub Releases**：每次发版只需改 `package.json` 的 `version` 并推送同名 tag（如 `v2.10.0`），
+  `.github/workflows/release.yml` 会自动校验版本号一致、跑测试、构建单文件并把 `GridSneaker.html`
+  作为 Release 附件发布（因此**每个 Release 的成品都是可直接双击运行的 HTML**）。
+  最新版永久下载地址：`https://github.com/<用户名>/<仓库名>/releases/latest/download/GridSneaker.html`。
 - **其它静态托管**（Netlify / Vercel / Cloudflare Pages / 对象存储等）：无需构建命令，
   直接上传仓库内容或把发布目录指向仓库根目录即可。
 - **离线分发**：只需分发 `GridSneaker.html` 一个文件，收件方双击即可使用。
@@ -285,6 +296,11 @@ python -m http.server 8080   # 访问 http://localhost:8080/GridSneaker.html
 需要支持 ES Module、`Canvas 2D`、`ResizeObserver`、`localStorage` 的现代浏览器
 （Chrome / Edge / Firefox / Safari 的近年版本）。
 360、QQ 等双内核浏览器请使用**极速模式**；若脚本未能启动，页面会给出切换内核的提示。
+
+## AI 生成说明
+
+本项目的代码与文档目前由 AI 编程助手生成，作者负责需求定义、方案取舍、运行验证与迭代方向，并对最终提交内容负责。
+项目不含第三方代码或素材。
 
 ## 更新记录
 
