@@ -55,9 +55,22 @@ html, body {
   color: var(--muted);
 }
 .topbar-hint { color: var(--muted); font-size: 12px; }
-/* 界面语言选择器：贴顶栏右侧显示，需要时折行到第二行也不影响其它元素 */
-.lang-select {
+/* 界面语言切换：中英双语标识与选择器作为一组贴在顶栏右侧，需要时折行到第二行也不影响其它元素。
+   标识是 <label for="lang-select">，点击即聚焦下拉框，本身不覆盖控件区域、不拦截其交互。 */
+.lang-tag {
   margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lang-tag b { color: var(--accent); font-weight: 600; letter-spacing: 0.3px; }
+.lang-select {
   align-self: center;
   background: var(--panel-2);
   color: var(--text);

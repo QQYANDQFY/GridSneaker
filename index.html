@@ -8,17 +8,107 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <!-- 兜底提示：仅当脚本未能启动（兼容模式 / 内核过旧 / 禁用 JS）时可见，正常启动后由 init() 隐藏 -->
+  <!-- 兜底提示：仅当脚本未能启动（兼容模式 / 内核过旧 / 禁用 JS）时可见，正常启动后由 init() 隐藏。
+       文本由紧随其后的经典脚本按浏览器语言改写，同时保留 data-i18n 标注供 i18n 运行时接管。 -->
   <div id="legacy-hint">
-    <h2>页面未能启动</h2>
-    <p>当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。</p>
-    <p>请点击地址栏右侧的闪电图标切换到<b>极速模式</b>后刷新，或改用 <b>Chrome / Edge</b> 打开本页面。</p>
+    <h2 data-i18n>页面未能启动</h2>
+    <p data-i18n>当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。</p>
+    <p data-i18n>请点击地址栏右侧的闪电图标切换到极速模式后刷新，或改用 Chrome / Edge 打开本页面。</p>
   </div>
+
+  <script>
+    /* 兜底提示的多语言：模块化的 i18n 运行时依赖 ES Module，脚本根本没跑起来时它也不会执行，
+       这里用一段不依赖任何框架的经典脚本，按「上次手动选择 → 浏览器语言 → 英文」直接改写文本。
+       语言表与 src/i18n/locales/ 的对应条目保持一致：改文案时两处都要改。 */
+    (function () {
+      var TEXT = {
+        'zh-CN': [
+          '页面未能启动',
+          '当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。',
+          '请点击地址栏右侧的闪电图标切换到极速模式后刷新，或改用 Chrome / Edge 打开本页面。'
+        ],
+        'zh-TW': [
+          '頁面未能啟動',
+          '目前瀏覽器可能處於「相容模式（IE 核心）」或核心版本過舊，無法執行本頁指令碼。',
+          '請點擊網址列右側的閃電圖示切換到極速模式後重新整理，或改用 Chrome / Edge 開啟本頁面。'
+        ],
+        en: [
+          'Page failed to start',
+          'The current browser may be in "compatibility mode (IE engine)" or use an outdated engine, so the scripts on this page cannot run.',
+          'Click the lightning icon on the right of the address bar, switch to Speed mode and reload, or open this page in Chrome / Edge.'
+        ],
+        ja: [
+          'ページを起動できませんでした',
+          '現在のブラウザが「互換モード（IE エンジン）」になっているか、エンジンが古いため、このページのスクリプトを実行できません。',
+          'アドレスバー右側の稲妻アイコンをクリックして高速モードに切り替えてから再読み込みするか、Chrome / Edge でこのページを開いてください。'
+        ],
+        ko: [
+          '페이지를 시작하지 못했습니다',
+          '현재 브라우저가 "호환 모드(IE 엔진)"이거나 엔진 버전이 오래되어 이 페이지의 스크립트를 실행할 수 없습니다.',
+          '주소 표시줄 오른쪽의 번개 아이콘을 눌러 고속 모드로 전환한 뒤 새로 고치거나, Chrome / Edge 에서 이 페이지를 여세요.'
+        ],
+        fr: [
+          "La page n'a pas pu démarrer",
+          "Le navigateur actuel est peut-être en « mode de compatibilité (moteur IE) » ou utilise un moteur trop ancien : les scripts de cette page ne peuvent pas s'exécuter.",
+          "Cliquez sur l'icône en forme d'éclair à droite de la barre d'adresse, passez en mode rapide puis rechargez, ou ouvrez cette page dans Chrome / Edge."
+        ],
+        de: [
+          'Seite konnte nicht gestartet werden',
+          'Der aktuelle Browser befindet sich möglicherweise im "Kompatibilitätsmodus (IE-Engine)" oder verwendet eine zu alte Engine, sodass die Skripte dieser Seite nicht ausgeführt werden können.',
+          'Klicken Sie auf das Blitzsymbol rechts in der Adressleiste, wechseln Sie in den Schnellmodus und laden Sie die Seite neu – oder öffnen Sie sie in Chrome / Edge.'
+        ],
+        es: [
+          'No se pudo iniciar la página',
+          'Es posible que el navegador actual esté en «modo de compatibilidad (motor IE)» o use un motor demasiado antiguo, por lo que no puede ejecutar los scripts de esta página.',
+          'Haz clic en el icono del rayo a la derecha de la barra de direcciones, cambia al modo rápido y recarga; o abre esta página en Chrome / Edge.'
+        ],
+        pt: [
+          'Não foi possível iniciar a página',
+          'O navegador atual pode estar no "modo de compatibilidade (motor IE)" ou usar um motor muito antigo, por isso não consegue executar os scripts desta página.',
+          'Clique no ícone de raio à direita da barra de endereços, mude para o modo rápido e recarregue; ou abra esta página no Chrome / Edge.'
+        ],
+        ru: [
+          'Не удалось запустить страницу',
+          'Возможно, браузер работает в «режиме совместимости (движок IE)» или использует устаревший движок, поэтому скрипты этой страницы не запускаются.',
+          'Нажмите значок молнии справа от адресной строки, переключитесь в быстрый режим и обновите страницу — либо откройте её в Chrome / Edge.'
+        ]
+      };
+      /** 与 src/i18n/index.js 的 matchLocale 同口径：zh 家族按脚本 / 地区细分，其余按主语言匹配 */
+      function matchLocale(tag) {
+        tag = String(tag || '').toLowerCase().replace(/_/g, '-');
+        if (!tag) return 'en';
+        if (TEXT[tag]) return tag;
+        var parts = tag.split('-');
+        var lang = parts[0];
+        var script = parts[1];
+        var region = parts[2];
+        if (lang === 'zh') {
+          if (script === 'hant' || ['tw', 'hk', 'mo'].indexOf(script) >= 0) return 'zh-TW';
+          if (script === 'hans') return 'zh-CN';
+          return ['tw', 'hk', 'mo'].indexOf(region) >= 0 ? 'zh-TW' : 'zh-CN';
+        }
+        return TEXT[lang] ? lang : 'en';
+      }
+      var saved = '';
+      try { saved = localStorage.getItem('gridsneaker:locale') || ''; } catch (e) { saved = ''; }
+      var code = TEXT[saved] ? saved : matchLocale(navigator.languages && navigator.languages.length ? navigator.languages[0] : navigator.language);
+      var nodes = document.querySelectorAll('#legacy-hint h2, #legacy-hint p');
+      var text = TEXT[code];
+      for (var i = 0; i < nodes.length && i < text.length; i++) {
+        /* 把简体原文留给 i18n 运行时作查表依据：运行时接管后按语言包翻译，切换语言仍能正确换语 */
+        nodes[i].setAttribute('data-i18n-src', TEXT['zh-CN'][i]);
+        nodes[i].textContent = text[i];
+      }
+      document.documentElement.setAttribute('lang', code);
+    })();
+  </script>
 
   <header id="topbar">
     <h1>GridSneaker<span class="sub" data-i18n>网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机</span></h1>
-    <div class="topbar-hint">v<span id="app-version">2.11.0</span><span data-i18n> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</span></div>
-    <!-- 界面语言切换：选项由 app.js 按已收录语言填充，选择结果记入本地存储 -->
+    <div class="topbar-hint">v<span id="app-version">2.12.0</span><span data-i18n> · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式</span></div>
+    <!-- 界面语言切换：中英双语标识固定在选择器左侧（点击即聚焦下拉框，不遮挡其交互区域）；
+         选项由 app.js 按已收录语言填充，选择结果记入本地存储 -->
+    <label class="lang-tag" for="lang-select"><b>Language</b><span>语言</span></label>
     <select id="lang-select" class="lang-select" data-i18n-attr="title" title="界面语言"></select>
   </header>
 

@@ -297,7 +297,9 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const title = (html.match(/<title>([\s\S]*?)<\/title>/) || [, 'GridSneaker'])[1].trim();
 const body = html
   .match(/<body>([\s\S]*)<\/body>/)[1]
-  .replace(/<script[\s\S]*?<\/script>/g, '')
+  // 只移除模块入口（其内容由下面的打包结果替代）；不依赖模块的内联经典脚本要保留，
+  // 例如 #legacy-hint 的兜底文案改写脚本——脚本跑不起来时正需要它工作
+  .replace(/<script\b[^>]*type="module"[^>]*>[\s\S]*?<\/script>/g, '')
   // 版本号以 package.json 为唯一来源，避免更新后各处版本不一致
   .replace(/(<span id="app-version">)[\s\S]*?(<\/span>)/, `$1${pkg.version}$2`)
   .trim();

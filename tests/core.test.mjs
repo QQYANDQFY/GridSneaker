@@ -46,6 +46,12 @@ import { zhCN } from '../src/i18n/locales/zh-CN.js';
 import { zhTW } from '../src/i18n/locales/zh-TW.js';
 import { en } from '../src/i18n/locales/en.js';
 import { ja } from '../src/i18n/locales/ja.js';
+import { ko } from '../src/i18n/locales/ko.js';
+import { fr } from '../src/i18n/locales/fr.js';
+import { de } from '../src/i18n/locales/de.js';
+import { es } from '../src/i18n/locales/es.js';
+import { pt } from '../src/i18n/locales/pt.js';
+import { ru } from '../src/i18n/locales/ru.js';
 
 let pass = 0;
 let fail = 0;
@@ -5504,7 +5510,7 @@ section('功能拓展：三项新功能与单蛇提示精简接入配置面板�
 
 section('国际化：语言包键集完整性与占位符一致性');
 {
-  const packs = { 'zh-TW': zhTW, en, ja };
+  const packs = { 'zh-TW': zhTW, en, ja, ko, fr, de, es, pt, ru };
   const keys = Object.keys(zhCN);
   /**
    * 取字符串里的 {n} 占位符编号（排序后比对）：
@@ -5538,9 +5544,10 @@ section('国际化：语言注册表、语言标签归一与自动匹配');
   eq(SOURCE_LOCALE, 'zh-CN', '源语言为简体中文（界面文案的书写语言）');
 
   const list = localeList();
-  eq(list.map((x) => x.code).join(','), 'zh-CN,zh-TW,en,ja', '可选语言列表与语言包一一对应');
+  eq(list.map((x) => x.code).join(','), 'zh-CN,zh-TW,en,ja,ko,fr,de,es,pt,ru',
+    '可选语言列表与语言包一一对应');
   ok(list.every((x) => /^[a-z]{2}(-[A-Z]{2})?$/.test(x.code)), '语言代码均为标准 BCP 47 标签');
-  eq(list.map((x) => x.name).join(','), '简体中文,繁體中文,English,日本語',
+  eq(list.map((x) => x.name).join(','), '简体中文,繁體中文,English,日本語,한국어,Français,Deutsch,Español,Português,Русский',
     '语言名称用各语言自身的写法（选择器里直接显示，不参与翻译）');
 
   eq(matchLocale('zh-CN'), 'zh-CN', '简体中文标签直接命中');
@@ -5553,9 +5560,14 @@ section('国际化：语言注册表、语言标签归一与自动匹配');
   eq(matchLocale('zh-MO'), 'zh-TW', '澳门地区中文归一到繁体');
   eq(matchLocale('en-GB'), 'en', '英文区域变体归一到 en');
   eq(matchLocale('ja-JP'), 'ja', '日文区域变体归一到 ja');
-  eq(matchLocale('fr-FR'), null, '未收录语言返回 null（由调用方决定回退策略）');
-  eq(matchLocale('ko-KR'), null, '韩语尚未收录，返回 null');
+  eq(matchLocale('ko-KR'), 'ko', '韩文区域变体归一到 ko');
+  eq(matchLocale('fr-CA'), 'fr', '法文区域变体归一到 fr');
+  eq(matchLocale('de-AT'), 'de', '德文区域变体归一到 de');
+  eq(matchLocale('es-419'), 'es', '拉丁美洲西语归一到 es');
+  eq(matchLocale('pt-BR'), 'pt', '巴西葡语归一到 pt');
+  eq(matchLocale('ru-RU'), 'ru', '俄文区域变体归一到 ru');
   eq(matchLocale('ar-EG'), null, '阿拉伯语尚未收录（RTL 布局延后到后续版本）');
+  eq(matchLocale('th-TH'), null, '未收录语言返回 null（由调用方决定回退策略）');
   eq(matchLocale(''), null, '空标签返回 null');
   eq(matchLocale(null), null, '空值标签安全返回 null，不抛异常');
 }
@@ -5571,7 +5583,7 @@ section('国际化：运行时翻译（快路径 / 句式匹配 / 递归 / 多�
   eq(t('尚未运行模拟'), en['尚未运行模拟'], 't() 命中条目时返回该语言译文');
   eq(translateText('尚未运行模拟'), en['尚未运行模拟'], 'translateText 与 t 等价（供 DOM 渲染边界调用）');
   eq(setLocale('en', { persist: false }), false, '重复切到同一语言返回 false（不触发无谓的整页重渲染）');
-  eq(setLocale('ko'), false, '未收录的语言被忽略');
+  eq(setLocale('ar'), false, '未收录的语言被忽略');
   eq(currentLocale(), 'en', '忽略无效语言后当前语言保持不变');
   eq(seen.join(','), 'en', '语言变化只在真正切换时通知订阅者一次');
 
@@ -5701,11 +5713,43 @@ section('国际化：开关与渲染边界接入（源码级回归）');
     && /root\.setAttribute\('dir'/.test(engine),
     '语言引擎预留书写方向开关（RTL 语言接入时无需改动调用点）');
 
-  for (const [file, name] of [['zh-CN.js', 'zhCN'], ['zh-TW.js', 'zhTW'], ['en.js', 'en'], ['ja.js', 'ja']]) {
+  for (const [file, name] of [
+    ['zh-CN.js', 'zhCN'], ['zh-TW.js', 'zhTW'], ['en.js', 'en'], ['ja.js', 'ja'],
+    ['ko.js', 'ko'], ['fr.js', 'fr'], ['de.js', 'de'], ['es.js', 'es'], ['pt.js', 'pt'], ['ru.js', 'ru'],
+  ]) {
     const src = readLocale(file);
     ok(new RegExp(`export const ${name} = \\{`).test(src),
       `${file} 用具名导出 ${name}（单文件打包器只识别具名导出）`);
     ok(!/export default/.test(src), `${file} 不使用 export default（打包后会残留语法错误）`);
+  }
+
+  /* 语言切换器的双语标识（Language / 语言）：贴在选择器旁，点击即聚焦下拉框，不拦截控件交互 */
+  const tag = html.match(/<label class="lang-tag"[^>]*>[\s\S]*?<\/label>/);
+  ok(tag && /for="lang-select"/.test(tag[0]),
+    '语言切换器旁有中英双语标识，且 <label for> 指向选择器（点击即聚焦，不遮挡控件）');
+  ok(tag && /Language/.test(tag[0]) && /语言/.test(tag[0]), '双语标识同时给出英文与中文写法');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  ok(/\.lang-tag\s*\{[\s\S]*?margin-left:\s*auto/.test(css),
+    '标识靠右对齐且与选择器成组（醒目但不挤占其它元素）');
+
+  /* 兜底提示块：脚本没跑起来时由内嵌经典脚本按浏览器语言改写，同时保留 data-i18n 供运行时接管 */
+  const hint = html.match(/<div id="legacy-hint">[\s\S]*?<\/div>/);
+  ok(hint && (hint[0].match(/data-i18n/g) || []).length >= 3,
+    '兜底提示块的全部文案都标注了 data-i18n（可随语言切换）');
+  const inline = html.match(/var TEXT = \{[\s\S]*?\n {6}\};/);
+  ok(inline, '兜底提示块内嵌了不依赖 ES Module 的语言表（脚本未启动时也能按语言显示）');
+  if (inline) {
+    for (const code of ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'pt', 'ru']) {
+      ok(new RegExp(`['"]?${code}['"]?:\\s*\\[`).test(inline[0]), `内嵌语言表覆盖 ${code}`);
+    }
+  }
+  ok(/setAttribute\('data-i18n-src'/.test(html),
+    '内嵌脚本把简体原文写回 data-i18n-src，运行时接管后仍能正确换语');
+
+  /* 抽取脚本与运行时双侧登记同一份语言清单：漏登记会让新语言在 --check 里静默漏检 */
+  const extract = readFileSync(new URL('../tools/i18n-extract.mjs', import.meta.url), 'utf8');
+  for (const code of ['zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'pt', 'ru']) {
+    ok(new RegExp(`'${code}'`).test(extract), `tools/i18n-extract.mjs 登记了 ${code}`);
   }
 }
 
@@ -5724,6 +5768,13 @@ section('版本号一致性：开发入口 / 单文件成品与 package.json 同
     '开发入口 index.html 显示的版本与 package.json 一致（滞后会让开发入口与成品显示不同版本）');
   eq(readVersion('../GridSneaker.html'), pkg.version,
     '已提交的单文件成品版本与 package.json 一致（版本号变更后需执行 npm run build 重新构建）');
+
+  /* 成品里必须保留不依赖模块的内联经典脚本：打包器曾把所有 <script> 一并删掉，
+     结果 #legacy-hint 的兜底文案在成品里只剩简体中文，与「兜底提示支持所有语言」相悖 */
+  const dist = readText('../GridSneaker.html');
+  ok(/var TEXT = \{[\s\S]*?ru:\s*\[/.test(dist),
+    '单文件产物保留了兜底提示的内联语言表（脚本未启动时也能按浏览器语言显示）');
+  ok(/data-i18n-src/.test(dist), '单文件产物保留了兜底块的 data-i18n-src 写回逻辑');
 }
 
 /* ---------- 结果 ---------- */

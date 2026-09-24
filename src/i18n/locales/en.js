@@ -7,11 +7,14 @@
  * 新增界面文案时，先运行 node tools/i18n-extract.mjs 更新 zh-CN.js，再为本文件补上对应条目。
  */
 export const en = {
-  // ---------- index.html（4 条） ----------
+  // ---------- index.html（7 条） ----------
   " · 可自定义网格 / 移动体规则 / 环境感知—条件—后果 / CA 混合模式": " · Customizable grid / agent rules / perception–condition–consequence / CA hybrid mode",
+  "当前浏览器可能处于「兼容模式（IE 内核）」或内核版本过旧，无法运行本页脚本。": "The current browser may be in \"compatibility mode (IE engine)\" or use an outdated engine, so the scripts on this page cannot run.",
   "配置面板": "Configuration panel",
+  "请点击地址栏右侧的闪电图标切换到极速模式后刷新，或改用 Chrome / Edge 打开本页面。": "Click the lightning icon on the right of the address bar, switch to Speed mode and reload, or open this page in Chrome / Edge.",
   "统计与日志": "Statistics & log",
   "网格移动模拟平台 · 移动体 · 环境规则 · 元胞自动机": "Grid movement simulation platform · Agents · Environment rules · Cellular automata",
+  "页面未能启动": "Page failed to start",
   // ---------- src/core/actions.js（71 条） ----------
   "{0}产生标记物×{1}": "{0} spawns marker ×{1}", // `${positionLabel(action.position)}产生标记物×${action.count || 1}`
   "{0}产生障碍物×{1}": "{0} spawns obstacle ×{1}", // `${positionLabel(action.position)}产生障碍物×${action.count || 1}`

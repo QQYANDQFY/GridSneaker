@@ -24,14 +24,17 @@ const SRC = path.join(root, 'src');
 const LOCALES_DIR = path.join(SRC, 'i18n', 'locales');
 const ZH_CN = path.join(LOCALES_DIR, 'zh-CN.js');
 /** 语言包的规范语言代码，顺序与 languageList() 一致 */
-const TARGETS = ['zh-TW', 'en', 'ja'];
+const TARGETS = ['zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'pt', 'ru'];
 /**
  * 语言代码 → 语言包里导出的常量名。
  * 一律用具名导出（而非 export default）：tools/build-single-file.mjs 打包时
  * 只删除 `export` 关键字、再按 import 的名字从模块里取导出，
  * 默认导出既不会被识别也取不到，打成单文件后会报语法错误。
  */
-const EXPORT_NAMES = { 'zh-CN': 'zhCN', 'zh-TW': 'zhTW', en: 'en', ja: 'ja' };
+const EXPORT_NAMES = {
+  'zh-CN': 'zhCN', 'zh-TW': 'zhTW', en: 'en', ja: 'ja', ko: 'ko',
+  fr: 'fr', de: 'de', es: 'es', pt: 'pt', ru: 'ru',
+};
 const CHECK_ONLY = process.argv.includes('--check');
 
 const WORD_CHAR = /[A-Za-z0-9_$]/;

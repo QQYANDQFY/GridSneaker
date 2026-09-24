@@ -113,14 +113,19 @@
 
 ### 界面语言（国际化）
 
-- **四种界面语言**：简体中文（源语言，默认）· 繁體中文 · English · 日本語，
-  顶栏右侧的语言选择器可随时切换，**无需刷新页面**。
+- **十种界面语言**：简体中文（源语言，默认）· 繁體中文 · English · 日本語 · 한국어 · Français ·
+  Deutsch · Español · Português · Русский，顶栏右侧的语言选择器可随时切换，**无需刷新页面**；
+  选择器左侧固定显示中英双语标识「Language 语言」，标识是绑定了下拉框的 `<label>`，
+  点击即聚焦控件、不覆盖也不拦截其交互。
 - **自动匹配系统语言**：首次打开时按 `navigator.languages` 依次匹配（如 `zh-Hant-HK` → 繁體中文、
-  `en-GB` → English），都匹配不到时回退英文；手动选择的结果写入 `localStorage`
+  `en-GB` → English、`pt-BR` → Português），都匹配不到时回退英文；手动选择的结果写入 `localStorage`
   （键 `gridsneaker:locale`），下次打开优先沿用。
 - **全量覆盖**：界面文案、设置标签与说明、统计与日志、弹窗、悬浮提示、导入导出说明、
   警告与错误提示全部随语言切换，运行期拼接的句子（如「结束原因：达到步数上限（300）」、
   「概率：左转 33.3% · 直行 33.3% · 右转 33.3%」）同样按目标语言重新组织语序与标点。
+- **兜底提示同样多语言**：脚本完全没能启动时（兼容模式 / 内核过旧 / 禁用 JS）显示的提示块，
+  由一段**不依赖 ES Module 的内联脚本**按「上次手动选择 → 浏览器语言 → 英文」直接改写，
+  覆盖全部十种语言；该脚本在单文件成品里也保留。
 
 ## 快速开始
 
@@ -217,14 +222,24 @@ npm start          # 等价于 python -m http.server 8080
 | 繁體中文 | `zh-TW` | `src/i18n/locales/zh-TW.js` | 港澳台用语（匯入 / 覆蓋 / 設定 / 相容…） |
 | English | `en` | `src/i18n/locales/en.js` | 非中文用户的回退语言 |
 | 日本語 | `ja` | `src/i18n/locales/ja.js` | 术语按日文技术文档习惯（セル・オートマトン 等） |
+| 한국어 | `ko` | `src/i18n/locales/ko.js` | 에이전트 / 뱀 머리 / 세포 자동자 / 마커 / 장애물 |
+| Français | `fr` | `src/i18n/locales/fr.js` | agent / grille / marqueur / obstacle / automate cellulaire |
+| Deutsch | `de` | `src/i18n/locales/de.js` | Agent / Raster / Marker / Hindernis / Kollisionsvermeidung |
+| Español | `es` | `src/i18n/locales/es.js` | agente / cuadrícula / rastro / borde / evitación de colisiones |
+| Português | `pt` | `src/i18n/locales/pt.js` | agente / cobra / rastro / grade / evitação de colisões |
+| Русский | `ru` | `src/i18n/locales/ru.js` | агент / змейка / клеточный автомат / препятствие / след |
 
 ### 切换与持久化
 
-- 顶栏语言选择器：切换立即生效，并同步更新 `<html lang>` 属性；
+- 顶栏语言选择器：左侧固定显示中英双语标识「Language 语言」（`<label for="lang-select">`，
+  点击即聚焦下拉框，不覆盖控件区域、不拦截其交互），切换立即生效并同步更新 `<html lang>` 属性；
 - 系统语言自动匹配：按 `navigator.languages` 顺序匹配，`zh` 家族再按脚本 / 地区细分
   （`zh-Hant`、`zh-TW`、`zh-HK`、`zh-MO` → 繁體中文，其余 → 简体中文），
-  都匹配不到时回退 English；
-- 手动选择优先于系统语言，并持久化在 `localStorage` 的 `gridsneaker:locale`。
+  其余语言按主语言匹配区域变体（`fr-CA` → Français、`pt-BR` → Português…），都匹配不到时回退 English；
+- 手动选择优先于系统语言，并持久化在 `localStorage` 的 `gridsneaker:locale`；
+- 兜底提示块（`#legacy-hint`）在模块脚本没能跑起来时（兼容模式 / 内核过旧 / ES Module 被拦截）
+  由内嵌经典脚本接管，走同一套「手动选择 → 浏览器语言 → 英文」优先级；
+  完全禁用 JS 时脚本无法执行，此时显示 HTML 里写死的简体中文原文。
 
 ### 工作机制
 
@@ -242,11 +257,15 @@ npm start          # 等价于 python -m http.server 8080
 
 1. 以 `src/i18n/locales/en.js` 为模板新建 `src/i18n/locales/xx.js`，
    **必须保持具名导出**（如 `export const ko`），`export default` 不被单文件打包器识别；
-2. 在 `src/i18n/index.js` 的 `MESSAGES` 与 `LOCALE_NAMES` 中登记；
-3. 运行 `npm run i18n:extract` 重建 zh-CN 规范键集，再用 `npm run i18n:check`
+2. 在 `src/i18n/index.js` 的 `MESSAGES` 与 `LOCALE_NAMES` 中登记（名称用该语言自身的写法）；
+3. 在 `tools/i18n-extract.mjs` 的 `TARGETS` 与 `EXPORT_NAMES` 中登记同一个语言代码与导出名，
+   否则 `npm run i18n:check` 不会检查该语言包；
+4. 运行 `npm run i18n:extract` 重建 zh-CN 规范键集，再用 `npm run i18n:check`
    列出该语言包的**缺译 / 多译 / 空值**；
-4. 若该语言从左到右以外的方向书写（阿拉伯语、希伯来语等），把代码加入 `RTL_LOCALES`，
-   页面会自动设置 `dir="rtl"`——但 **RTL 版式（镜像布局）本轮未做适配**，属于后续工作。
+5. 若该语言从左到右以外的方向书写（阿拉伯语、希伯来语等），把代码加入 `RTL_LOCALES`，
+   页面会自动设置 `dir="rtl"`——但 **RTL 版式（镜像布局）本轮未做适配**，属于后续工作；
+6. 如需让降级场景也显示该语言，把兜底提示块的三条文案补进 `index.html` 内嵌的 `TEXT` 表
+   （与语言包同源，改文案时两处都要改）。
 
 语言包通过 `import` 内联进打包产物，所以**单文件版本无需联网，也不受 `file://` 下 `fetch` 被拦截的限制**。
 
@@ -263,6 +282,22 @@ npm start          # 等价于 python -m http.server 8080
   `随机转向`（ランダム旋回）、`元胞自动机`（セル・オートマトン）、`标记物`（マーカー）、
   `覆盖率`（カバー率）、`长度策略`（長さ戦略）、`陷阱`（トラップ）、
   `热点轨迹过滤`（ホットスポット軌跡フィルタ）、`本步变化高亮`（今ステップの変化ハイライト）。
+- **한국어**：`移动体`（에이전트）、`蛇头`（뱀 머리）、`元胞自动机`（세포 자동자）、
+  `标记物`（마커）、`障碍物`（장애물）、`网格`（그리드）、`轨迹`（궤적）、
+  `随机转向`（무작위 회전）、`避撞`（충돌 회피）、`自撞`（자기 충돌）。
+- **Français**：`移动体`（agent）、`标记物`（marqueur）、`障碍物`（obstacle）、
+  `网格`（grille）、`轨迹`（trace）、`边界`（bordure）、`避撞`（évitement des collisions）、
+  `自撞`（collision avec soi-même）、`元胞自动机`（automate cellulaire）；
+  引号按法文排版用 `« »`。
+- **Deutsch**：`移动体`（Agent）、`网格`（Raster）、`标记物`（Marker）、`障碍物`（Hindernis）、
+  `蛇`（Schlange）、`轨迹`（Spur）、`避撞`（Kollisionsvermeidung）、`自撞`（Selbstkollision）。
+- **Español**：`移动体`（agente）、`蛇`（serpiente）、`网格`（cuadrícula）、`轨迹`（rastro）、
+  `边界`（borde）、`避撞`（evitación de colisiones）。
+- **Português**：`移动体`（agente）、`蛇`（cobra）、`轨迹`（rastro）、`网格`（grade）、
+  `边界`（borda）、`避撞`（evitação de colisões）、`自撞`（autocolisão）。
+- **Русский**：`移动体`（агент）、`蛇`（змейка）、`元胞自动机`（клеточный автомат）、
+  `标记物`（маркер）、`障碍物`（препятствие）、`轨迹`（след）、`阈值`（порог）、
+  `预设`（предустановка）。
 - **繁體中文**：`导入 / 导出`（匯入 / 匯出）、`覆盖`（覆蓋）、`设定`（設定）、`兼容`（相容）
   等港澳台用语。
 
@@ -297,7 +332,7 @@ npm start          # 等价于 python -m http.server 8080
 │   │   └── rng.js             # 种子化随机数
 │   ├── i18n/                  # 国际化运行时与语言包
 │   │   ├── index.js           # t() / 语言注册表 / 系统语言匹配 / 持久化 / 静态骨架本地化
-│   │   └── locales/           # zh-CN（规范键集）· zh-TW · en · ja
+│   │   └── locales/           # zh-CN（规范键集）· zh-TW · en · ja · ko · fr · de · es · pt · ru
 │   └── ui/
 │       ├── app.js             # 应用装配：状态、控制条、面板、快捷键
 │       ├── canvas.js          # Canvas 渲染器（轨迹 / 蛇身 / 皮肤 / 特效）
@@ -319,6 +354,8 @@ node tools/build-single-file.mjs --no-minify   # 生成未压缩的 GridSneaker.
 打包脚本按依赖顺序把每个 ES Module 包成 IIFE，通过 `__MODULES` 表传递导出，避免模块间同名声明冲突；
 产物中的 JS / CSS 会去掉注释与缩进（保留换行以保证 ASI 语义不变），源码本身保持完整可读。
 产物中的版本号取自 `package.json`，无需手工同步。
+打包时只替换 `type="module"` 的入口脚本，**不依赖模块的内联经典脚本会原样保留**
+（如兜底提示块的多语言改写脚本，它正是为「模块跑不起来」的场景准备的）。
 
 ## 测试
 
@@ -338,10 +375,12 @@ CA 子选项卡分类及其搜索联动 / 延迟放置（仅本步生效、不�
 规则集导入导出 / 环境模板 / 参数预设 / 版本号一致性（开发入口与单文件成品同步 `package.json`）」
 等源码级与行为级回归断言。
 
-国际化专项断言覆盖：语言匹配（`zh-Hant-HK` → 繁體中文 等区域细分）、持久化与手动选择优先、
-`<html lang>` 同步、静态骨架文案本地化、占位符按位置回填与语序调整、句式匹配与递归翻译、
-多行文本逐行翻译、骨架句式（纯标点拼接）、以及**四种语言包键集与源码文案的双向一致性**。
-当前 **1795 项断言全部通过**（语言包 4 × 1667 条）。
+国际化专项断言覆盖：语言匹配（`zh-Hant-HK` → 繁體中文、`pt-BR` → Português 等区域细分与归一）、
+持久化与手动选择优先、`<html lang>` 同步、静态骨架文案本地化、占位符按位置回填与语序调整、
+句式匹配与递归翻译、多行文本逐行翻译、骨架句式（纯标点拼接）、语言切换器双语标识与兜底提示块
+（`data-i18n` 标注、内嵌语言表覆盖十种语言、`data-i18n-src` 查表依据、单文件产物保留该脚本）、
+以及**十种语言包键集与源码文案的双向一致性**。
+当前 **1869 项断言全部通过**（语言包 10 × 1670 条）。
 
 性能基准（无依赖，可复现）：
 
@@ -355,7 +394,7 @@ node tools/bench-trail.mjs   # 轨迹渲染帧率与边界解算速率（同进�
 
 - **GitHub Pages**：把仓库推送到 GitHub，在 `Settings → Pages` 中选择分支（如 `main`）与根目录 `/` 保存，
   稍后访问 `https://<用户名>.github.io/<仓库名>/` 即可（`index.html` 会被自动识别为入口）。
-- **GitHub Releases**：每次发版只需改 `package.json` 的 `version` 并推送同名 tag（如 `v2.11.0`），
+- **GitHub Releases**：每次发版只需改 `package.json` 的 `version` 并推送同名 tag（如 `v2.12.0`），
   `.github/workflows/release.yml` 会自动校验版本号一致、跑测试、构建单文件并把 `GridSneaker.html`
   作为 Release 附件发布（因此**每个 Release 的成品都是可直接双击运行的 HTML**）。
   最新版永久下载地址：`https://github.com/<用户名>/<仓库名>/releases/latest/download/GridSneaker.html`。

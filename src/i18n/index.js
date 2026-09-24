@@ -24,6 +24,12 @@ import { zhCN } from './locales/zh-CN.js';
 import { zhTW } from './locales/zh-TW.js';
 import { en } from './locales/en.js';
 import { ja } from './locales/ja.js';
+import { ko } from './locales/ko.js';
+import { fr } from './locales/fr.js';
+import { de } from './locales/de.js';
+import { es } from './locales/es.js';
+import { pt } from './locales/pt.js';
+import { ru } from './locales/ru.js';
 
 /** 源语言：界面文案的书写语言，其语言包即规范键集（键值相同） */
 export const SOURCE_LOCALE = 'zh-CN';
@@ -34,6 +40,12 @@ const MESSAGES = {
   'zh-TW': zhTW,
   en,
   ja,
+  ko,
+  fr,
+  de,
+  es,
+  pt,
+  ru,
 };
 
 /** 语言名称用各语言自身的写法（界面语言选择器里即如此显示，无需被翻译） */
@@ -42,6 +54,12 @@ const LOCALE_NAMES = {
   'zh-TW': '繁體中文',
   en: 'English',
   ja: '日本語',
+  ko: '한국어',
+  fr: 'Français',
+  de: 'Deutsch',
+  es: 'Español',
+  pt: 'Português',
+  ru: 'Русский',
 };
 
 /** 从上到下书写（RTL）的语言；本轮尚未收录阿拉伯语等，先把开关留在这里 */
@@ -318,6 +336,8 @@ function fillNamed(template, params) {
  */
 export function localizeElement(el) {
   if (el.dataset && el.hasAttribute('data-i18n')) {
+    // 首次调用时把原文记进 dataset，之后反复应用不会累积；
+    // 静态兜底脚本改写过的节点会自行写好 data-i18n-src（简体原文），这里直接沿用它作查表依据
     if (el.dataset.i18nSrc === undefined) el.dataset.i18nSrc = el.textContent;
     el.textContent = t(el.dataset.i18nSrc);
   }
