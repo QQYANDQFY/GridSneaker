@@ -38,8 +38,41 @@ jobs:
       - name: 构建单文件成品
         run: npm run build
 
-      - name: 创建 Release 并上传成品 HTML
+      # Release 正文以 CHANGELOG.md 的当前版本段落为准（含新增 / 修复 / 测试明细），
+      # 自动生成的提交列表会追加在其后，因此说明始终与迭代记录一致。
+      - name: 从 CHANGELOG 抽取当前版本的更新说明
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const version = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split(/\r?\n/);
+          const head = `## v${version}`;
+          const start = lines.findIndex((line) => line.trim() === head);
+          if (start < 0) {
+            console.error(`::error::CHANGELOG.md 中未找到 ${head} 段落，请先补充迭代记录`);
+            process.exit(1);
+          }
+          let end = lines.length;
+          for (let i = start + 1; i < lines.length; i++) {
+            if (/^##\s/.test(lines[i])) { end = i; break; }
+          }
+          const intro = [
+            `# GridSneaker v${version}`,
+            '',
+            '**本次更新**：界面语言由 4 种扩充到 **10 种**——简体中文 · 繁體中文 · English · 日本語 ·',
+            '한국어 · Français · Deutsch · Español · Português · Русский；语言切换器旁新增「Language 语言」',
+            '双语标识；脚本未能启动时的兜底提示块同样支持全部 10 种语言。',
+            '',
+          ].join('\n');
+          // 去掉重复的 `## vX.Y.Z` 小标题，正文直接接在 H1 之下
+          const body = `${intro}\n${lines.slice(start + 1, end).join('\n').trim()}\n`;
+          fs.writeFileSync('release-body.md', body);
+          NODE
+
+      - name: 创建 Release 并上传成品 HTML 与更新说明
         uses: softprops/action-gh-release@v2
         with:
+          name: GridSneaker ${{ github.ref_name }}
+          body_path: release-body.md
           files: GridSneaker.html
           generate_release_notes: true
